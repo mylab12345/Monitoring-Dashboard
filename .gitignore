@@ -1,7 +1,35 @@
-venv/
+```
+# Python
 __pycache__/
 *.pyc
-.backups/
+*.pyo
+*.pyd
+
+# Dependencies
+.venv/
+venv/
+env/
+.env
+.env.local
+.env.*
+requirements.txt.bak
+
+# Logs
 *.log
-nohup.out
-monitoring.log
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build/distribution
+dist/
+build/
+*.egg-info/
+```
