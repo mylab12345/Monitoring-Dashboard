@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 venv/
+.venv/
 .backups/
 montoring.env
 nohup.out
