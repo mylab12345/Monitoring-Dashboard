@@ -6,7 +6,7 @@
 #  openSUSE, Arch/Manjaro, Alpine, ...
 #
 #  Global one-liner (downloads latest from GitHub, then installs):
-#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Montoring/main/install.sh | sudo bash
+#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/install.sh | sudo bash
 #
 #  Local (from a checkout of this repo):
 #      sudo bash install.sh
@@ -20,13 +20,13 @@
 #      --home DIR      install location             (default /opt/monitoring)
 #      --no-vm         skip libvirt/qemu tooling
 #      --no-start      install but do not start the service
-#      --repo R        GitHub repo for remote mode  (default mylab12345/Montoring)
+#      --repo R        GitHub repo for remote mode  (default mylab12345/Monitoring)
 #      --branch B      GitHub branch for remote mode (default main)
 # ============================================================================
 set -euo pipefail
 
 # --- Defaults (overridable via flags / env) ---------------------------------
-REPO="${REPO:-mylab12345/Montoring}"
+REPO="${REPO:-mylab12345/Monitoring}"
 BRANCH="${BRANCH:-main}"
 MONITORING_HOME="${MONITORING_HOME:-/opt/monitoring}"
 PORT="${MONITORING_PORT:-8050}"

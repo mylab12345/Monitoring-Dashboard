@@ -12,7 +12,9 @@ Covers every important bug fixed during the audit:
   * command-injection / input-validation rejections
   * security headers + JSON error handlers
   * privileged helper argument validation
-  * repo-name consistency (README/update.sh use "Montoring")
+  * repo-name consistency (README/update.sh use "Monitoring", not "Montoring")
+  * frontend integrity (all inline handlers defined, spinRefresh present,
+    every /api/ request goes through the authenticated fetch helpers)
   * uninstaller removes the desktop launcher
 """
 import json
@@ -256,25 +258,32 @@ class HelperValidation(unittest.TestCase):
 
 
 class RepoConsistency(unittest.TestCase):
-    """Docs/scripts must reference the real repo name (raw URLs are
-    case-sensitive; 'Monitoring' returns 404 and breaks the one-liners)."""
+    """Docs/scripts must reference the real repo name — the GitHub repository
+    is `mylab12345/Monitoring`; the old `Montoring` typo 404s the documented
+    one-liners (raw URLs are case-sensitive)."""
 
     def test_repo_name_in_update_sh(self):
         with open(os.path.join(REPO, "update.sh")) as fh:
             txt = fh.read()
-        self.assertIn("Montoring", txt)
-        self.assertNotIn("mylab12345/Monitoring", txt)
+        self.assertIn("mylab12345/Monitoring", txt)
+        self.assertNotIn("Montoring", txt)
 
     def test_repo_name_in_readme(self):
         with open(os.path.join(REPO, "README.md")) as fh:
             txt = fh.read()
-        self.assertIn("raw.githubusercontent.com/mylab12345/Montoring", txt)
-        self.assertNotIn("raw.githubusercontent.com/mylab12345/Monitoring", txt)
+        self.assertIn("raw.githubusercontent.com/mylab12345/Monitoring", txt)
+        self.assertNotIn("Montoring", txt)
 
     def test_install_sh_repo_name(self):
         with open(os.path.join(REPO, "install.sh")) as fh:
             txt = fh.read()
-        self.assertIn("REPO=\"${REPO:-mylab12345/Montoring}\"", txt)
+        self.assertIn("REPO=\"${REPO:-mylab12345/Monitoring}\"", txt)
+        self.assertNotIn("Montoring", txt)
+
+    def test_monitoring_service_repo(self):
+        with open(os.path.join(REPO, "monitoring.service")) as fh:
+            txt = fh.read()
+        self.assertNotIn("Montoring", txt)
 
     def test_uninstaller_removes_launcher(self):
         with open(os.path.join(REPO, "uninstall.sh")) as fh:
@@ -309,6 +318,68 @@ class RepoConsistency(unittest.TestCase):
                              text=True, timeout=30).stdout
         self.assertNotIn("__pycache__", out)
         self.assertNotIn("pip_audit_report.json", out)
+
+
+class FrontendIntegrity(unittest.TestCase):
+    """Static checks on the single-page frontend (templates/index.html).
+
+    A missing helper here kills the whole dashboard (a previous release had
+    no `spinRefresh` definition: every fetchJSON/postJSON call threw a
+    ReferenceError, so the UI never rendered any data), so every check below
+    is a regression guard, not a style preference."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO, "templates", "index.html")) as fh:
+            cls.html = fh.read()
+        scripts = re.findall(r"<script[^>]*>(.*?)</script>", cls.html, re.S)
+        cls.js = scripts[-1] if scripts else ""
+
+    def test_spinrefresh_is_defined(self):
+        self.assertRegex(self.js, r"function\s+spinRefresh\s*\(")
+        # every call site must come after the definition
+        def_i = self.js.find("function spinRefresh(")
+        self.assertGreater(def_i, -1)
+        for m in re.finditer(r"(?<!function\s)spinRefresh\s*\(", self.js):
+            self.assertGreater(m.start(), def_i, "spinRefresh( called before definition")
+
+    def test_spinrefresh_toggles_refresh_button(self):
+        self.assertRegex(self.js, r"classList\.toggle\(['\"]spinning['\"],\s*busy>0\)")
+        self.assertRegex(self.html, r'id="refreshBtn"')
+
+    def test_all_inline_handlers_are_defined(self):
+        handlers = re.findall(r'on(?:click|change|input|submit|keydown|keyup)\s*=\s*"([^"]*)"', self.html)
+        self.assertTrue(handlers)
+        defined = set(re.findall(r"\bfunction\s+([A-Za-z_$][\w$]*)\s*\(", self.js))
+        defined |= set(re.findall(
+            r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|function)", self.js))
+        called = set()
+        for h in handlers:
+            for m in re.finditer(r"([A-Za-z_$][\w$]*)\s*\(", h):
+                # skip DOM methods invoked as obj.method(...) — e.g. event.preventDefault()
+                pre = h[max(0, m.start() - 8):m.start()]
+                if re.search(r"[\w$]\.\w*$", pre):
+                    continue
+                called.add(m.group(1))
+        missing = sorted(c for c in called if c not in defined and c != "if")
+        self.assertEqual(missing, [], f"inline handlers reference undefined functions: {missing}")
+
+    def test_api_requests_use_auth_helpers(self):
+        """No raw `fetch('/api/...')` outside fetchJSON/postJSON/apiFetch —
+        raw fetches bypass the Bearer token and break token-protected installs."""
+        # strip the wrapper bodies so their internal fetch calls don't count
+        wrappers = r"async function (?:fetchJSON|postJSON|apiFetch)\b.*?(?=\nfunction |\nconst |\n// )"
+        body = re.sub(wrappers, "", self.js, flags=re.S)
+        bad = re.findall(r"\bfetch\s*\(\s*['\"`]/api/", body)
+        self.assertEqual(bad, [], f"raw /api/ fetch without auth: {bad}")
+
+    def test_no_missing_element_ids(self):
+        ids = set(re.findall(r'id="([^"]+)"', self.html))
+        used = set(re.findall(r"getElementById\(['\"]([^'\"]+)['\"]\)", self.js))
+        used |= set(re.findall(r"\$\('#([A-Za-z0-9_-]+)'\)", self.js))
+        used |= set(re.findall(r"\$\$\(\s*'#([A-Za-z0-9_-]+)", self.js))
+        missing = sorted(u for u in used if u not in ids)
+        self.assertEqual(missing, [], f"JS references missing element ids: {missing}")
 
 
 class ScriptSyntax(unittest.TestCase):

@@ -1,6 +1,6 @@
-# Code Review: `mylab12345/Montoring` — Monitoring Linux System Console
+# Code Review: `mylab12345/Monitoring` — Monitoring Linux System Console
 
-**Reviewed:** 2026-08-30 · **Repo:** github.com/mylab12345/Montoring · **Version:** 2.3.0 · **Branch:** main (29 commits, 1 author) · **Size:** ~7k LOC (app.py 2,015, index.html 2,831, dashboard.css 1,413, install/update scripts ~660)
+**Reviewed:** 2026-08-30 · **Repo:** github.com/mylab12345/Monitoring · **Version:** 2.3.0 · **Branch:** main (29 commits, 1 author) · **Size:** ~7k LOC (app.py 2,015, index.html 2,831, dashboard.css 1,413, install/update scripts ~660)
 
 ---
 

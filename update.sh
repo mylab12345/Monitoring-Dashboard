@@ -8,7 +8,7 @@
 #  Usage:
 #      sudo ./update.sh                # install changes from THIS checkout
 #      sudo ./update.sh --remote      # pull latest from GitHub and install
-#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Montoring/main/update.sh | sudo bash
+#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/update.sh | sudo bash
 #                                     # same as --remote
 #
 #  What it does:
@@ -21,7 +21,7 @@
 # ============================================================================
 set -euo pipefail
 
-REPO="${REPO:-mylab12345/Montoring}"
+REPO="${REPO:-mylab12345/Monitoring}"
 BRANCH="${BRANCH:-main}"
 MODE="local"
 FORCE=0
