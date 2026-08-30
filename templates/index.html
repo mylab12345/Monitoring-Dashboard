@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Montoring — Linux Mint Dashboard</title>
+<title>Montoring — Linux System Dashboard</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 </head>
@@ -18,113 +18,293 @@
   <header class="header" role="banner">
     <div>
       <h1>Montoring</h1>
-      <div class="subtitle">Linux Mint OS — System Monitor & VM Manager</div>
+      <div class="subtitle">Linux System Monitor · Services · Docker · VMs — all in one place</div>
     </div>
     <div class="meta" id="headerMeta">
       <span>Loading…</span>
     </div>
   </header>
 
-  <!-- Metrics -->
-  <section aria-label="Live Metrics" class="grid-4" id="metricsGrid">
-    <article class="card" aria-label="CPU">
-      <div class="label">CPU Usage</div>
-      <div class="metric"><span class="val" id="cpuVal">--</span><span class="unit">%</span><span class="trend" id="cpuTrend">●</span></div>
-      <div class="progress-track"><div class="progress-fill" id="cpuBar" style="width:0%"></div></div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem">Load 1m: <strong id="load1">--</strong></div>
-    </article>
-    <article class="card" aria-label="Memory">
-      <div class="label">Memory</div>
-      <div class="metric"><span class="val" id="ramVal">--</span><span class="unit">%</span></div>
-      <div class="progress-track"><div class="progress-fill" id="ramBar" style="width:0%"></div></div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem"><span id="ramUsed">--</span> / <span id="ramTotal">--</span> GB</div>
-    </article>
-    <article class="card" aria-label="Disk">
-      <div class="label">Disk /</div>
-      <div class="metric"><span class="val" id="diskVal">--</span><span class="unit">%</span></div>
-      <div class="progress-track"><div class="progress-fill" id="diskBar" style="width:0%"></div></div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem"><span id="diskUsed">--</span> / <span id="diskTotal">--</span> GB</div>
-    </article>
-    <article class="card" aria-label="Uptime">
-      <div class="label">Uptime</div>
-      <div class="metric"><span class="val" id="uptimeVal">--</span><span class="unit">h</span></div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem">Temp: <strong id="tempVal">--</strong> · Net: <strong id="netVal">--</strong></div>
-    </article>
+  <!-- Tabs -->
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab-btn active" data-tab="overview" role="tab">Overview</button>
+    <button class="tab-btn" data-tab="processes" role="tab">Processes</button>
+    <button class="tab-btn" data-tab="services" role="tab">Services</button>
+    <button class="tab-btn" data-tab="docker" role="tab">Docker</button>
+    <button class="tab-btn" data-tab="vms" role="tab">VMs</button>
+    <button class="tab-btn" data-tab="network" role="tab">Network</button>
+    <button class="tab-btn" data-tab="logs" role="tab">Logs</button>
+  </nav>
+
+  <!-- ================= OVERVIEW ================= -->
+  <section class="tab-panel active" id="tab-overview" aria-label="Live Metrics">
+
+    <div class="grid-4">
+      <article class="card" aria-label="CPU">
+        <div class="label">CPU Usage</div>
+        <div class="metric"><span class="val" id="cpuVal">--</span><span class="unit">%</span><span class="trend" id="cpuTrend">●</span></div>
+        <div class="progress-track"><div class="progress-fill" id="cpuBar" style="width:0%"></div></div>
+        <canvas class="sparkline" id="cpuSpark" height="38"></canvas>
+        <div class="mini">Cores: <strong id="cpuCores">--</strong> · <span id="cpuFreq">--</span> · Load 1m: <strong id="load1">--</strong></div>
+      </article>
+      <article class="card" aria-label="Memory">
+        <div class="label">Memory</div>
+        <div class="metric"><span class="val" id="ramVal">--</span><span class="unit">%</span></div>
+        <div class="progress-track"><div class="progress-fill" id="ramBar" style="width:0%"></div></div>
+        <canvas class="sparkline" id="ramSpark" height="38"></canvas>
+        <div class="mini"><span id="ramUsed">--</span> / <span id="ramTotal">--</span> GB · Swap <span id="swapInfo">--</span></div>
+      </article>
+      <article class="card" aria-label="Disk">
+        <div class="label">Disk /</div>
+        <div class="metric"><span class="val" id="diskVal">--</span><span class="unit">%</span></div>
+        <div class="progress-track"><div class="progress-fill" id="diskBar" style="width:0%"></div></div>
+        <div class="mini"><span id="diskUsed">--</span> / <span id="diskTotal">--</span> GB</div>
+      </article>
+      <article class="card" aria-label="Uptime">
+        <div class="label">Uptime</div>
+        <div class="metric"><span class="val" id="uptimeVal">--</span><span class="unit">h</span></div>
+        <div class="mini">Temp: <strong id="tempVal">--</strong></div>
+        <div class="mini" id="batteryRow" style="display:none">🔋 Battery: <strong id="batteryVal">--</strong></div>
+      </article>
+    </div>
+
+    <div class="grid-3" style="margin-top:1.5rem">
+      <article class="card" style="grid-column:span 2">
+        <h2>System Health Checks</h2>
+        <div id="checksList">Loading checks…</div>
+      </article>
+      <article class="card">
+        <h2>Quick Fixes</h2>
+        <p class="dim small">Safe maintenance actions for your system.</p>
+        <div class="btn-group">
+          <button class="btn" onclick="runFix('update', this)">Update Lists</button>
+          <button class="btn" onclick="runFix('upgrade', this)">Upgrade</button>
+          <button class="btn" onclick="runFix('autoremove', this)">Autoremove</button>
+          <button class="btn" onclick="runFix('clean', this)">Clean Cache</button>
+          <button class="btn" onclick="runFix('fix-broken', this)">Fix Broken</button>
+          <button class="btn" onclick="runFix('clear-logs', this)">Clear Logs</button>
+          <button class="btn" onclick="runFix('docker-prune', this)">Docker Prune</button>
+        </div>
+        <div id="fixResult" class="mini mono" style="color:#c8e6c9;min-height:1.2rem;margin-top:.75rem;white-space:pre-wrap"></div>
+      </article>
+    </div>
+
+    <div class="grid-3" style="margin-top:1.5rem">
+      <article class="card">
+        <h2>Mounted Disks <button class="btn btn-sm" style="float:right" onclick="loadDisks()">↻</button></h2>
+        <div id="disksList" class="small dim">Loading…</div>
+      </article>
+      <article class="card">
+        <h2>Listening Ports <button class="btn btn-sm" style="float:right" onclick="loadPorts()">↻</button></h2>
+        <div id="portsList" class="small dim">Loading…</div>
+      </article>
+      <article class="card">
+        <h2>System</h2>
+        <div class="kv"><span>OS</span><strong id="osInfo">--</strong></div>
+        <div class="kv"><span>Hostname</span><strong id="hostnameInfo">--</strong></div>
+        <div class="kv"><span>Kernel</span><strong id="kernelInfo">--</strong></div>
+        <div class="kv"><span>Processes</span><strong id="procsCount">--</strong></div>
+        <div class="kv"><span>Net I/O</span><strong id="netVal">--</strong></div>
+        <div class="kv"><span>Users</span><strong id="usersVal">--</strong></div>
+      </article>
+    </div>
   </section>
 
-  <!-- Health & Fix -->
-  <section aria-label="System Health" class="grid-3" style="margin-top:1.5rem">
-    <article class="card" style="grid-column:span 2">
-      <h2>System Health Checks</h2>
-      <div id="checksList">Loading checks…</div>
-    </article>
+  <!-- ================= PROCESSES ================= -->
+  <section class="tab-panel" id="tab-processes" aria-label="Processes">
     <article class="card">
-      <h2>Quick Fixes</h2>
-      <p style="font-size:.9rem;color:var(--text-dim);margin-bottom:.75rem">Run safe maintenance actions on your Mint OS.</p>
-      <div class="btn-group">
-        <button class="btn" onclick="runFix('update')">Update Lists</button>
-        <button class="btn" onclick="runFix('upgrade')">Upgrade</button>
-        <button class="btn" onclick="runFix('autoremove')">Autoremove</button>
-        <button class="btn" onclick="runFix('clean')">Clean Cache</button>
-        <button class="btn" onclick="runFix('fix-broken')">Fix Broken</button>
-        <button class="btn" onclick="runFix('clear-logs')">Clear Logs</button>
+      <div class="toolbar">
+        <h2 style="margin:0">Top Processes <span class="dim small" id="procTotal"></span></h2>
+        <div class="toolbar-right">
+          <input type="search" id="procSearch" class="search" placeholder="Filter…" oninput="renderProcesses()">
+          <label class="toggle"><input type="checkbox" id="procAuto" checked> Auto 5s</label>
+          <button class="btn" onclick="loadProcesses()">↻ Refresh</button>
+        </div>
       </div>
-      <div id="fixResult" style="margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.82rem;color:#c8e6c9;min-height:1.2rem"></div>
-    </article>
-  </section>
-
-  <!-- VMs -->
-  <section aria-label="VM Manager" style="margin-top:1.5rem">
-    <article class="card" style="padding:1.25rem 1.5rem">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem">
-        <div><h2>Virtual Machines <span style="font-weight:400;color:var(--text-dim);font-size:.9rem">(libvirt / qemu)</span></h2><p style="font-size:.85rem;color:var(--text-dim)">Access via libvirt group. Resize disks safely.</p></div>
-        <button class="btn btn-primary" onclick="loadVMs()">Refresh VMs</button>
-      </div>
-      <div id="vmList" style="margin-top:1rem"></div>
-    </article>
-  </section>
-
-  <!-- System Details -->
-  <section aria-label="System Details" class="grid-3" style="margin-top:1.5rem">
-    <article class="card">
-      <h2>Network</h2>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--text-dim);line-height:1.8">
-        <div>Sent: <strong id="netSent">--</strong></div>
-        <div>Recv: <strong id="netRecv">--</strong></div>
+      <div class="table-wrap">
+        <table class="table" id="procTable">
+          <thead><tr><th>PID</th><th>Name</th><th>User</th><th>CPU %</th><th>MEM %</th><th>State</th><th></th></tr></thead>
+          <tbody id="procRows"><tr><td colspan="7" class="dim">Loading…</td></tr></tbody>
+        </table>
       </div>
     </article>
+  </section>
+
+  <!-- ================= SERVICES ================= -->
+  <section class="tab-panel" id="tab-services" aria-label="Services">
     <article class="card">
-      <h2>Users / Sessions</h2>
-      <div class="metric" style="margin-top:.4rem"><span class="val" id="usersVal">--</span><span class="unit" style="font-size:1.2rem">users</span></div>
-    </article>
-    <article class="card">
-      <h2>OS</h2>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:#fff;margin-top:.4rem" id="osInfo">--</div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--text-dim);margin-top:.25rem" id="hostnameInfo">--</div>
+      <div class="toolbar">
+        <h2 style="margin:0">systemd Services</h2>
+        <div class="toolbar-right">
+          <input type="search" id="svcSearch" class="search" placeholder="Filter units…" oninput="renderServices()">
+          <label class="toggle"><input type="checkbox" id="svcActiveOnly" checked onchange="renderServices()"> Active only</label>
+          <button class="btn" onclick="loadServices()">↻ Refresh</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Unit</th><th>Description</th><th>Active</th><th>Sub</th><th>Actions</th></tr></thead>
+          <tbody id="svcRows"><tr><td colspan="5" class="dim">Loading…</td></tr></tbody>
+        </table>
+      </div>
     </article>
   </section>
 
-  <footer class="footer" role="contentinfo">Montoring — Built for Linux Mint • Minimal • Beautiful • Local</footer>
+  <!-- ================= DOCKER ================= -->
+  <section class="tab-panel" id="tab-docker" aria-label="Docker">
+    <article class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">Docker Containers</h2>
+        <div class="toolbar-right">
+          <button class="btn" onclick="loadDocker()">↻ Refresh</button>
+          <button class="btn btn-danger" onclick="dockerPrune()">🧹 Prune unused</button>
+        </div>
+      </div>
+      <div id="dockerBody" class="small dim">Loading…</div>
+    </article>
+  </section>
+
+  <!-- ================= VMs ================= -->
+  <section class="tab-panel" id="tab-vms" aria-label="VM Manager">
+    <article class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">Virtual Machines <span class="dim small">(libvirt / qemu)</span></h2>
+        <div class="toolbar-right">
+          <button class="btn btn-primary" onclick="loadVMs()">↻ Refresh VMs</button>
+        </div>
+      </div>
+      <p class="dim small">Access via libvirt group / root. Start, stop and resize disks safely.</p>
+      <div id="vmList"></div>
+    </article>
+  </section>
+
+  <!-- ================= NETWORK ================= -->
+  <section class="tab-panel" id="tab-network" aria-label="Network">
+    <div class="grid-3">
+      <article class="card" style="grid-column:1/-1">
+        <h2>Interfaces <button class="btn btn-sm" style="float:right" onclick="loadNetwork()">↻</button></h2>
+        <div id="nicList" class="small dim">Loading…</div>
+      </article>
+    </div>
+    <div class="grid-3" style="margin-top:1.5rem">
+      <article class="card" style="grid-column:1/-1">
+        <h2>Listening Ports (full)</h2>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Proto</th><th>Address</th><th>Port</th><th>Process</th></tr></thead>
+            <tbody id="portsRows"><tr><td colspan="4" class="dim">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- ================= LOGS ================= -->
+  <section class="tab-panel" id="tab-logs" aria-label="Logs">
+    <article class="card">
+      <div class="toolbar">
+        <h2 style="margin:0">System Logs <span class="dim small">(journal)</span></h2>
+        <div class="toolbar-right">
+          <select id="logPrio" class="search" onchange="loadLogs()">
+            <option value="0">All priorities</option>
+            <option value="3">Errors (err+)</option>
+            <option value="4">Warnings (warning+)</option>
+            <option value="6">Info+</option>
+          </select>
+          <select id="logLines" class="search" onchange="loadLogs()">
+            <option>50</option><option selected>100</option><option>200</option><option>500</option>
+          </select>
+          <input type="search" id="logGrep" class="search" placeholder="Filter text…" onkeydown="if(event.key==='Enter')loadLogs()">
+          <label class="toggle"><input type="checkbox" id="logAuto"> Auto 5s</label>
+          <button class="btn" onclick="loadLogs()">↻ Refresh</button>
+        </div>
+      </div>
+      <pre class="log-view" id="logView">Loading logs…</pre>
+    </article>
+  </section>
+
+  <footer class="footer" role="contentinfo">
+    Montoring <span id="footerVersion">v--</span> — Universal Linux Dashboard • Minimal • Beautiful • Local
+  </footer>
+</div>
+
+<!-- Toast container -->
+<div id="toasts" aria-live="polite"></div>
+
+<!-- Confirm modal -->
+<div class="modal-backdrop" id="modalBackdrop" style="display:none">
+  <div class="modal card">
+    <h2 id="modalTitle">Confirm</h2>
+    <p class="dim" id="modalText" style="margin:.5rem 0 1.25rem"></p>
+    <div class="btn-group" style="justify-content:flex-end">
+      <button class="btn" id="modalCancel">Cancel</button>
+      <button class="btn btn-danger" id="modalOk">Confirm</button>
+    </div>
+  </div>
 </div>
 
 <script>
 // ---------------------------------------------------------------
-// Data fetch helpers
+// Helpers
 // ---------------------------------------------------------------
-async function fetchJSON(url){
-  try{const r=await fetch(url);return await r.json();}catch(e){return null;}
+async function fetchJSON(url, opts){
+  try{const r=await fetch(url,opts);const j=await r.json();return j;}catch(e){return null;}
 }
-
+async function postJSON(url, body){
+  try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();return j;}catch(e){return {error:'request failed'};}
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmtTime(sec){
   const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60);
   if(d>0)return `${d}d ${h}h ${m}m`;
   return `${h}h ${m}m`;
 }
+function barColor(v){ if(v>=85)return 'danger'; if(v>=60)return 'warn'; return ''; }
+function toast(msg, kind){
+  const t=document.createElement('div');
+  t.className='toast '+(kind||'');
+  t.textContent=msg;
+  document.getElementById('toasts').appendChild(t);
+  setTimeout(()=>{t.classList.add('out');setTimeout(()=>t.remove(),400);},3500);
+}
+function confirmDlg(title,text){
+  return new Promise(res=>{
+    const bd=document.getElementById('modalBackdrop');
+    document.getElementById('modalTitle').textContent=title;
+    document.getElementById('modalText').textContent=text;
+    bd.style.display='flex';
+    const done=v=>{bd.style.display='none';document.getElementById('modalOk').onclick=null;document.getElementById('modalCancel').onclick=null;res(v);};
+    document.getElementById('modalOk').onclick=()=>done(true);
+    document.getElementById('modalCancel').onclick=()=>done(false);
+  });
+}
 
-function barColor(v){
-  if(v>=85)return 'danger';
-  if(v>=60)return 'warn';
-  return '';
+// ---------------------------------------------------------------
+// Sparklines
+// ---------------------------------------------------------------
+const cpuHist=[], ramHist=[];
+function drawSpark(cv, data, color){
+  if(!cv)return;
+  const cw=cv.clientWidth;
+  if(!cw||cw<10)return; // hidden tab — skip
+  const ctx=cv.getContext('2d');
+  const w=cv.width=cw;
+  const h=cv.height;
+  ctx.clearRect(0,0,w,h);
+  if(data.length<2)return;
+  const max=Math.max(20,...data);
+  ctx.beginPath();
+  data.forEach((v,i)=>{
+    const x=i/(data.length-1)*(w-2)+1;
+    const y=h-2-(v/max)*(h-6);
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  });
+  ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();
+  ctx.lineTo(w-1,h);ctx.lineTo(1,h);ctx.closePath();
+  const g=ctx.createLinearGradient(0,0,0,h);
+  g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');
+  ctx.fillStyle=g;ctx.fill();
 }
 
 // ---------------------------------------------------------------
@@ -132,20 +312,31 @@ function barColor(v){
 // ---------------------------------------------------------------
 async function updateStatus(){
   const d=await fetchJSON('/api/status');
-  if(!d)return;
+  if(!d||d.error)return;
+  const v=d.version||'';
   document.getElementById('headerMeta').innerHTML=`
-    <span>${d.os}</span><span>${new Date().toLocaleTimeString()}</span><span>${d.hostname}</span>`;
+    <span>${esc(d.os)}</span><span>v${esc(v)}</span><span>${esc(d.time)}</span><span>${esc(d.hostname)}</span>`;
+  document.getElementById('footerVersion').textContent='v'+v;
   document.getElementById('cpuVal').textContent=Math.round(d.cpu_percent);
   document.getElementById('cpuBar').style.width=d.cpu_percent+'%';
   document.getElementById('cpuBar').className='progress-fill '+barColor(d.cpu_percent);
-  document.getElementById('cpuTrend').textContent=d.cpu_percent>70?'●':'●';
+  document.getElementById('cpuTrend').textContent=d.cpu_percent>70?'▲':'●';
   document.getElementById('load1').textContent=d.load_1;
+  document.getElementById('cpuCores').textContent=d.cpu_count||'--';
+  document.getElementById('cpuFreq').textContent=d.cpu_freq_mhz?d.cpu_freq_mhz+' MHz':'';
+
+  cpuHist.push(d.cpu_percent); if(cpuHist.length>60)cpuHist.shift();
+  drawSpark(document.getElementById('cpuSpark'), cpuHist, '#7ee787');
 
   document.getElementById('ramVal').textContent=Math.round(d.ram_percent);
   document.getElementById('ramBar').style.width=d.ram_percent+'%';
   document.getElementById('ramBar').className='progress-fill '+barColor(d.ram_percent);
   document.getElementById('ramUsed').textContent=d.ram_used_gb+' GB';
   document.getElementById('ramTotal').textContent=d.ram_total_gb+' GB';
+  document.getElementById('swapInfo').textContent=d.swap_total_gb>0?`${d.swap_used_gb}/${d.swap_total_gb} GB (${Math.round(d.swap_percent)}%)`:'off';
+
+  ramHist.push(d.ram_percent); if(ramHist.length>60)ramHist.shift();
+  drawSpark(document.getElementById('ramSpark'), ramHist, '#7ee7f5');
 
   document.getElementById('diskVal').textContent=Math.round(d.disk_percent);
   document.getElementById('diskBar').style.width=d.disk_percent+'%';
@@ -155,17 +346,21 @@ async function updateStatus(){
 
   document.getElementById('uptimeVal').textContent=Math.round(d.uptime_sec/3600);
   document.getElementById('tempVal').textContent=d.temp;
-  document.getElementById('netVal').textContent=d.net_sent+'/'+d.net_recv;
-
-  document.getElementById('netSent').textContent=d.net_sent;
-  document.getElementById('netRecv').textContent=d.net_recv;
-  document.getElementById('usersVal').textContent=d.users;
+  document.getElementById('netVal').textContent=d.net_sent+' / '+d.net_recv;
   document.getElementById('osInfo').textContent=d.os;
   document.getElementById('hostnameInfo').textContent=d.hostname;
+  document.getElementById('kernelInfo').textContent=d.kernel;
+  document.getElementById('procsCount').textContent=d.processes;
+  document.getElementById('usersVal').textContent=d.users||'--';
+  const bat=d.battery;
+  if(bat){
+    document.getElementById('batteryRow').style.display='block';
+    document.getElementById('batteryVal').textContent=bat.percent+'%'+(bat.plugged?' ⚡':'');
+  }
 }
 
 // ---------------------------------------------------------------
-// Health checks
+// Health checks / fixes
 // ---------------------------------------------------------------
 async function updateChecks(){
   const list=document.getElementById('checksList');
@@ -173,21 +368,203 @@ async function updateChecks(){
   if(!data){list.innerHTML='<div class="check-row">Unable to load checks.</div>';return;}
   list.innerHTML=data.map(c=>`
     <div class="check-row">
-      <div><strong>${c.name}</strong> <span style="font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--text-dim)">${c.detail}</span></div>
+      <div><strong>${esc(c.name)}</strong> <span class="mono dim small">${esc(c.detail)}</span></div>
       <span class="status-badge status-${c.status}">${c.status}</span>
-    </div>
-  `).join('');
+    </div>`).join('');
+}
+async function runFix(action, btn){
+  const out=document.getElementById('fixResult');
+  const old=btn?btn.textContent:null;
+  if(btn){btn.disabled=true;btn.textContent='Running…';}
+  out.textContent='Running…';
+  const j=await postJSON('/api/fix',{action});
+  if(btn){btn.disabled=false;btn.textContent=old;}
+  const res=j.result||j.error||'Done';
+  out.textContent=res.length>400?res.slice(0,400)+'…':res;
+  if(j.error)toast('Fix failed: '+j.error,'err'); else toast('Fix completed');
+  updateChecks();
 }
 
 // ---------------------------------------------------------------
-// Fix actions
+// Disks / ports / network
 // ---------------------------------------------------------------
-async function runFix(action){
-  const out=document.getElementById('fixResult');
-  out.textContent='Running…';
-  const r=await fetch('/api/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
-  const j=await r.json();
-  out.textContent=j.result ? (j.result.length>200?j.result.slice(0,200)+'…':j.result) : 'Done';
+async function loadDisks(){
+  const d=await fetchJSON('/api/disks');
+  const el=document.getElementById('disksList');
+  if(!d||!d.disks){el.innerHTML='<span class="dim">Unavailable</span>';return;}
+  el.innerHTML=d.disks.map(k=>`
+    <div class="disk-row">
+      <div class="disk-head"><strong class="mono">${esc(k.mount)}</strong>
+        <span class="dim small mono">${esc(k.device)} · ${esc(k.fstype)}</span>
+        <span class="small">${k.used_gb}/${k.total_gb} GB</span>
+        <span class="status-badge ${k.percent>=85?'status-fail':k.percent>=60?'status-warn':'status-ok'}">${k.percent}%</span></div>
+      <div class="progress-track" style="height:6px"><div class="progress-fill ${barColor(k.percent)}" style="width:${k.percent}%"></div></div>
+    </div>`).join('');
+}
+let portsData=[];
+async function loadPorts(){
+  const d=await fetchJSON('/api/ports');
+  portsData=(d&&d.ports)||[];
+  renderPortsOverview();
+  renderPortsTable();
+}
+function renderPortsOverview(){
+  const el=document.getElementById('portsList');
+  if(!el)return;
+  if(!portsData.length){el.innerHTML='<span class="dim">No listening ports found</span>';return;}
+  el.innerHTML=portsData.slice(0,8).map(p=>`
+    <div class="check-row"><span class="mono small">${esc(p.addr)}:<strong>${esc(p.port)}</strong></span>
+    <span class="mono dim small">${esc(protoLabel(p.proto))}</span></div>`).join('')
+    +`<div class="dim small" style="margin-top:.4rem">${portsData.length} total — see Network tab</div>`;
+}
+function renderPortsTable(){
+  const tb=document.getElementById('portsRows');
+  if(!tb)return;
+  if(!portsData.length){tb.innerHTML='<tr><td colspan="4" class="dim">No listening ports</td></tr>';return;}
+  tb.innerHTML=portsData.map(p=>`<tr>
+    <td class="mono">${esc(protoLabel(p.proto))}</td><td class="mono">${esc(p.addr)}</td>
+    <td class="mono"><strong>${esc(p.port)}</strong></td><td class="mono dim small">${esc(cleanProc(p.process))}</td></tr>`).join('');
+}
+function protoLabel(p){return p&&p.endsWith('6')?p.slice(0,-1)+'/6':(p||'');}
+function cleanProc(s){return (s||'').replace('users:((','').replace('))','').replace(/"/g,'');}
+
+async function loadNetwork(){
+  const d=await fetchJSON('/api/network');
+  const el=document.getElementById('nicList');
+  if(!d||!d.nics){el.innerHTML='<span class="dim">Unavailable</span>';return;}
+  el.innerHTML='<div class="grid-3">'+d.nics.map(n=>`
+    <div class="nic-card ${n.up?'up':''}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong class="mono">${esc(n.name)}</strong>
+        <span class="status-badge ${n.up?'status-ok':'status-fail'}">${n.up?'up':'down'}</span>
+      </div>
+      <div class="mono dim small" style="margin-top:.4rem;line-height:1.7">
+        IPv4: ${esc(n.ipv4)||'—'}<br>IPv6: ${esc(n.ipv6)||'—'}<br>MAC: ${esc(n.mac)||'—'}<br>
+        ↓ ${n.recv_mb} MB · ↑ ${n.sent_mb} MB ${n.speed?`· ${n.speed} Mb/s`:''}
+      </div>
+    </div>`).join('')+'</div>';
+}
+
+// ---------------------------------------------------------------
+// Processes
+// ---------------------------------------------------------------
+let procData=[];
+async function loadProcesses(){
+  const d=await fetchJSON('/api/processes');
+  if(!d||!d.processes)return;
+  procData=d.processes||[];
+  document.getElementById('procTotal').textContent=`(${d.total} total)`;
+  renderProcesses();
+}
+function renderProcesses(){
+  const tb=document.getElementById('procRows');
+  const q=(document.getElementById('procSearch').value||'').toLowerCase();
+  const rows=procData.filter(p=>!q||p.name.toLowerCase().includes(q)||String(p.pid).includes(q)||(p.user||'').toLowerCase().includes(q));
+  if(!rows.length){tb.innerHTML='<tr><td colspan="7" class="dim">No processes match</td></tr>';return;}
+  tb.innerHTML=rows.map(p=>`<tr>
+    <td class="mono">${p.pid}</td><td class="mono"><strong>${esc(p.name)}</strong></td>
+    <td class="mono dim">${esc(p.user)}</td>
+    <td><span class="mono ${p.cpu>=50?'txt-danger':''}">${p.cpu}</span></td>
+    <td><span class="mono ${p.mem>=50?'txt-danger':''}">${p.mem}</span></td>
+    <td class="dim small">${esc(p.status)}</td>
+    <td><button class="btn btn-sm btn-danger" onclick="killProcess(${p.pid},'${esc(p.name).replace(/'/g,"\\'")}')">Kill</button></td>
+  </tr>`).join('');
+}
+async function killProcess(pid,name){
+  if(!await confirmDlg('Kill process',`Terminate "${name}" (PID ${pid})? It will be force-killed if it ignores TERM.`))return;
+  const j=await postJSON('/api/process/kill',{pid});
+  if(j.error)toast('Kill failed: '+j.error,'err');
+  else{toast(j.result||'Process killed');loadProcesses();}
+}
+
+// ---------------------------------------------------------------
+// Services
+// ---------------------------------------------------------------
+let svcData=[],svcAvailable=true;
+async function loadServices(){
+  const d=await fetchJSON('/api/services');
+  if(!d){return;}
+  svcAvailable=!!d.available;
+  svcData=d.services||[];
+  renderServices();
+}
+function renderServices(){
+  const tb=document.getElementById('svcRows');
+  if(!svcAvailable){tb.innerHTML='<tr><td colspan="5" class="dim">systemctl not available on this system.</td></tr>';return;}
+  const q=(document.getElementById('svcSearch').value||'').toLowerCase();
+  const activeOnly=document.getElementById('svcActiveOnly').checked;
+  let rows=svcData.filter(s=>!q||s.unit.toLowerCase().includes(q)||s.description.toLowerCase().includes(q));
+  if(activeOnly)rows=rows.filter(s=>s.active==='active');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="5" class="dim">No services match</td></tr>';return;}
+  tb.innerHTML=rows.map(s=>{
+    const a=esc(s.unit).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    return `<tr>
+      <td class="mono"><strong>${esc(s.unit)}</strong></td>
+      <td class="dim small">${esc(s.description)}</td>
+      <td><span class="status-badge ${s.active==='active'?'status-ok':'status-warn'}">${esc(s.active)}</span></td>
+      <td class="mono dim small">${esc(s.sub)}</td>
+      <td class="actions">
+        <button class="btn btn-sm" onclick="svcAction('${a}','start')">Start</button>
+        <button class="btn btn-sm" onclick="svcAction('${a}','stop')">Stop</button>
+        <button class="btn btn-sm" onclick="svcAction('${a}','restart')">↻</button>
+        <button class="btn btn-sm" onclick="svcAction('${a}','enable')">Enable</button>
+        <button class="btn btn-sm" onclick="svcAction('${a}','disable')">Disable</button>
+      </td></tr>`;}).join('');
+}
+async function svcAction(name,action){
+  if(action==='stop'||action==='disable'){
+    if(!await confirmDlg(`${action} service`,`Are you sure you want to ${action} ${name}?`))return;
+  }
+  const j=await postJSON('/api/service/action',{name,action});
+  if(j.error)toast(`${action} failed: ${j.error}`,'err');
+  else{toast(j.result||'OK');loadServices();}
+}
+
+// ---------------------------------------------------------------
+// Docker
+// ---------------------------------------------------------------
+let dockerAvailable=true;
+async function loadDocker(){
+  const el=document.getElementById('dockerBody');
+  const d=await fetchJSON('/api/docker');
+  if(!d)return;
+  dockerAvailable=!!d.available;
+  if(!dockerAvailable){
+    el.innerHTML=`<div class="dim">Docker not available${d.info?' — '+esc(d.info):''} on this machine. Install Docker to manage containers here.</div>`;
+    return;
+  }
+  const cs=d.containers||[];
+  if(!cs.length){el.innerHTML='<div class="dim">No containers found.</div>';return;}
+  el.innerHTML=`<div class="table-wrap"><table class="table">
+    <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th>Actions</th></tr></thead>
+    <tbody>${cs.map(c=>{
+      const up=c.status.toLowerCase().startsWith('up');
+      const n=esc(c.name).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+      return `<tr>
+        <td class="mono"><strong>${esc(c.name)}</strong></td>
+        <td class="mono dim small">${esc(c.image)}</td>
+        <td><span class="status-badge ${up?'status-ok':'status-warn'}">${esc(c.status)}</span></td>
+        <td class="mono dim small">${esc(c.ports)}</td>
+        <td class="actions">
+          ${up
+            ?`<button class="btn btn-sm" onclick="dockerAction('${n}','stop')">Stop</button>
+              <button class="btn btn-sm" onclick="dockerAction('${n}','restart')">↻</button>`
+            :`<button class="btn btn-sm" onclick="dockerAction('${n}','start')">Start</button>`}
+          <button class="btn btn-sm btn-danger" onclick="dockerAction('${n}','remove')">Remove</button>
+        </td></tr>`;}).join('')}</tbody></table></div>`;
+}
+async function dockerAction(name,action){
+  if(action==='remove'&&!await confirmDlg('Remove container',`Remove container "${name}"? This deletes it.`))return;
+  const j=await postJSON('/api/docker/action',{name,action});
+  if(j.error)toast(`${action} failed: ${j.error}`,'err');
+  else{toast(j.result||'OK');loadDocker();}
+}
+async function dockerPrune(){
+  if(!dockerAvailable){toast('Docker not available','err');return;}
+  if(!await confirmDlg('Prune Docker','Remove all stopped containers, dangling images and unused data?'))return;
+  const j=await postJSON('/api/docker/prune',{});
+  if(j.error)toast('Prune failed: '+j.error,'err');
+  else{toast('Docker pruned');loadDocker();}
 }
 
 // ---------------------------------------------------------------
@@ -195,48 +572,94 @@ async function runFix(action){
 // ---------------------------------------------------------------
 async function loadVMs(){
   const container=document.getElementById('vmList');
-  container.innerHTML='<div style="color:var(--text-dim)">Loading VMs…</div>';
   const vms=await fetchJSON('/api/vms');
   if(!vms || vms.length===0){
-    container.innerHTML='<div style="color:var(--text-dim)">No VMs found or libvirt not accessible.<br>Ensure you are in the <strong>libvirt</strong> group and the socket is available.</div>';
+    container.innerHTML='<div class="dim">No VMs found or libvirt not accessible.<br>Ensure you are in the <strong>libvirt</strong> group (or run as root) and the socket is available.</div>';
     return;
   }
   container.innerHTML=vms.map(vm=>{
     const cls=vm.state==='running'?'running':vm.state==='paused'?'paused':'shutoff';
+    const up=vm.state==='running'||vm.state==='paused';
+    const n=esc(vm.name).replace(/'/g,"\\'").replace(/"/g,'&quot;');
     return `
     <div class="card vm-card ${cls}" style="margin-top:.75rem">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
         <div>
-          <h3 style="font-size:1rem;margin-bottom:.15rem">${vm.name}</h3>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim)">
-            State: <strong style="color:#fff">${vm.state}</strong> · Memory: ${vm.mem} · vCPUs: ${vm.vcpus}
+          <h3 style="font-size:1rem;margin-bottom:.15rem">${esc(vm.name)}</h3>
+          <div class="mono dim small">
+            State: <strong style="color:#fff">${esc(vm.state)}</strong> · Memory: ${esc(vm.mem)} · vCPUs: ${esc(vm.vcpus)}
           </div>
         </div>
-        <button class="btn" onclick="openResizeModal('${vm.name}')">Resize Disk</button>
+        <div class="btn-group" style="margin:0">
+          ${up
+            ?`<button class="btn btn-sm" onclick="vmAction('${n}','reboot')">Reboot</button>
+              <button class="btn btn-sm" onclick="vmAction('${n}','shutdown')">Shutdown</button>
+              <button class="btn btn-sm btn-danger" onclick="vmAction('${n}','destroy')">Force Off</button>`
+            :`<button class="btn btn-sm btn-primary" onclick="vmAction('${n}','start')">Start</button>`}
+          <button class="btn btn-sm" onclick="openResizeModal('${n}')">Resize Disk</button>
+        </div>
       </div>
     </div>`;
   }).join('');
 }
-
-// Resize modal (simple inline)
-function openResizeModal(name){
+async function vmAction(name,action){
+  if(action==='destroy'&&!await confirmDlg('Force off VM',`Force power-off "${name}"? Unsaved data in the guest will be lost.`))return;
+  const j=await postJSON('/api/vm/action',{name,action});
+  if(j.error)toast(`${action} failed: ${j.error}`,'err');
+  else{toast(j.result||'OK');loadVMs();}
+}
+async function openResizeModal(name){
   const diskPath=prompt(`Disk path for ${name} (e.g. /var/lib/libvirt/images/${name}.qcow2):`);
   if(!diskPath) return;
   const size=prompt('New size in GB (e.g. 40):');
   if(!size) return;
-  fetch('/api/vm_resize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,disk_path:diskPath,new_size_gb:parseInt(size)})})
-    .then(r=>r.json()).then(d=>alert('Resize result: '+(d.result||d.error||'unknown')));
+  const j=await postJSON('/api/vm_resize',{name,disk_path:diskPath,new_size_gb:parseInt(size)});
+  if(j.error)toast('Resize failed: '+j.error,'err');
+  else toast('Resize result: '+(j.result||'unknown'));
 }
 
 // ---------------------------------------------------------------
-// Init
+// Logs
 // ---------------------------------------------------------------
-updateStatus();
-updateChecks();
-loadVMs();
+async function loadLogs(){
+  const view=document.getElementById('logView');
+  const lines=document.getElementById('logLines').value;
+  const prio=document.getElementById('logPrio').value;
+  const grep=document.getElementById('logGrep').value;
+  const d=await fetchJSON(`/api/logs?lines=${lines}&prio=${prio}&grep=${encodeURIComponent(grep)}`);
+  view.textContent=d&&d.logs?d.logs:'No log output.';
+  view.scrollTop=view.scrollHeight;
+}
+
+// ---------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------
+const TAB_LOADERS={overview:null,processes:loadProcesses,services:loadServices,docker:loadDocker,vms:loadVMs,network:()=>{loadNetwork();loadPorts();},logs:loadLogs};
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+    const fn=TAB_LOADERS[btn.dataset.tab];
+    if(fn)fn();
+  });
+});
+
+// ---------------------------------------------------------------
+// Init + intervals
+// ---------------------------------------------------------------
+(async()=>{
+  const v=await fetchJSON('/api/version');
+  if(v)document.getElementById('footerVersion').textContent='v'+(v.version||'');
+})();
+updateStatus();updateChecks();loadDisks();loadPorts();
+loadProcesses();loadServices();loadDocker();loadVMs();loadNetwork();loadLogs();
 setInterval(updateStatus,3000);
 setInterval(updateChecks,8000);
-setInterval(loadVMs,15000);
+setInterval(()=>{loadDisks();},20000);
+setInterval(()=>{if(document.getElementById('procAuto').checked)loadProcesses();},5000);
+setInterval(()=>{if(document.getElementById('logAuto').checked&&document.getElementById('tab-logs').classList.contains('active'))loadLogs();},5000);
 </script>
 
 </body>
