@@ -1,6 +1,6 @@
 # Monitoring — Architecture Map & Audit Baseline
 
-**Version:** 2.4.0 · **Date:** 2026-08-30 · **Repo:** mylab12345/Montoring
+**Version:** 2.4.1 · **Date:** 2026-08-30 · **Repo:** mylab12345/Monitoring
 
 This document records the complete architecture/dependency map and the
 baseline test results captured **before** any modification, plus the results
@@ -84,9 +84,10 @@ Removed as unused: aiohttp, requests, urllib3, authlib, tornado (the committed
    compare, `WWW-Authenticate`), `--bind` option, firewall opened only when
    exposed + loud warning without a token, `Cache-Control: no-store` on
    authenticated API responses, UI token prompt (first 401).
-3. **HIGH — repo-name typo** (`mylab12345/Monitoring` vs `Montoring`) in
+3. **HIGH — repo-name typo** (`Montoring` instead of `Monitoring`) in
    README.md + update.sh broke the documented one-liner install/update (raw
-   URLs are case-sensitive → 404). Fixed and covered by tests.
+   URLs are case-sensitive → 404). Fixed by renaming the GitHub repository to
+   `mylab12345/Monitoring` and updating every reference; covered by tests.
 4. **HIGH — Flask dev server in production.** Fix: waitress (threaded WSGI)
    when installed, Flask fallback; `MONITORING_SERVER` override.
 5. **HIGH — systemd hardening broke privileged helpers**: ProtectKernelTunables/

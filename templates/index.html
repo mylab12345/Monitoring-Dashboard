@@ -958,6 +958,12 @@ const ICON_PATHS={
 const icon=(n,s=15)=>'<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(ICON_PATHS[n]||'')+'</svg>';
 
 let busy=0;
+// Active-request indicator: spins the toolbar refresh icon while any API
+// request is in flight (CSS: .icon-btn.spinning svg { animation: spin }).
+function spinRefresh(){
+  const b=$('#refreshBtn');
+  if(b)b.classList.toggle('spinning',busy>0);
+}
 let lastApiError='';
 let apiToken='';
 try{apiToken=localStorage.getItem('monitoring:token')||'';}catch(e){}
@@ -1019,6 +1025,17 @@ async function postJSON(url,body){
     return await r.json();
   }catch(e){return {error:'request failed'};}
   finally{clearTimeout(timeout);busy--;spinRefresh();}
+}
+// Auth-aware plain fetch for endpoints that return JSON but are not wrapped
+// by fetchJSON/postJSON (e.g. the diagnostics report). Attaches the Bearer
+// token, prompts once on 401, and never recurses forever.
+async function apiFetch(url,opts){
+  const r=await fetch(url,Object.assign({},opts||{},{headers:authHeaders(Object.assign({},(opts&&opts.headers)||{}, {'Accept':'application/json'}))}));
+  if(r.status===401){
+    if(await promptApiToken())return apiFetch(url,opts);
+    throw new Error('Authentication required');
+  }
+  return r;
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsq(s){return esc(s).replace(/'/g,"\\'");}
@@ -1648,7 +1665,7 @@ async function loadTroubleshooting(silent){
     const hg=$('#healthGrade');if(hg){hg.textContent='diagnosing…';hg.className='pill grade';}
   }
   try{
-    const r=await fetch('/api/troubleshooting');
+    const r=await apiFetch('/api/troubleshooting');
     if(!r.ok)throw new Error('HTTP '+r.status);
     const data=await r.json();
     diagData=data;
@@ -1961,9 +1978,8 @@ async function applyDiagFix(id,fixId){
   if(btn){btn.disabled=true;btn.innerHTML=icon('refresh',13)+' Fixing & verifying…';}
   let failed=false;
   try{
-    const r=await fetch('/api/troubleshooting/fix-all',{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fixes:[fixId]})});
-    const result=await r.json();
+    const result=await postJSON('/api/troubleshooting/fix-all',{fixes:[fixId]});
+    if(!result||result.error)throw new Error((result&&result.error)||'request failed');
     const okEntry=(result.fixed||[]).find(f=>f.fix===fixId);
     const badEntry=(result.failed||[]).find(f=>f.fix===fixId);
     if(badEntry){
@@ -2007,10 +2023,8 @@ async function applyDiagFix(id,fixId){
 async function verifyDiagIssues(ids){
   if(!ids||!ids.length)return{};
   try{
-    const r=await fetch('/api/troubleshooting/verify',{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({issue_ids:ids})});
-    if(!r.ok)return{};
-    const j=await r.json();
+    const j=await postJSON('/api/troubleshooting/verify',{issue_ids:ids});
+    if(!j||j.error)return{};
     return (j&&j.results)||{};
   }catch(e){return{};}
 }
@@ -2033,9 +2047,8 @@ async function fixAllIssues(){
   const ids=all.map(i=>i.id);
   let result={fixed:[],failed:[],skipped:[]},v={};
   try{
-    const r=await fetch('/api/troubleshooting/fix-all',{
-      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fixes:fixIds})});
-    result=await r.json();
+    result=await postJSON('/api/troubleshooting/fix-all',{fixes:fixIds});
+    if(!result||result.error)throw new Error((result&&result.error)||'request failed');
     v=await verifyDiagIssues(ids);
     Object.keys(v).forEach(k=>{diagVerifyState[k]=v[k];});
     (result.fixed||[]).forEach(f=>{
@@ -2639,8 +2652,15 @@ function toggleLogWrap(){
   S.logWrap=$('#logWrap').checked;saveSettings();
 }
 async function copyLogs(){
-  try{await navigator.clipboard.writeText(logText);toast('Logs copied to clipboard');}
-  catch(e){toast('Copy failed','err');}
+  try{await navigator.clipboard.writeText(logText);toast('Logs copied to clipboard');return;}
+  catch(e){}
+  // Fallback for non-secure contexts / older browsers
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=logText;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+    toast('Logs copied to clipboard');
+  }catch(e2){toast('Copy failed','err');}
 }
 function downloadLogs(){
   const blob=new Blob([logText],{type:'text/plain'});
@@ -2665,8 +2685,9 @@ async function fillHelp(){
 }
 function openDesktopApp(){
   toast('Launching desktop window…','info');
-  fetch('/api/open_app',{method:'POST'}).then(r=>r.json()).then(j=>{
-    if(j.error)toast(j.error,'err');
+  postJSON('/api/open_app',{}).then(j=>{
+    if(j&&j.error)toast(j.error,'err');
+    else if(j&&j.result)toast(j.result,'ok');
   }).catch(()=>{});
 }
 function openInBrowser(){window.open(location.origin,'_blank');}
