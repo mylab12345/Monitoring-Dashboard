@@ -20,10 +20,13 @@ import subprocess
 import threading
 import time
 import json
+import hmac
+import logging
+import importlib.util
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, render_template, jsonify, request, abort
+from flask import Flask, render_template, jsonify, request
 from markupsafe import escape
 
 # Import rate limiter
@@ -42,9 +45,39 @@ except ImportError:
     pass
 
 APP_HOME = os.environ.get("MONITORING_HOME", os.path.dirname(os.path.abspath(__file__)))
-APP_PORT = int(os.environ.get("MONITORING_PORT", "8050"))
+
+def _env_int(name, default, lo, hi):
+    """Read an integer env var safely; fall back to default when invalid."""
+    try:
+        v = int(os.environ.get(name, str(default)).strip())
+    except (TypeError, ValueError):
+        v = default
+    return v if lo <= v <= hi else default
+
+APP_PORT = _env_int("MONITORING_PORT", 8050, 1, 65535)
+APP_BIND = os.environ.get("MONITORING_BIND", "0.0.0.0")
+if not re.fullmatch(r"[0-9A-Za-z_.:\-*]+", APP_BIND):
+    APP_BIND = "0.0.0.0"
+# Optional shared-secret token. When set, every /api/* request must carry
+# "Authorization: Bearer <token>" (or "X-Monitoring-Token: <token>").
+# Comparison is constant-time. The dashboard page itself stays loadable so
+# the UI can prompt for the token; no data is served without it.
+AUTH_TOKEN = os.environ.get("MONITORING_TOKEN", "").strip()
 PRIVILEGE_DIR = os.environ.get("MONITORING_PRIVILEGE_DIR", "/usr/local/lib/monitoring")
 SUDOERS_FILE = "/etc/sudoers.d/monitoring"
+
+# ------------------------------------------------------------------
+# Logging / audit trail (stderr → journald under systemd; optionally a file)
+# ------------------------------------------------------------------
+LOG = logging.getLogger("monitoring")
+
+def _audit(event, **fields):
+    """Record a privileged/mutating action for the operator's audit trail."""
+    try:
+        details = " ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
+        LOG.info("action=%s%s%s", event, " " if details else "", details)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------
 # Version
@@ -67,12 +100,18 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
 
-# Initialize rate limiter
+# Initialize rate limiter.
+#
+# IMPORTANT: the dashboard itself polls the read endpoints every few seconds,
+# so a low global default (e.g. "50 per hour") throttles the app's own UI and
+# shows 429s on the live metrics. Read endpoints are cheap and cached, so we
+# use a generous per-route safety net and put the strict limits on the
+# privileged/mutating endpoints only (see the @rate_limit decorators).
 if HAS_LIMITER:
     limiter = Limiter(
         app=app,
         key_func=get_remote_address,
-        default_limits=["200 per day", "50 per hour"],
+        default_limits=["600 per minute"],
         storage_uri="memory://"
     )
 else:
@@ -88,6 +127,54 @@ def rate_limit(limit_string):
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+# ------------------------------------------------------------------
+# Optional token authentication + security headers + error handlers
+# ------------------------------------------------------------------
+def _token_ok():
+    supplied = request.headers.get("X-Monitoring-Token", "")
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer "):
+        supplied = authz[7:].strip()
+    if not supplied:
+        return False
+    return hmac.compare_digest(supplied.encode("utf-8", "ignore"), AUTH_TOKEN.encode("utf-8"))
+
+@app.before_request
+def _require_token():
+    """Gate every /api/* route behind the token when MONITORING_TOKEN is set.
+
+    The index page and static assets stay loadable (they contain no data) so
+    the UI can prompt for the token; without it every API call returns 401.
+    """
+    if not AUTH_TOKEN or not request.path.startswith("/api/"):
+        return None
+    if _token_ok():
+        return None
+    return jsonify({"error": "unauthorized"}), 401, {"WWW-Authenticate": "Bearer"}
+
+@app.after_request
+def _security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("X-XSS-Protection", "0")
+    if AUTH_TOKEN and request.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+@app.errorhandler(404)
+def _not_found(e):
+    return jsonify({"error": "not found"}), 404
+
+@app.errorhandler(405)
+def _method_not_allowed(e):
+    return jsonify({"error": "method not allowed"}), 405
+
+@app.errorhandler(500)
+def _internal_error(e):
+    LOG.exception("Unhandled error on %s", request.path)
+    return jsonify({"error": "internal server error"}), 500
 
 # ------------------------------------------------------------------
 # Safe command runner (argv-only, sudo via whitelisted helpers)
@@ -180,8 +267,9 @@ def safe_name(name):
     return bool(name) and re.fullmatch(r"[A-Za-z0-9_@.\-: _\[\]]{1,120}", name) is not None
 
 def validate_systemctl_action(action):
-    """Validate systemctl action against whitelist."""
-    allowed_actions = ("start", "stop", "restart", "reload", "enable", "disable", "status")
+    """Validate systemctl action against the whitelist enforced by the
+    monitoring-systemctl privileged helper (must stay in sync with it)."""
+    allowed_actions = ("start", "stop", "restart", "reload", "enable", "disable")
     return action in allowed_actions
 
 def validate_service_name(name):
@@ -230,7 +318,6 @@ def index():
     return render_template("index.html")
 
 @app.route("/api/health")
-@rate_limit("100 per minute")
 def api_health():
     """Cheap liveness/readiness probe used by the UI and service monitors.
 
@@ -246,7 +333,6 @@ def api_health():
     })
 
 @app.route("/api/version")
-@rate_limit("30 per minute")
 def api_version():
     return jsonify({
         "app": "Monitoring",
@@ -316,7 +402,6 @@ def _privilege_status():
     return report
 
 @app.route("/api/privileges")
-@rate_limit("30 per minute")
 def api_privileges():
     try:
         return jsonify(_cached("privileges", 30, _privilege_status))
@@ -573,9 +658,10 @@ def _build_checks():
     updates = _updatable_packages()
     results.append({"name": "Pending Updates", "status": "warn" if updates["count"] > 0 else "ok",
                     "detail": f"{updates['count']} packages upgradable ({updates['manager'] or 'n/a'})"})
-    code, out, err = run(["dpkg", "--audit"])
-    broken = "found" if "error" in (out + err).lower() else "none"
-    results.append({"name": "Broken Packages", "status": "warn" if broken != "none" else "ok", "detail": broken})
+    if which("dpkg"):
+        code, out, err = run(["dpkg", "--audit"])
+        broken = "found" if "error" in (out + err).lower() else "none"
+        results.append({"name": "Broken Packages", "status": "warn" if broken != "none" else "ok", "detail": broken})
     failed = "0"
     if which("systemctl"):
         code, out, err = run(["systemctl", "--failed", "--no-pager", "--quiet"])
@@ -1000,7 +1086,7 @@ def _diag_scan():
 
     # -------------------------------------------------- 6. Packages
     mgr = _pkg_manager()
-    code, out, err = run(["dpkg", "--audit"])
+    code, out, err = run(["dpkg", "--audit"]) if which("dpkg") else (-1, "", "")
     if (out or err) and ("error" in (out + err).lower()):
         put("critical", _diag_issue(
             "broken_packages", "Broken Packages",
@@ -1223,6 +1309,7 @@ def _diag_scan():
     }
 
 @app.route("/api/troubleshooting")
+@rate_limit("20 per minute")
 def api_troubleshooting():
     """Guided diagnostics: enriched issues, categories, evidence & fixes.
 
@@ -1231,7 +1318,9 @@ def api_troubleshooting():
     system context so the UI can render a guided troubleshooting center.
     """
     try:
-        return jsonify(_diag_scan())
+        # The scan shells out (dpkg, journalctl, find…); serve it from a short
+        # cache instead of re-running it on every tab switch / poll.
+        return jsonify(_cached("_diag", 10, _diag_scan))
     except Exception as e:
         return jsonify({"issues": {"critical": [], "warnings": [], "info": []},
                         "total": 0, "health_score": 100, "error": str(e)}), 500
@@ -1289,7 +1378,7 @@ def _verify_issue(iid):
             n = len([l for l in out.splitlines() if l.strip()])
             return res(n == 0, f"{n} failed service(s)", [_diag_ev("Failed units", str(n), "systemctl --failed")])
         if iid == "broken_packages":
-            _, out, err = run(["dpkg", "--audit"])
+            _, out, err = run(["dpkg", "--audit"]) if which("dpkg") else (-1, "", "")
             bad = "error" in (out + err).lower()
             return res(not bad, "dpkg audit clean" if not bad else "dpkg reports errors",
                        [_diag_ev("dpkg audit", "clean" if not bad else "errors", "dpkg --audit")])
@@ -1349,6 +1438,7 @@ def _verify_issue(iid):
     return res(False, "no automated verification for this issue")
 
 @app.route("/api/troubleshooting/verify", methods=["POST"])
+@rate_limit("30 per minute")
 def api_troubleshooting_verify():
     """Targeted post-fix verification for one or more issue ids."""
     data = request.json or {}
@@ -1361,13 +1451,17 @@ def api_troubleshooting_verify():
 
 
 @app.route("/api/troubleshooting/fix-all", methods=["POST"])
+@rate_limit("5 per minute")
 def api_troubleshooting_fix_all():
     """Fix all detected issues with sudo access."""
     results = {"fixed": [], "failed": [], "skipped": []}
     mgr = _pkg_manager()
-    
+
     data = request.json or {}
     fixes_to_run = data.get("fixes", [])
+    if not isinstance(fixes_to_run, list):
+        fixes_to_run = []
+    fixes_to_run = [str(f)[:80] for f in fixes_to_run if isinstance(f, str)][:20]
     
     # Scan in-process. A localhost curl could fail behind a proxy, with a
     # non-default port, or during startup even though this API request worked.
@@ -1492,6 +1586,9 @@ def api_troubleshooting_fix_all():
     if not fixes_needed:
         results["skipped"].append({"fix": "all", "output": "No fixes needed - system is healthy!"})
 
+    _audit("fix-all", fixed=",".join(r["fix"] for r in results["fixed"]),
+           failed=",".join(r["fix"] for r in results["failed"]),
+           skipped=",".join(r["fix"] for r in results["skipped"]))
     return jsonify(results)
 
 # ------------------------------------------------------------------
@@ -1532,10 +1629,12 @@ FIX_COMMANDS = {
 }
 
 @app.route("/api/fix", methods=["POST"])
+@rate_limit("10 per minute")
 def api_fix():
     action = (request.json or {}).get("action", "")
     mgr = _pkg_manager()
     msg = ""
+    _audit("fix", action=action, manager=mgr)
 
     def pkg(action_name):
         cmd = FIX_COMMANDS.get(mgr, {}).get(action_name, [])
@@ -1571,13 +1670,24 @@ def api_fix():
 # Upgradable packages (detailed)
 # ------------------------------------------------------------------
 _updatable_cache = {"data": None, "ts": 0}
+_updatable_lock = threading.Lock()
 _UPDATABLE_TTL = 300  # 5 minutes
 
 def _updatable_packages():
-    import time as _time
-    now = _time.time()
-    if _updatable_cache["data"] is not None and (now - _updatable_cache["ts"]) < _UPDATABLE_TTL:
+    if _updatable_cache["data"] is not None and (time.time() - _updatable_cache["ts"]) < _UPDATABLE_TTL:
         return _updatable_cache["data"]
+    # Double-checked locking: /api/checks, /api/troubleshooting and verify can
+    # race; never run two package-manager queries at once.
+    if not _updatable_lock.acquire(blocking=False):
+        return _updatable_cache["data"] or {"manager": None, "count": 0, "packages": []}
+    try:
+        if _updatable_cache["data"] is not None and (time.time() - _updatable_cache["ts"]) < _UPDATABLE_TTL:
+            return _updatable_cache["data"]
+        return _updatable_packages_uncached()
+    finally:
+        _updatable_lock.release()
+
+def _updatable_packages_uncached():
     mgr = _pkg_manager()
     pkgs = []
     try:
@@ -1613,7 +1723,7 @@ def _updatable_packages():
         pass
     result = {"manager": mgr, "count": len(pkgs), "packages": pkgs[:200]}
     _updatable_cache["data"] = result
-    _updatable_cache["ts"] = now
+    _updatable_cache["ts"] = time.time()
     return result
 
 @app.route("/api/updates")
@@ -1689,6 +1799,7 @@ def api_process_kill():
             p.wait(timeout=3)
         except psutil.TimeoutExpired:
             p.kill()
+        _audit("process-kill", pid=pid, name=name, via="direct")
         return jsonify({"result": f"Terminated {escape(name)} (pid {pid})"})
     except psutil.NoSuchProcess:
         return jsonify({"error": f"No process with pid {pid}"}), 404
@@ -1697,6 +1808,7 @@ def api_process_kill():
         code, out, err = run_privileged("monitoring-kill", ["--force", str(pid)], timeout=15)
         if code != 0:
             return jsonify({"error": escape(((err or out) or "kill failed").strip()[:200])}), 403
+        _audit("process-kill", pid=pid, via="helper")
         return jsonify({"result": f"Killed pid {pid} (privileged helper)"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1743,6 +1855,7 @@ def api_service_action():
     code, out, err = run_privileged("monitoring-systemctl", [action, name], timeout=30)
     if code != 0 and (err or out) and "Created symlink" not in (err or out):
         return jsonify({"error": escape(((err or out).strip()[:300]))}), 500
+    _audit("service-action", action=action, unit=name)
     return jsonify({"result": f"{action} {escape(name)}: ok"})
 
 # ------------------------------------------------------------------
@@ -1751,7 +1864,7 @@ def api_service_action():
 @app.route("/api/logs")
 def api_logs():
     lines = min(max(_int_or(request.args.get("lines", 60), 60), 10), 500)
-    prio = _int_or(request.args.get("prio", 0), 0)  # 0 = all
+    prio = min(max(_int_or(request.args.get("prio", 0), 0), 0), 7)  # journalctl -p range
     grep = request.args.get("grep", "")
     if grep:
         # Sanitize grep input to prevent command injection
@@ -1881,6 +1994,7 @@ def api_network():
 # Desktop app integration
 # ------------------------------------------------------------------
 @app.route("/api/open_app", methods=["POST"])
+@rate_limit("5 per minute")
 def api_open_app():
     """Open the native desktop window (monitoring-app) from the dashboard.
     Only meaningful when browsing on the same machine."""
@@ -1891,6 +2005,7 @@ def api_open_app():
         return jsonify({"error": "monitoring-app launcher not installed"}), 404
     subprocess.Popen([launcher], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)
+    _audit("open-app")
     return jsonify({"result": "Desktop window launched"})
 
 # ------------------------------------------------------------------
@@ -1941,21 +2056,24 @@ def api_vms():
 @rate_limit("20 per minute")
 def api_vm_action():
     data = request.json or {}
-    if not which("virsh") and not which("libvirt"):
+    # libvirt is a Python module, not a binary — check it properly.
+    libvirt_ok = which("virsh") or importlib.util.find_spec("libvirt") is not None
+    if not libvirt_ok:
         return jsonify({"error": "virsh/libvirt not available on this system"}), 400
     name = data.get("name", "")
     action = data.get("action", "")
-    
+
     # Strict validation for VM name and action
     if not validate_vm_name(name):
         return jsonify({"error": "invalid VM name"}), 400
     if action not in VM_ACTIONS:
         return jsonify({"error": "invalid action"}), 400
-    
+
     # Mutations go through the whitelisted helper (or libvirt group access).
     code, out, err = run_privileged("monitoring-vm", [action, name], timeout=60)
     if code != 0 and "error" in (out + err).lower():
         return jsonify({"error": escape((out + err).strip()[:300])}), 500
+    _audit("vm-action", action=action, name=name)
     return jsonify({"result": escape((out or err or f"{action} {escape(name)}: ok").strip()[:300])})
 
 @app.route("/api/vm_info/<name>")
@@ -1985,15 +2103,17 @@ def api_vm_resize():
     # Validate disk_path strictly using our validation function
     if not validate_disk_path(disk_path):
         return jsonify({"error": "invalid disk path"}), 400
+    # Reject out-of-range sizes instead of silently clamping them.
     try:
-        new_size_int = sanitize_int(new_size_gb, default=0, min_val=1, max_val=10000)
-        if new_size_int == 0:
-            return jsonify({"error": "invalid size value"}), 400
+        new_size_int = int(str(new_size_gb).strip())
     except (TypeError, ValueError):
-        return jsonify({"error": "invalid size value"}), 400
+        new_size_int = 0
+    if not 1 <= new_size_int <= 10000:
+        return jsonify({"error": "invalid size value (1–10000 GB)"}), 400
     # Resize through the whitelisted qemu helper which verifies the disk
     # actually belongs to the named domain before touching it.
     code, msg, err = run_privileged("monitoring-qemu", ["resize", name, disk_path, str(new_size_int)], timeout=120)
+    _audit("vm-resize", name=name, disk=disk_path, size_gb=new_size_int)
     return jsonify({"result": escape((msg or err or "").strip()[:400]), "disk": escape(disk_path), "size_gb": new_size_int})
 
 # ------------------------------------------------------------------
@@ -2005,11 +2125,39 @@ if __name__ == "__main__":
         p = os.path.join(here, d)
         if not os.path.isdir(p):
             os.makedirs(p, exist_ok=True)
-    
-    # Check for required environment variable for production
-    secret_key = os.environ.get('MONITORING_SECRET_KEY')
-    if not secret_key:
-        print("WARNING: MONITORING_SECRET_KEY not set. Using random key (sessions will be lost on restart).")
-        print("For production, set MONITORING_SECRET_KEY environment variable.")
-    
-    app.run(host="0.0.0.0", port=APP_PORT, debug=False, threaded=True)
+
+    # Logging: stderr goes to the journal under systemd; optionally mirror to
+    # the configured log file for the no-systemd/pidfile mode.
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log_file = os.environ.get("MONITORING_LOG_FILE")
+    if log_file:
+        try:
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            fh = logging.FileHandler(log_file)
+            fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+            LOG.addHandler(fh)
+        except Exception as exc:
+            LOG.warning("Could not open audit log file %s: %s", log_file, exc)
+
+    LOG.info("Starting Monitoring v%s (pid %d, port %d, bind %s, auth %s)",
+             APP_VERSION, os.getpid(), APP_PORT, APP_BIND,
+             "enabled" if AUTH_TOKEN else "disabled — set MONITORING_TOKEN to protect the API")
+    if not AUTH_TOKEN and APP_BIND != "127.0.0.1":
+        LOG.warning("No MONITORING_TOKEN set and binding %s — the dashboard grants full "
+                    "system control to anyone who can reach port %d. Set MONITORING_TOKEN "
+                    "or bind 127.0.0.1 (MONITORING_BIND) if this host is on a network.",
+                    APP_BIND, APP_PORT)
+
+    # Production server: prefer waitress (a real, hardened WSGI server) when
+    # installed; fall back to Flask's built-in server for minimal installs.
+    use_waitress = os.environ.get("MONITORING_SERVER", "waitress").lower() != "flask"
+    if use_waitress:
+        try:
+            from waitress import serve as _waitress_serve
+            _waitress_serve(app, host=APP_BIND, port=APP_PORT, threads=8,
+                            ident="monitoring", channel_timeout=120)
+        except ImportError:
+            app.run(host=APP_BIND, port=APP_PORT, debug=False, threaded=True)
+    else:
+        app.run(host=APP_BIND, port=APP_PORT, debug=False, threaded=True)

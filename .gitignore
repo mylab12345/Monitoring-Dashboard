@@ -5,6 +5,12 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Stale generated audit artifact (was committed by mistake; run pip-audit instead)
+pip_audit_report.json
+
+# Local install backups
+.backups/
+
 # Dependencies
 .venv/
 venv/

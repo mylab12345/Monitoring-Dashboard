@@ -17,6 +17,16 @@ UMask=0027
 Environment=PYTHONDONTWRITEBYTECODE=1
 LogsDirectory=monitoring
 StateDirectory=monitoring
+# Sandbox hardening (safe subset).
+# WARNING: ProtectKernelTunables/ProtectKernelModules/ProtectControlGroups,
+# RestrictSUIDSGID and NoNewPrivileges are deliberately NOT used — systemd
+# sets no_new_privs for them, which prevents sudo from gaining root and
+# breaks every privileged helper ("sudo: The 'no new privileges' flag is
+# set"). ProtectSystem=full/ProtectHome/PrivateTmp do not imply it and keep
+# the code and home directory read-only for the service account.
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 # Supplementary groups are granted via usermod during install, not here.
 # The service account uses passwordless sudo only for the whitelisted
 # helper commands installed in /usr/local/lib/monitoring. It does not get

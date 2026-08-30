@@ -959,13 +959,39 @@ const icon=(n,s=15)=>'<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill
 
 let busy=0;
 let lastApiError='';
-function spinRefresh(){const b=$('#refreshBtn');if(b)b.classList.toggle('spinning',busy>0);}
+let apiToken='';
+try{apiToken=localStorage.getItem('monitoring:token')||'';}catch(e){}
+function authHeaders(h){
+  const out=Object.assign({},h||{});
+  if(apiToken)out['Authorization']='Bearer '+apiToken;
+  return out;
+}
+function clearApiToken(){apiToken='';try{localStorage.removeItem('monitoring:token');}catch(e){}}
+async function promptApiToken(){
+  if(apiToken){clearApiToken();} // stored token was rejected — ask again
+  const r=await openModal({
+    title:'Authentication required',
+    text:'This dashboard is protected by an access token. Enter it to continue.',
+    fields:[{key:'token',label:'Access token',type:'password'}],
+    confirmText:'Unlock',cancelText:'Cancel',icon:'shield'
+  });
+  const tok=r&&r.values&&r.values.token?r.values.token.trim():'';
+  if(!tok)return false;
+  apiToken=tok;
+  try{localStorage.setItem('monitoring:token',apiToken);}catch(e){}
+  return true;
+}
 async function fetchJSON(url,opts){
   busy++;spinRefresh();
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),15000);
   try{
-    const r=await fetch(url,Object.assign({},opts||{},{signal:controller.signal,headers:Object.assign({},(opts&&opts.headers)||{}, {'Accept':'application/json'})}));
+    const r=await fetch(url,Object.assign({},opts||{},{signal:controller.signal,headers:authHeaders(Object.assign({},(opts&&opts.headers)||{}, {'Accept':'application/json'}))}));
+    if(r.status===401){
+      lastApiError='Authentication required';
+      if(await promptApiToken())return fetchJSON(url,opts);
+      throw new Error('Authentication required');
+    }
     const text=await r.text();
     let data=null;
     try{data=text?JSON.parse(text):null;}catch(e){throw new Error('API returned invalid JSON (HTTP '+r.status+')');}
@@ -980,11 +1006,19 @@ async function fetchJSON(url,opts){
 }
 async function postJSON(url,body){
   busy++;spinRefresh();
+  const controller=new AbortController();
+  // Privileged actions (apt upgrade, vm resize, fix-all) can legitimately run
+  // for minutes; give them a generous timeout instead of hanging forever.
+  const timeout=setTimeout(()=>controller.abort(),320000);
   try{
-    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const r=await fetch(url,{method:'POST',signal:controller.signal,headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body)});
+    if(r.status===401){
+      if(await promptApiToken())return postJSON(url,body);
+      return {error:'Authentication required'};
+    }
     return await r.json();
   }catch(e){return {error:'request failed'};}
-  finally{busy--;spinRefresh();}
+  finally{clearTimeout(timeout);busy--;spinRefresh();}
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function jsq(s){return esc(s).replace(/'/g,"\\'");}
