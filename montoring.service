@@ -11,7 +11,7 @@ WorkingDirectory=__HOME__
 ExecStart=__PYBIN__ __HOME__/app.py
 Restart=always
 RestartSec=5
-# Runs as root so maintenance actions (apt, systemctl, virsh, docker) work.
+# Runs as root so maintenance actions (apt, systemctl, virsh) work.
 User=root
 
 [Install]

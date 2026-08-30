@@ -738,7 +738,7 @@ select{
 .kv strong{font-family:var(--font-mono);font-size:.72rem;font-weight:500;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:62%;color:var(--text-2)}
 
 /* ================================================================
-   17. STAT TILES (docker header etc)
+   17. STAT TILES
    ================================================================ */
 .stat-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
 .stat-tile{
@@ -1239,6 +1239,9 @@ select{
   font-family:var(--font-mono);font-size:.68rem;color:var(--cyan);background:var(--code-bg);
   border:1px solid var(--border);padding:6px 9px;border-radius:6px;display:block;overflow-x:auto;white-space:pre;
 }
+.cmd-copy-row{display:flex;align-items:stretch;gap:5px;min-width:0}
+.cmd-copy-row code{flex:1;min-width:0}
+.cmd-copy-row .icon-btn{width:30px;height:auto;min-height:30px;flex:0 0 30px}
 .fix-actions{margin-top:10px;display:flex;gap:8px}
 
 /* verify steps + results */

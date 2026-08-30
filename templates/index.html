@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#08090d" />
-<meta name="description" content="Montoring — enterprise-grade, local-first Linux system console: live metrics, health, processes, services, Docker, VMs, network and logs. No accounts, no cloud." />
+<meta name="description" content="Montoring — enterprise-grade, local-first Linux system console: live metrics, health, processes, services, VMs, network and logs. No accounts, no cloud." />
 <meta name="color-scheme" content="dark light" />
 <title>Montoring — System Console</title>
 <script>
@@ -84,10 +84,6 @@
           <button class="nav-btn" data-tab="services" data-sub="systemd units">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>Services</span>
-          </button>
-          <button class="nav-btn" data-tab="docker" data-sub="Containers, images &amp; storage">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></svg>
-            <span>Docker</span><em class="dot ok" id="dotDocker" hidden></em>
           </button>
           <button class="nav-btn" data-tab="vms" data-sub="libvirt / QEMU guests">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M10 8l4 2.5L10 13z"/></svg>
@@ -485,48 +481,6 @@
         </article>
       </section>
 
-      <!-- ============ DOCKER ============ -->
-      <section class="tab-panel" id="tab-docker" aria-label="Docker">
-        <div class="stat-tiles" id="dockerStats"></div>
-        <article class="card hoverable">
-          <div class="card-head">
-            <div class="card-title">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></svg>
-              Containers
-              <span class="badge" id="dockerCount" hidden></span>
-            </div>
-            <div class="toolbar-right">
-              <button class="icon-btn" onclick="loadDocker()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
-              <button class="btn btn-danger btn-sm" onclick="dockerPrune()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Prune unused</button>
-            </div>
-          </div>
-          <div id="dockerBody"><div class="skel" style="height:120px"></div></div>
-        </article>
-        <div class="grid g2-1" style="margin-top:16px">
-          <article class="card hoverable">
-            <div class="card-head">
-              <div class="card-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                Images
-                <span class="badge" id="imgCount"></span>
-              </div>
-              <button class="icon-btn" onclick="loadDockerImages()" title="Refresh images"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
-            </div>
-            <div id="imgList"><div class="skel" style="height:90px"></div></div>
-          </article>
-          <article class="card hoverable">
-            <div class="card-head">
-              <div class="card-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M12 12v10M3.3 7l8.7 5 8.7-5"/></svg>
-                Storage Usage
-              </div>
-              <button class="icon-btn" onclick="loadDockerUsage()" title="Refresh usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
-            </div>
-            <div id="usageList"><div class="skel" style="height:90px"></div></div>
-          </article>
-        </div>
-      </section>
-
       <!-- ============ VMS ============ -->
       <section class="tab-panel" id="tab-vms" aria-label="Virtual machines">
         <article class="card hoverable">
@@ -665,7 +619,7 @@
                 <h3>System Health</h3>
                 <span class="pill grade" id="healthGrade">diagnosing…</span>
               </div>
-              <p class="dim" id="healthSummary">Running a full diagnostic scan across CPU, memory, disk, services, network, packages, kernel and Docker.</p>
+              <p class="dim" id="healthSummary">Running a full diagnostic scan across CPU, memory, disk, services, network, packages, kernel.</p>
               <div class="diag-meta">
                 <span class="score-chip crit"><b id="issueCritCount">–</b> critical</span>
                 <span class="score-chip warn"><b id="issueWarnCount">–</b> warnings</span>
@@ -1162,13 +1116,12 @@ function openShortcuts(){
 // ================================================================
 // Tabs
 // ================================================================
-const TAB_NAMES=['overview','processes','network','services','docker','vms','logs','alerts','troubleshooting','settings','help'];
+const TAB_NAMES=['overview','processes','network','services','vms','logs','alerts','troubleshooting','settings','help'];
 const TAB_LOADERS={
   overview:null,
   processes:loadProcesses,
   network:()=>{loadNetwork();loadPorts();},
   services:loadServices,
-  docker:()=>{loadDocker();loadDockerImages();loadDockerUsage();},
   vms:loadVMs,
   logs:loadLogs,
   alerts:renderAlerts,
@@ -1628,9 +1581,9 @@ let diagData=null, diagFilter='all', diagCatFilter='all', diagExpanded={}, diagO
 let diagFixOutcomes={}, diagVerifyState={};
 let diagHistory=[];
 try{diagHistory=JSON.parse(localStorage.getItem('montoring:diag-history')||'[]');}catch(e){diagHistory=[];}
-const DIAG_CATS=['cpu','memory','disk','services','network','packages','kernel','docker'];
-const DIAG_CAT_ICON={cpu:'cpu',memory:'mem',disk:'disk',services:'gear',network:'network',packages:'package',kernel:'zap',docker:'box'};
-const DIAG_CAT_LABEL={cpu:'CPU & Processes',memory:'Memory & Swap',disk:'Disk & Storage',services:'Services & Daemons',network:'Network',packages:'Packages & Updates',kernel:'Kernel & Hardware',docker:'Docker & Containers'};
+const DIAG_CATS=['cpu','memory','disk','services','network','packages','kernel'];
+const DIAG_CAT_ICON={cpu:'cpu',memory:'mem',disk:'disk',services:'gear',network:'network',packages:'package',kernel:'zap'};
+const DIAG_CAT_LABEL={cpu:'CPU & Processes',memory:'Memory & Swap',disk:'Disk & Storage',services:'Services & Daemons',network:'Network',packages:'Packages & Updates',kernel:'Kernel & Hardware'};
 
 function diagGrade(score){
   if(score>=95)return{label:'Excellent',color:'#34d399'};
@@ -1746,7 +1699,6 @@ function renderDiagCaps(){
   if(c.sudo)chips.push('<span class="cap-chip ok">'+icon('wrench',11)+'passwordless sudo</span>');
   if(c.pkg_manager)chips.push('<span class="cap-chip">'+icon('package',11)+esc(c.pkg_manager)+'</span>');
   if(c.systemd)chips.push('<span class="cap-chip">'+icon('gear',11)+'systemd</span>');
-  if(c.docker)chips.push('<span class="cap-chip">'+icon('box',11)+'docker</span>');
   if(c.journal)chips.push('<span class="cap-chip">'+icon('terminal',11)+'journal</span>');
   if(s.os)chips.push('<span class="cap-chip" title="'+esc(s.os)+'">'+icon('terminal',11)+esc(String(s.os).split(' ').slice(0,3).join(' '))+'</span>');
   el.innerHTML=chips.join('');
@@ -1787,7 +1739,7 @@ function renderDiagGroups(){
   const all=diagAllIssues(diagData);
   const fb=$('#fixAllBtn');if(fb)fb.disabled=!all.length;
   if(!all.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('checkCircle',30)+'</div><strong>All systems healthy!</strong><span class="dim">No issues detected across CPU, memory, disk, services, network, packages, kernel and Docker.</span></div>';
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('checkCircle',30)+'</div><strong>All systems healthy!</strong><span class="dim">No issues detected across CPU, memory, disk, services, network, packages, kernel.</span></div>';
     return;
   }
   const cats=diagData.categories||{};
@@ -1874,6 +1826,20 @@ function evidenceHtml(evs){
   if(!evs||!evs.length)return '<p class="dim small">No automated evidence was collected for this check.</p>';
   return '<div class="evidence-table">'+evs.map(e=>'<div class="ev-row"><span class="ev-k">'+esc(e.label)+'</span><span class="ev-v">'+esc(e.value)+'</span>'+(e.cmd?'<code class="ev-c">'+esc(e.cmd)+'</code>':'')+'</div>').join('')+'</div>';
 }
+function commandListHtml(cmds){
+  if(!cmds||!cmds.length)return '';
+  return '<div class="cmd-list">'+cmds.map(c=>'<div class="cmd-copy-row"><code>'+esc(c)+'</code><button class="icon-btn" type="button" title="Copy command" aria-label="Copy command" onclick="copyDiagCommand(this)">'+icon('copy',12)+'</button></div>').join('')+'</div>';
+}
+async function copyDiagCommand(btn){
+  const code=btn&&btn.parentElement&&btn.parentElement.querySelector('code');
+  if(!code)return;
+  const text=code.textContent||'';
+  try{await navigator.clipboard.writeText(text);toast('Command copied','ok');}
+  catch(e){
+    const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();toast('Command copied','ok');
+  }
+}
 function fixRecoHtml(i){
   const fix=i.recommended_fix||{};
   const fixId=i.fix||fix.id;
@@ -1883,13 +1849,13 @@ function fixRecoHtml(i){
     return '<div class="fix-reco noact">'
       +(fix.label?'<div class="fix-reco-head"><strong>'+esc(fix.label)+'</strong><span class="pill risk-'+esc(risk)+'">'+esc(risk)+' risk · manual</span></div>':'')
       +'<p class="dim small">'+esc(fix.description||'No automated fix is offered. Follow the commands below manually and use Verify to confirm.')+'</p>'
-      +(cmds.length?'<div class="cmd-list">'+cmds.map(c=>'<code>'+esc(c)+'</code>').join('')+'</div>':'')
+      +commandListHtml(cmds)
       +'</div>';
   }
   return '<div class="fix-reco">'
     +'<div class="fix-reco-head"><strong>'+esc(fix.label||fixId)+'</strong><span class="pill risk-'+esc(risk)+'">'+esc(risk)+' risk</span></div>'
     +'<p class="dim small">'+esc(fix.description||'Apply this fix; verification runs automatically afterwards.')+'</p>'
-    +(cmds.length?'<div class="cmd-list">'+cmds.map(c=>'<code>'+esc(c)+'</code>').join('')+'</div>':'')
+    +commandListHtml(cmds)
     +'<div class="fix-actions"><button class="btn btn-sm btn-primary" id="fixBtn-'+esc(i.id)+'" onclick="confirmDiagFix(\''+esc(i.id)+'\')">'+icon('wrench',13)+' Apply Fix</button></div>'
   +'</div>';
 }
@@ -2134,7 +2100,7 @@ function diagReportMarkdown(){
   L.push('- CPU: '+(sy.cpu_model||'—')+' ('+(sy.cores||'—')+' cores)');
   L.push('- Health score: **'+(d.health_score||0)+' / 100 — '+g.label+'**');
   L.push('- Issues: '+(d.total||0)+' ('+((d.issues||{}).critical||[]).length+' critical, '+((d.issues||{}).warnings||[]).length+' warnings, '+((d.issues||{}).info||[]).length+' info)');
-  L.push('- Capabilities: '+(caps.root?'root':'user')+(caps.sudo?' · passwordless sudo':'')+(caps.pkg_manager?' · '+caps.pkg_manager:'')+(caps.systemd?' · systemd':'')+(caps.docker?' · docker':''));
+  L.push('- Capabilities: '+(caps.root?'root':'user')+(caps.sudo?' · passwordless sudo':'')+(caps.pkg_manager?' · '+caps.pkg_manager:'')+(caps.systemd?' · systemd':''));
   L.push('');
   const cats=d.categories||{};
   DIAG_CATS.forEach(k=>{
@@ -2210,7 +2176,7 @@ function logActivity(kind,title,ok){
   try{localStorage.setItem('montoring:activity',JSON.stringify(activity));}catch(e){}
   renderActivity();
 }
-const ACTIVITY_ICONS={fix:'wrench',service:'gear',docker:'box',vm:'monitor',process:'cpu',system:'gear',theme:'sun',logs:'terminal'};
+const ACTIVITY_ICONS={fix:'wrench',service:'gear',vm:'monitor',process:'cpu',system:'gear',theme:'sun',logs:'terminal'};
 function renderActivity(){
   const mini=$('#activityMini'),full=$('#activityFull');
   const html=list=>list.map(a=>`
@@ -2256,6 +2222,7 @@ async function updateChecks(){
         <div class="name">${esc(c.name)}</div>
         <div class="detail" title="${esc(c.detail)}">${esc(c.detail)}</div>
       </div>
+      ${c.status==='ok'?'':'<button class="btn btn-sm" type="button" onclick="showTab(\'troubleshooting\')">Review &amp; fix</button>'}
       <span class="pill ${c.status==='ok'?'ok':c.status==='fail'?'fail':'warn'}">${c.status}</span>
     </div>`).join('');
   const dot=$('#dotOverview');
@@ -2271,8 +2238,7 @@ const FIX_META={
   autoremove:{icon:'trash',label:'Autoremove',desc:'Remove unused packages'},
   clean:{icon:'sparkles',label:'Clean Cache',desc:'Clear package caches'},
   'fix-broken':{icon:'wrench',label:'Fix Broken',desc:'Repair packages'},
-  'clear-logs':{icon:'terminal',label:'Clear Logs',desc:'Vacuum the journal'},
-  'docker-prune':{icon:'box',label:'Docker Prune',desc:'Remove unused docker data'}
+  'clear-logs':{icon:'terminal',label:'Clear Logs',desc:'Vacuum the journal'}
 };
 function renderFixButtons(){
   $('#fixGrid').innerHTML=Object.entries(FIX_META).map(([k,m])=>`
@@ -2532,105 +2498,6 @@ async function svcAction(name,action){
 }
 
 // ================================================================
-// Docker
-// ================================================================
-let dockerAvailable=true,dockerStatsData={containers:[],images:[],usage:[]};
-async function loadDocker(){
-  const el=$('#dockerBody');
-  try{
-  const d=await fetchJSON('/api/docker');
-  if(!d)throw new Error('the API did not respond');
-  dockerAvailable=!!d.available;
-  const dot=$('#dotDocker'),count=$('#dockerCount');
-  dot.hidden=true;count.hidden=true;
-  dockerStatsData.containers=d.containers||[];
-  if(!dockerAvailable){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('box',22)+'</div><strong>Docker is not available</strong><span class="dim">'+esc(d.info||'Install Docker to manage containers here.')+'</span></div>';
-    renderDockerStats();return;
-  }
-  const cs=d.containers||[];
-  const up=cs.filter(c=>c.status.toLowerCase().startsWith('up')).length;
-  if(cs.length){dot.hidden=false;dot.textContent=up;count.hidden=false;count.textContent=up+' up · '+cs.length+' total';}
-  if(!cs.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('box',22)+'</div><strong>No containers found</strong><span class="dim">Create or pull an image and containers will appear here.</span></div>';
-    renderDockerStats();return;
-  }
-  el.innerHTML='<div class="table-wrap"><table class="table">'
-    +'<thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th style="text-align:right">Actions</th></tr></thead>'
-    +'<tbody>'+cs.map(c=>{
-      const running=c.status.toLowerCase().startsWith('up');
-      const n=jsq(c.name);
-      const pill=c.status.toLowerCase().includes('exit')||c.status.toLowerCase().includes('dead')?'fail':running?'ok':'warn';
-      return '<tr>'
-        +'<td class="mono strong">'+esc(c.name)+'</td>'
-        +'<td class="mono dim" style="font-size:.7rem">'+esc(c.image)+'</td>'
-        +'<td><span class="pill '+pill+'">'+esc(c.status)+'</span></td>'
-        +'<td class="mono dim" style="font-size:.68rem">'+(esc(c.ports)||'—')+'</td>'
-        +'<td><span class="row-actions">'
-          +(running
-            ?'<button class="icon-btn" title="Stop" onclick="dockerAction(\''+n+'\',\'stop\')">'+icon('stop',12)+'</button>'
-              +'<button class="icon-btn" title="Restart" onclick="dockerAction(\''+n+'\',\'restart\')">'+icon('restart',12)+'</button>'
-            :'<button class="icon-btn" title="Start" onclick="dockerAction(\''+n+'\',\'start\')">'+icon('play',12)+'</button>')
-          +'<button class="icon-btn danger" title="Remove" onclick="dockerAction(\''+n+'\',\'remove\')">'+icon('trash',12)+'</button>'
-        +'</span></td></tr>';
-    }).join('')+'</tbody></table></div>';
-  renderDockerStats();
-  }catch(e){
-    dockerAvailable=false;
-    if(el)el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('box',22)+'</div><strong>Docker data unavailable</strong><span class="dim">'+esc(e.message||'request failed')+'</span><button class="btn btn-sm" style="margin-top:10px" onclick="loadDocker()">'+icon('refresh',13)+' Retry</button></div>';
-    renderDockerStats();
-  }
-}
-function renderDockerStats(){
-  const el=$('#dockerStats');
-  if(!el)return;
-  if(!dockerAvailable){el.innerHTML='';return;}
-  const cs=dockerStatsData.containers;
-  const up=cs.filter(c=>c.status.toLowerCase().startsWith('up')).length;
-  const imgs=dockerStatsData.images||[];
-  const imgsSize=imgs.reduce((acc,im)=>{const m=String(im.size||'').match(/([\d.]+)\s*GB/i);return acc+(m?parseFloat(m[1]):0);},0);
-  el.innerHTML=
-    '<div class="stat-tile ok"><span class="st-ic">'+icon('checkCircle')+'</span><div><div class="st-v">'+up+'</div><div class="st-k">Running</div></div></div>'
-    +'<div class="stat-tile warn"><span class="st-ic">'+icon('stop')+'</span><div><div class="st-v">'+(cs.length-up)+'</div><div class="st-k">Stopped</div></div></div>'
-    +'<div class="stat-tile info"><span class="st-ic">'+icon('layers')+'</span><div><div class="st-v">'+(imgs.length||'—')+'</div><div class="st-k">Images</div></div></div>'
-    +'<div class="stat-tile violet"><span class="st-ic">'+icon('package')+'</span><div><div class="st-v">'+(imgs.length?imgsSize.toFixed(1)+' GB':'—')+'</div><div class="st-k">Image storage</div></div></div>';
-}
-async function loadDockerImages(){
-  const el=$('#imgList');
-  const d=await fetchJSON('/api/docker/images');
-  if(!d||!d.available){el.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('box',20)+'</div><strong>'+esc((d&&d.info)||'Images unavailable')+'</strong></div>';dockerStatsData.images=[];renderDockerStats();return;}
-  dockerStatsData.images=d.images||[];
-  $('#imgCount').textContent=(d.images||[]).length+' local';
-  if(!(d.images||[]).length){el.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('box',20)+'</div><strong>No images</strong><span class="dim">Pull an image with <span class="mono">docker pull</span> to get started.</span></div>';renderDockerStats();return;}
-  el.innerHTML='<div class="table-wrap"><table class="table"><thead><tr><th>Repository</th><th>ID</th><th>Size</th><th>Created</th></tr></thead><tbody>'
-    +d.images.map(im=>'<tr><td class="mono strong">'+esc(im.repo)+'</td><td class="mono dim">'+esc(im.id)+'</td><td class="mono dim">'+esc(im.size)+'</td><td class="mono dim" style="font-size:.7rem">'+esc(im.created)+'</td></tr>').join('')
-    +'</tbody></table></div>';
-  renderDockerStats();
-}
-async function loadDockerUsage(){
-  const el=$('#usageList');
-  const d=await fetchJSON('/api/docker/usage');
-  if(!d||!d.available||!d.rows||!d.rows.length){el.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('disk',20)+'</div><strong>Usage unavailable</strong><span class="dim">Run <span class="mono">docker system df</span> for details.</span></div>';return;}
-  el.innerHTML=d.rows.map(r=>`
-    <div class="kv"><span>${esc(r.type)}</span><strong>${esc(r.count)} · ${esc(r.size)} (reclaimable ${esc(r.reclaimable)})</strong></div>`).join('');
-}
-async function dockerAction(name,action){
-  if(action==='remove'&&!await confirmDlg('Remove container','Remove container “'+name+'”? This permanently deletes it.',true))return;
-  logActivity('docker',action+' container '+name);
-  const j=await postJSON('/api/docker/action',{name,action});
-  if(j.error){toast(action+' failed: '+j.error,'err');logActivity('docker',action+' '+name+' failed',false);}
-  else{toast(j.result||'OK');loadDocker();}
-}
-async function dockerPrune(){
-  if(!dockerAvailable){toast('Docker not available','err');return;}
-  if(!await confirmDlg('Prune Docker','Remove all stopped containers, dangling images and unused networks?',true))return;
-  logActivity('docker','Prune unused data');
-  const j=await postJSON('/api/docker/prune',{});
-  if(j.error){toast('Prune failed: '+j.error,'err');logActivity('docker','Prune failed',false);}
-  else{toast('Docker pruned');loadDocker();loadDockerUsage();}
-}
-
-// ================================================================
 // VMs
 // ================================================================
 const VM_STATE_PILL={running:'ok',paused:'warn',shutoff:'neutral'};
@@ -2827,13 +2694,12 @@ function openPalette(){
     {g:'Go to',label:'Processes',icon:'cpu',hint:MOD+'2',run:()=>showTab('processes')},
     {g:'Go to',label:'Network',icon:'network',hint:MOD+'3',run:()=>showTab('network')},
     {g:'Go to',label:'Services',icon:'gear',hint:MOD+'4',run:()=>showTab('services')},
-    {g:'Go to',label:'Docker',icon:'box',hint:MOD+'5',run:()=>showTab('docker')},
-    {g:'Go to',label:'Virtual Machines',icon:'monitor',hint:MOD+'6',run:()=>showTab('vms')},
-    {g:'Go to',label:'Logs',icon:'terminal',hint:MOD+'7',run:()=>showTab('logs')},
-    {g:'Go to',label:'Alerts & Activity',icon:'pulse',hint:MOD+'8',run:()=>showTab('alerts')},
-    {g:'Go to',label:'Diagnose & Troubleshooting',icon:'zap',hint:MOD+'9',run:()=>showTab('troubleshooting')},
-    {g:'Go to',label:'Settings',icon:'gear',hint:MOD+'0',run:()=>showTab('settings')},
-    {g:'Go to',label:'Help & About',icon:'help',run:()=>showTab('help')},
+    {g:'Go to',label:'Virtual Machines',icon:'monitor',hint:MOD+'5',run:()=>showTab('vms')},
+    {g:'Go to',label:'Logs',icon:'terminal',hint:MOD+'6',run:()=>showTab('logs')},
+    {g:'Go to',label:'Alerts & Activity',icon:'pulse',hint:MOD+'7',run:()=>showTab('alerts')},
+    {g:'Go to',label:'Diagnose & Troubleshooting',icon:'zap',hint:MOD+'8',run:()=>showTab('troubleshooting')},
+    {g:'Go to',label:'Settings',icon:'gear',hint:MOD+'9',run:()=>showTab('settings')},
+    {g:'Go to',label:'Help & About',icon:'help',hint:MOD+'0',run:()=>showTab('help')},
     {g:'Actions',label:'Refresh current view',icon:'refresh',hint:'R',run:refreshCurrent},
     {g:'Actions',label:'Refresh everything',icon:'refresh',run:refreshAll},
     {g:'Actions',label:'Toggle dark / light theme',icon:'sun',hint:MOD+'T',run:cycleTheme},
@@ -2893,7 +2759,7 @@ function refreshCurrent(){
 }
 function refreshAll(){
   updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();
-  loadProcesses();loadServices();loadDocker();loadDockerImages();loadDockerUsage();loadVMs();loadNetwork();loadLogs();
+  loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
   if(currentTab==='troubleshooting')loadTroubleshooting(true);
 }
 function focusSearch(){
@@ -2948,7 +2814,7 @@ chartBoxEvents();
 $('#logWrap').checked=!!S.logWrap;
 toggleLogWrap(); // apply wrap setting
 updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();
-loadProcesses();loadServices();loadDocker();loadDockerImages();loadDockerUsage();loadVMs();loadNetwork();loadLogs();
+loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
 restartTimers();
 setInterval(updateChecks,15000);
 setInterval(()=>{if(!document.hidden)loadDisks();},30000);
