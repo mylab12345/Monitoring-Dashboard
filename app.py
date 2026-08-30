@@ -15,6 +15,7 @@ import re
 import shlex
 import subprocess
 import shutil
+import threading
 import time
 import json
 from datetime import datetime
@@ -98,6 +99,121 @@ def api_version():
         "sudo": PASSWORDLESS_SUDO,
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
+
+# ------------------------------------------------------------------
+# Metrics history (server-side ring buffer, powers charts that survive
+# page reloads — 2s resolution, last 60 minutes kept in memory only)
+# ------------------------------------------------------------------
+HISTORY_MAX = 1800  # 60 min @ 2s
+_HISTORY = {"samples": [], "lock": threading.Lock()}
+
+def _read_temp_c():
+    """Best-effort CPU temperature in °C (float) or None."""
+    try:
+        import psutil
+        temps = psutil.sensors_temperatures() if hasattr(psutil, "sensors_temperatures") else {}
+        for _, entries in (temps or {}).items():
+            if entries and entries[0].current:
+                return round(entries[0].current, 1)
+    except Exception:
+        pass
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            return round(int(f.read().strip()) / 1000, 1)
+    except Exception:
+        return None
+
+def _sampler_loop():
+    import psutil
+    psutil.cpu_percent(interval=None)  # prime
+    prev_net = None
+    while True:
+        try:
+            now = time.time()
+            cpu = psutil.cpu_percent(interval=None)
+            mem = psutil.virtual_memory()
+            net = psutil.net_io_counters()
+            sent_bps = recv_bps = 0
+            if prev_net is not None and now > prev_net[0]:
+                dt = now - prev_net[0]
+                sent_bps = max(0, (net.bytes_sent - prev_net[1]) / dt)
+                recv_bps = max(0, (net.bytes_recv - prev_net[2]) / dt)
+            prev_net = (now, net.bytes_sent, net.bytes_recv)
+            disk = psutil.disk_usage("/")
+            sample = {
+                "t": round(now, 2),
+                "cpu": round(cpu, 1),
+                "ram": round(mem.percent, 1),
+                "disk": round(disk.percent, 1),
+                "sent_bps": round(sent_bps), "recv_bps": round(recv_bps),
+                "temp": _read_temp_c(),
+                "load1": round(os.getloadavg()[0], 2),
+            }
+            with _HISTORY["lock"]:
+                _HISTORY["samples"].append(sample)
+                if len(_HISTORY["samples"]) > HISTORY_MAX:
+                    del _HISTORY["samples"][:len(_HISTORY["samples"]) - HISTORY_MAX]
+        except Exception:
+            pass
+        time.sleep(2)
+
+threading.Thread(target=_sampler_loop, daemon=True, name="montoring-sampler").start()
+
+@app.route("/api/history")
+def api_history():
+    """Return recent metric samples. ?points=N (default 150, max 1800)."""
+    points = min(max(_int_or(request.args.get("points", 150), 150), 10), HISTORY_MAX)
+    with _HISTORY["lock"]:
+        samples = list(_HISTORY["samples"])
+    if not samples:
+        return jsonify({"samples": []})
+    n = len(samples)
+    step = max(1, -(-n // 400))  # downsample to <=400 points for payload
+    sliced = samples[max(0, n - points):]
+    out = sliced[::step]
+    if sliced and (not out or out[-1] is not sliced[-1]):
+        out.append(sliced[-1])
+    return jsonify({"samples": out, "resolution_s": 2})
+
+# ------------------------------------------------------------------
+# System information (static facts for the info panel)
+# ------------------------------------------------------------------
+def _cpu_model():
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return "unknown"
+
+def _virtualization():
+    if which("systemd-detect-virt"):
+        code, out, _ = run("systemd-detect-virt 2>/dev/null")
+        v = (out or "").strip()
+        if code == 0 and v and v != "none":
+            return v
+    return "bare metal"
+
+@app.route("/api/systeminfo")
+def api_systeminfo():
+    try:
+        import psutil
+        import platform
+        return jsonify({
+            "hostname": os.uname().nodename,
+            "os": _pretty_distro(),
+            "kernel": f"{os.uname().sysname} {os.uname().release}",
+            "arch": os.uname().machine,
+            "cpu_model": _cpu_model(),
+            "cpu_cores": psutil.cpu_count(logical=True) or 1,
+            "virtualization": _virtualization(),
+            "python": platform.python_version(),
+            "boot_time": int(psutil.boot_time()),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ------------------------------------------------------------------
 # System status (live metrics)
@@ -344,6 +460,7 @@ _PRIMED = {"flag": False}
 
 @app.route("/api/processes")
 def api_processes():
+    limit = min(max(_int_or(request.args.get("limit"), 25), 5), 200)
     try:
         import psutil
         procs = []
@@ -363,15 +480,15 @@ def api_processes():
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
         _PRIMED["flag"] = True  # subsequent polls return real CPU values
-        top_cpu = sorted(procs, key=lambda x: x["cpu"], reverse=True)[:15]
-        top_mem = sorted(procs, key=lambda x: x["mem"], reverse=True)[:15]
+        top_cpu = sorted(procs, key=lambda x: x["cpu"], reverse=True)[:limit]
+        top_mem = sorted(procs, key=lambda x: x["mem"], reverse=True)[:limit]
         seen, merged = set(), []
         for p in top_cpu + top_mem:
             if p["pid"] not in seen:
                 seen.add(p["pid"])
                 merged.append(p)
         merged.sort(key=lambda x: x["cpu"], reverse=True)
-        return jsonify({"processes": merged[:25], "total": len(procs)})
+        return jsonify({"processes": merged[:limit * 2], "total": len(procs)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -602,6 +719,38 @@ def api_docker_prune():
         return jsonify({"error": "docker not installed"}), 400
     _, out, err = run("docker system prune -f", timeout=120, sudo=True)
     return jsonify({"result": (out or err or "pruned")[-400:]})
+
+@app.route("/api/docker/images")
+def api_docker_images():
+    """Local images list (for the Docker tab inventory)."""
+    if not which("docker"):
+        return jsonify({"available": False, "images": []})
+    code, out, err = run(
+        "docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedSince}}'",
+        timeout=15, sudo=True)
+    if code != 0:
+        return jsonify({"available": False, "images": [], "info": (err or "").strip()[:200]})
+    images = []
+    for line in out.splitlines():
+        parts = (line.split("|") + ["", "", "", ""])[:4]
+        if parts[0] and not parts[0].startswith("<none>:<none>"):
+            images.append({"repo": parts[0], "id": parts[1][:12], "size": parts[2], "created": parts[3]})
+    return jsonify({"available": True, "images": images[:120]})
+
+@app.route("/api/docker/usage")
+def api_docker_usage():
+    """docker system df summary for the storage header."""
+    if not which("docker"):
+        return jsonify({"available": False, "rows": []})
+    code, out, _ = run("docker system df --format '{{.Type}}|{{.TotalCount}}|{{.Active}}|{{.Size}}|{{.Reclaimable}}'",
+                       timeout=20, sudo=True)
+    rows = []
+    for line in (out or "").splitlines():
+        parts = (line.split("|") + ["", "", "", "", ""])[:5]
+        if parts[0]:
+            rows.append({"type": parts[0], "count": parts[1], "active": parts[2],
+                         "size": parts[3], "reclaimable": parts[4]})
+    return jsonify({"available": code == 0 and bool(rows), "rows": rows})
 
 # ------------------------------------------------------------------
 # Desktop app integration

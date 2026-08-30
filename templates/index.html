@@ -3,11 +3,20 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<meta name="theme-color" content="#07090d" media="(prefers-color-scheme: dark)" />
-<meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
-<meta name="description" content="Real-time system monitoring dashboard for CPU, memory, disk, processes, services, Docker containers, and VMs" />
+<meta name="theme-color" content="#08090d" />
+<meta name="description" content="Montoring — enterprise-grade, local-first Linux system console: live metrics, health, processes, services, Docker, VMs, network and logs. No accounts, no cloud." />
 <meta name="color-scheme" content="dark light" />
-<title>Montoring — System Monitor</title>
+<title>Montoring — System Console</title>
+<script>
+/* Apply saved theme before first paint (avoids flash) */
+(function(){
+  try{
+    var t=localStorage.getItem('montoring:theme')||'system';
+    if(t==='system')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';
+    document.documentElement.dataset.theme=t;
+  }catch(e){document.documentElement.dataset.theme='dark';}
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="style" href="{{ url_for('static', filename='dashboard.css') }}">
@@ -17,42 +26,44 @@
 </head>
 <body>
 
-<!-- Skip links for accessibility -->
 <a href="#main-content" class="skip-link">Skip to main content</a>
 <a href="#nav-main" class="skip-link">Skip to navigation</a>
 
 <div class="bg-layer" aria-hidden="true"></div>
 
-<!-- Shared SVG gradient defs (rings) -->
+<!-- Shared SVG gradient defs (gauge rings) -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <linearGradient id="g-cpu"  x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#60a5fa"/></linearGradient>
     <linearGradient id="g-mem"  x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#818cf8"/></linearGradient>
     <linearGradient id="g-disk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#2dd4bf"/></linearGradient>
-    <linearGradient id="g-up"   x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
   </defs>
 </svg>
 
-<div class="app-shell">
+<div class="app-shell" id="appShell">
 
   <!-- ===================== SIDEBAR ===================== -->
   <aside class="sidebar" aria-label="Main navigation" id="nav-main">
     <button class="mobile-menu-toggle" id="menuToggle" aria-label="Toggle navigation menu" aria-expanded="false">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
+
     <div class="brand">
       <img src="{{ url_for('static', filename='icon.png') }}" alt="Montoring logo" class="brand-icon">
       <div class="brand-text">
         <h1>Montoring</h1>
         <span class="sub" id="brandVer">v--</span>
       </div>
+      <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar" aria-label="Collapse sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+      </button>
     </div>
 
     <div class="nav-scroll">
       <div class="nav-group">
         <div class="nav-label">Monitor</div>
-        <nav class="nav" role="navigation" aria-label="Monitor section">
-          <button class="nav-btn active" data-tab="overview" data-sub="Live system metrics" aria-current="page">
+        <nav class="nav" aria-label="Monitor section">
+          <button class="nav-btn active" data-tab="overview" data-sub="Live system metrics &amp; health" aria-current="page">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
             <span>Overview</span><em class="dot" id="dotOverview" hidden></em>
           </button>
@@ -60,17 +71,21 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
             <span>Processes</span>
           </button>
+          <button class="nav-btn" data-tab="network" data-sub="Interfaces, throughput &amp; listening ports">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            <span>Network</span>
+          </button>
         </nav>
       </div>
 
       <div class="nav-group">
         <div class="nav-label">Manage</div>
-        <nav class="nav" role="navigation" aria-label="Manage section">
+        <nav class="nav" aria-label="Manage section">
           <button class="nav-btn" data-tab="services" data-sub="systemd units">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>Services</span>
           </button>
-          <button class="nav-btn" data-tab="docker" data-sub="Containers">
+          <button class="nav-btn" data-tab="docker" data-sub="Containers, images &amp; storage">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></svg>
             <span>Docker</span><em class="dot ok" id="dotDocker" hidden></em>
           </button>
@@ -82,15 +97,25 @@
       </div>
 
       <div class="nav-group">
-        <div class="nav-label">Inspect</div>
-        <nav class="nav" role="navigation" aria-label="Inspect section">
-          <button class="nav-btn" data-tab="network" data-sub="Interfaces &amp; listening ports">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            <span>Network</span>
-          </button>
-          <button class="nav-btn" data-tab="logs" data-sub="System journal">
+        <div class="nav-label">Diagnose</div>
+        <nav class="nav" aria-label="Diagnose section">
+          <button class="nav-btn" data-tab="logs" data-sub="System journal, live">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
             <span>Logs</span>
+          </button>
+          <button class="nav-btn" data-tab="alerts" data-sub="Threshold alerts &amp; activity audit trail">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span>Alerts</span><em class="dot" id="dotAlerts" hidden></em>
+          </button>
+        </nav>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">System</div>
+        <nav class="nav" aria-label="System section">
+          <button class="nav-btn" data-tab="settings" data-sub="Preferences, thresholds &amp; data">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Settings</span>
           </button>
           <button class="nav-btn" data-tab="help" data-sub="Shortcuts, CLI &amp; desktop app">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
@@ -101,7 +126,7 @@
     </div>
 
     <div class="sidebar-foot">
-      <button class="palette-trigger" onclick="openPalette()">
+      <button class="palette-trigger" onclick="openPalette()" title="Command palette">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
         <span>Search &amp; commands</span><span class="kbd" id="palKbd">Ctrl K</span>
       </button>
@@ -112,15 +137,30 @@
     </div>
   </aside>
 
+  <button class="rail-expand" id="railExpand" title="Expand sidebar" aria-label="Expand sidebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+  </button>
+
   <!-- ===================== MAIN ===================== -->
   <main class="main" id="main-content">
-    <header class="topbar" role="banner">
+    <header class="topbar">
       <div class="topbar-left">
         <h2 id="pageTitle">Overview</h2>
-        <span class="sub" id="pageSub">Live system metrics</span>
+        <span class="sub" id="pageSub">Live system metrics &amp; health</span>
       </div>
       <div class="topbar-right">
-        <span class="live-chip" id="liveChip" aria-live="polite"><span class="pulse"></span><span id="clock">--:--:--</span></span>
+        <span class="live-chip" id="liveChip"><span class="pulse"></span><span id="clock">--:--:--</span></span>
+        <select class="refreshSel" title="Refresh interval" onchange="setRefresh(this.value)" aria-label="Refresh interval">
+          <option value="2000">2s</option>
+          <option value="3000" selected>3s</option>
+          <option value="5000">5s</option>
+          <option value="10000">10s</option>
+        </select>
+        <button class="icon-btn" id="alertBell" title="Alerts" aria-label="Alerts" onclick="showTab('alerts')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="bubble" id="bellCount" hidden>0</span>
+        </button>
+        <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme" onclick="cycleTheme()"></button>
         <button class="icon-btn" id="refreshBtn" title="Refresh (R)" onclick="refreshCurrent()" aria-label="Refresh data">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
         </button>
@@ -131,12 +171,21 @@
       </div>
     </header>
 
-    <div class="content" role="main">
+    <div class="content">
 
       <!-- ============ OVERVIEW ============ -->
       <section class="tab-panel active" id="tab-overview" aria-label="Live metrics">
-        <div class="grid g4">
 
+        <div class="sys-strip" id="sysStrip">
+          <div class="sys-cell"><span class="sys-k">Host</span><span class="sys-v" id="stripHost">--</span></div>
+          <div class="sys-cell"><span class="sys-k">System</span><span class="sys-v" id="stripOs">--</span></div>
+          <div class="sys-cell"><span class="sys-k">Kernel</span><span class="sys-v" id="stripKernel">--</span></div>
+          <div class="sys-cell"><span class="sys-k">CPU</span><span class="sys-v" id="stripCpu">--</span></div>
+          <div class="sys-cell"><span class="sys-k">Uptime</span><span class="sys-v" id="stripUptime">--</span></div>
+          <div class="sys-cell"><span class="sys-k">Net rate</span><span class="sys-v" id="stripNet">--</span></div>
+        </div>
+
+        <div class="grid g4">
           <article class="card metric-card hoverable" style="--mc:#22d3ee;--mc-bg:rgba(34,211,238,.12);--mc-line:rgba(34,211,238,.28)">
             <div class="metric-top">
               <div class="m-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg></div>
@@ -152,14 +201,14 @@
                 <div class="note" id="cpuNote">freq · load</div>
               </div>
               <div class="ring-wrap">
-                <svg width="76" height="76" viewBox="0 0 76 76">
-                  <circle cx="38" cy="38" r="30" class="track"/>
-                  <circle cx="38" cy="38" r="30" class="bar" id="cpuRing" stroke="url(#g-cpu)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+                <svg width="74" height="74" viewBox="0 0 74 74">
+                  <circle cx="37" cy="37" r="30" class="track"/>
+                  <circle cx="37" cy="37" r="30" class="bar" id="cpuRing" stroke="url(#g-cpu)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
                 </svg>
                 <div class="pct" id="cpuPct">--%</div>
               </div>
             </div>
-            <canvas class="sparkline" id="cpuSpark" height="44"></canvas>
+            <canvas class="sparkline" id="cpuSpark" height="40"></canvas>
           </article>
 
           <article class="card metric-card hoverable" style="--mc:#a78bfa;--mc-bg:rgba(167,139,250,.12);--mc-line:rgba(167,139,250,.28)">
@@ -177,14 +226,14 @@
                 <div class="note" id="ramNote">swap off</div>
               </div>
               <div class="ring-wrap">
-                <svg width="76" height="76" viewBox="0 0 76 76">
-                  <circle cx="38" cy="38" r="30" class="track"/>
-                  <circle cx="38" cy="38" r="30" class="bar" id="ramRing" stroke="url(#g-mem)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+                <svg width="74" height="74" viewBox="0 0 74 74">
+                  <circle cx="37" cy="37" r="30" class="track"/>
+                  <circle cx="37" cy="37" r="30" class="bar" id="ramRing" stroke="url(#g-mem)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
                 </svg>
                 <div class="pct" id="ramPct">--%</div>
               </div>
             </div>
-            <canvas class="sparkline" id="ramSpark" height="44"></canvas>
+            <canvas class="sparkline" id="ramSpark" height="40"></canvas>
           </article>
 
           <article class="card metric-card hoverable" style="--mc:#34d399;--mc-bg:rgba(52,211,153,.12);--mc-line:rgba(52,211,153,.28)">
@@ -202,14 +251,14 @@
                 <div class="note" id="diskNote">root filesystem</div>
               </div>
               <div class="ring-wrap">
-                <svg width="76" height="76" viewBox="0 0 76 76">
-                  <circle cx="38" cy="38" r="30" class="track"/>
-                  <circle cx="38" cy="38" r="30" class="bar" id="diskRing" stroke="url(#g-disk)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+                <svg width="74" height="74" viewBox="0 0 74 74">
+                  <circle cx="37" cy="37" r="30" class="track"/>
+                  <circle cx="37" cy="37" r="30" class="bar" id="diskRing" stroke="url(#g-disk)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
                 </svg>
                 <div class="pct" id="diskPct">--%</div>
               </div>
             </div>
-            <canvas class="sparkline" id="diskSpark" height="44"></canvas>
+            <canvas class="sparkline" id="diskSpark" height="40"></canvas>
           </article>
 
           <article class="card metric-card hoverable" style="--mc:#2dd4bf;--mc-bg:rgba(45,212,191,.12);--mc-line:rgba(45,212,191,.28)">
@@ -236,6 +285,33 @@
         </div>
 
         <div class="grid g2-1" style="margin-top:16px">
+          <article class="card hoverable chart-card">
+            <div class="card-head" style="margin-bottom:8px">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+                Resource Timeline
+              </div>
+              <div class="chart-toolbar">
+                <div class="chart-legend">
+                  <button class="legend-btn on" id="lg-cpu" style="--lc:#22d3ee" onclick="toggleSeries('cpu')"><i></i>CPU</button>
+                  <button class="legend-btn on" id="lg-ram" style="--lc:#a78bfa" onclick="toggleSeries('ram')"><i></i>RAM</button>
+                  <button class="legend-btn" id="lg-net" style="--lc:#60a5fa" onclick="toggleSeries('net')"><i></i>Net</button>
+                </div>
+                <div class="segmented" id="rangeSeg">
+                  <button class="seg-btn" data-r="150" onclick="setRange(150,this)">5m</button>
+                  <button class="seg-btn active" data-r="450" onclick="setRange(450,this)">15m</button>
+                  <button class="seg-btn" data-r="900" onclick="setRange(900,this)">30m</button>
+                  <button class="seg-btn" data-r="1800" onclick="setRange(1800,this)">1h</button>
+                </div>
+              </div>
+            </div>
+            <div class="chart-box" id="chartBox">
+              <canvas id="mainChart"></canvas>
+              <div class="chart-tooltip" id="chartTip"></div>
+              <div class="chart-empty" id="chartEmpty" hidden>Collecting samples…</div>
+            </div>
+          </article>
+
           <article class="card hoverable">
             <div class="card-head">
               <div class="card-title">
@@ -247,28 +323,34 @@
             </div>
             <div id="checksList"><div class="skel" style="height:200px"></div></div>
           </article>
+        </div>
 
+        <div class="grid g2-1" style="margin-top:16px">
           <article class="card hoverable">
             <div class="card-head">
               <div class="card-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.8 5.1.4-4 3.3 1.2 5-4.2-2.9L7.8 16.5 9 11.5 5 8.2l5.1-.4z"/></svg>
-                Quick Fixes
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>
+                Maintenance Actions
               </div>
             </div>
-            <p class="dim" style="font-size:.76rem">Safe maintenance actions, package-manager aware.</p>
-            <div class="fix-grid">
-              <button class="fix-btn" onclick="runFix('update',this)">refresh icon<span>Update Lists<span class="fdesc">Refresh repositories</span></span></button>
-              <button class="fix-btn" onclick="runFix('upgrade',this)">arrowup icon<span>Upgrade<span class="fdesc">Install updates</span></span></button>
-              <button class="fix-btn" onclick="runFix('autoremove',this)">trash<span>Autoremove<span class="fdesc">Unused packages</span></span></button>
-              <button class="fix-btn" onclick="runFix('clean',this)">sparkles<span>Clean Cache<span class="fdesc">Package caches</span></span></button>
-              <button class="fix-btn" onclick="runFix('fix-broken',this)">wrench<span>Fix Broken<span class="fdesc">Repair packages</span></span></button>
-              <button class="fix-btn" onclick="runFix('clear-logs',this)">terminal<span>Clear Logs<span class="fdesc">Vacuum journal</span></span></button>
-              <button class="fix-btn" onclick="runFix('docker-prune',this)">box<span>Docker Prune<span class="fdesc">Unused data</span></span></button>
-            </div>
+            <p class="dim" style="font-size:.76rem">Safe, package-manager aware operations. Output is captured below.</p>
+            <div class="fix-grid" id="fixGrid"></div>
             <div class="terminal" id="fixTerminal" hidden>
               <div class="tbar"><i></i><i></i><i></i><span>montoring fix</span></div>
               <pre id="fixResult"></pre>
             </div>
+          </article>
+
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                Recent Activity
+                <span class="badge" id="activityBadge"></span>
+              </div>
+              <button class="icon-btn" onclick="showTab('alerts')" title="View all activity"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+            </div>
+            <div id="activityMini"></div>
           </article>
         </div>
 
@@ -283,6 +365,7 @@
             </div>
             <div id="disksList"><div class="skel" style="height:120px"></div></div>
           </article>
+
           <article class="card hoverable">
             <div class="card-head">
               <div class="card-title">
@@ -294,6 +377,7 @@
             </div>
             <div id="portsList"><div class="skel" style="height:120px"></div></div>
           </article>
+
           <article class="card hoverable">
             <div class="card-head">
               <div class="card-title">
@@ -305,7 +389,7 @@
             <div class="kv"><span>Hostname</span><strong id="hostnameInfo">--</strong></div>
             <div class="kv"><span>Kernel</span><strong id="kernelInfo">--</strong></div>
             <div class="kv"><span>Processes</span><strong id="procsCount">--</strong></div>
-            <div class="kv"><span>Net I/O</span><strong id="netVal">--</strong></div>
+            <div class="kv"><span>Net total</span><strong id="netVal">--</strong></div>
             <div class="kv"><span>Users</span><strong id="usersVal">--</strong></div>
           </article>
         </div>
@@ -325,6 +409,11 @@
                 <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
                 <input type="search" id="procSearch" class="with-icon" placeholder="Filter by name, PID, user…" oninput="renderProcesses()">
               </div>
+              <select id="procLimit" onchange="setProcLimit(this.value)" title="Rows to fetch" aria-label="Process count">
+                <option value="25" selected>Top 25</option>
+                <option value="50">Top 50</option>
+                <option value="100">Top 100</option>
+              </select>
               <label class="switch" title="Refresh every 5 seconds">Auto<input type="checkbox" id="procAuto" checked><span class="track"></span></label>
               <button class="icon-btn" onclick="loadProcesses()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
@@ -363,13 +452,13 @@
             <div class="toolbar-right">
               <div class="segmented" id="svcFilter">
                 <button class="seg-btn active" data-f="all">All</button>
-                <button class="seg-btn" data-f="active">Active</button>
+                <button class="seg-btn" data-f="active">Running</button>
                 <button class="seg-btn" data-f="failed">Failed</button>
                 <button class="seg-btn" data-f="other">Other</button>
               </div>
               <div class="field">
                 <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-                <input type="search" id="svcSearch" class="with-icon" placeholder="Filter units…" oninput="renderServices()">
+                <input type="search" id="svcSearch" class="with-icon" placeholder="Filter units…" oninput="svcPage=0;renderServices()">
               </div>
               <button class="icon-btn" onclick="loadServices()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
@@ -381,20 +470,25 @@
                 <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
                 <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
                 <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
-                <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
               </tbody>
             </table>
+          </div>
+          <div class="pagination" id="svcPager">
+            <span id="svcRange">--</span>
+            <button class="pg-btn" id="svcPrev" onclick="svcPageGo(-1)" title="Previous page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+            <button class="pg-btn" id="svcNext" onclick="svcPageGo(1)" title="Next page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
           </div>
         </article>
       </section>
 
       <!-- ============ DOCKER ============ -->
       <section class="tab-panel" id="tab-docker" aria-label="Docker">
+        <div class="stat-tiles" id="dockerStats"></div>
         <article class="card hoverable">
           <div class="card-head">
             <div class="card-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></svg>
-              Docker Containers
+              Containers
               <span class="badge" id="dockerCount" hidden></span>
             </div>
             <div class="toolbar-right">
@@ -404,9 +498,32 @@
           </div>
           <div id="dockerBody"><div class="skel" style="height:120px"></div></div>
         </article>
+        <div class="grid g2-1" style="margin-top:16px">
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                Images
+                <span class="badge" id="imgCount"></span>
+              </div>
+              <button class="icon-btn" onclick="loadDockerImages()" title="Refresh images"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            </div>
+            <div id="imgList"><div class="skel" style="height:90px"></div></div>
+          </article>
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M12 12v10M3.3 7l8.7 5 8.7-5"/></svg>
+                Storage Usage
+              </div>
+              <button class="icon-btn" onclick="loadDockerUsage()" title="Refresh usage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            </div>
+            <div id="usageList"><div class="skel" style="height:90px"></div></div>
+          </article>
+        </div>
       </section>
 
-      <!-- ============ VMs ============ -->
+      <!-- ============ VMS ============ -->
       <section class="tab-panel" id="tab-vms" aria-label="Virtual machines">
         <article class="card hoverable">
           <div class="card-head">
@@ -428,6 +545,7 @@
             <div class="card-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
               Interfaces
+              <span class="badge">live throughput</span>
             </div>
             <button class="icon-btn" onclick="loadNetwork()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
           </div>
@@ -438,6 +556,7 @@
             <div class="card-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9h-9z"/><circle cx="12" cy="12" r="4"/></svg>
               Listening Ports
+              <span class="badge" id="portsCount2"></span>
             </div>
             <button class="icon-btn" onclick="loadPorts()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
           </div>
@@ -474,15 +593,168 @@
                 <input type="search" id="logGrep" class="with-icon" placeholder="Filter text…" onkeydown="if(event.key==='Enter')loadLogs()">
               </div>
               <label class="switch" title="Refresh every 5 seconds">Follow<input type="checkbox" id="logAuto" checked><span class="track"></span></label>
+              <label class="switch" title="Toggle line wrapping">Wrap<input type="checkbox" id="logWrap" checked onchange="toggleLogWrap()"><span class="track"></span></label>
               <button class="icon-btn" onclick="copyLogs()" title="Copy to clipboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <button class="icon-btn" onclick="downloadLogs()" title="Download as file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
               <button class="icon-btn" onclick="loadLogs()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
           </div>
           <div class="log-window">
-            <div class="log-tbar"><i></i><i></i><i></i><span class="t-title">journalctl — montoring</span></div>
+            <div class="log-tbar"><i></i><i></i><i></i><span class="t-title">journalctl — montoring</span><span class="t-tag" id="logCountTag" hidden></span></div>
             <pre class="log-view" id="logView"><span class="ll">Loading logs…</span></pre>
           </div>
         </article>
+      </section>
+
+      <!-- ============ ALERTS + ACTIVITY ============ -->
+      <section class="tab-panel" id="tab-alerts" aria-label="Alerts and activity">
+        <div class="alert-summary">
+          <div class="alert-tile crit"><div><div class="at-n" id="alertCritCount">0</div><div class="at-k">Critical</div></div></div>
+          <div class="alert-tile warn"><div><div class="at-n" id="alertWarnCount">0</div><div class="at-k">Warnings</div></div></div>
+          <div class="alert-tile ok"><div><div class="at-n" id="alertEventCount">0</div><div class="at-k">Total events</div></div></div>
+        </div>
+
+        <div class="grid g2" style="align-items:start">
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                Alert History
+                <span class="badge" id="alertStatusBadge">on</span>
+              </div>
+              <button class="btn btn-sm" onclick="clearAlerts()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear all</button>
+            </div>
+            <p class="dim" style="font-size:.74rem">Threshold breaches are detected locally while the console is open. Tune thresholds in <a href="#settings" onclick="showTab('settings');return false;">Settings</a>.</p>
+            <div id="alertList" style="margin-top:12px"></div>
+          </article>
+
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3M21 12a9 9 0 1 1-9-9"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>
+                Activity Log
+                <span class="badge" id="activityBadge2"></span>
+              </div>
+              <button class="btn btn-sm" onclick="clearActivity()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear all</button>
+            </div>
+            <p class="dim" style="font-size:.74rem">Local audit trail of every action performed from this console (kept in this browser only).</p>
+            <div id="activityFull" style="margin-top:12px;max-height:520px;overflow:auto"></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ============ SETTINGS ============ -->
+      <section class="tab-panel" id="tab-settings" aria-label="Settings">
+        <div class="grid g2" style="align-items:start">
+          <article class="card hoverable set-section">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/></svg>
+                Appearance &amp; Data
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-k">Theme</div><div class="set-d">Dark, light, or follow your system.</div></div>
+              <div class="set-ctl">
+                <div class="segmented" id="themeSeg">
+                  <button class="seg-btn" data-t="system" onclick="setTheme('system',this)">System</button>
+                  <button class="seg-btn" data-t="dark" onclick="setTheme('dark',this)">Dark</button>
+                  <button class="seg-btn" data-t="light" onclick="setTheme('light',this)">Light</button>
+                </div>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-k">Refresh interval</div><div class="set-d">How often live metrics are polled.</div></div>
+              <div class="set-ctl">
+                <select onchange="setRefresh(this.value)" aria-label="Refresh interval">
+                  <option value="2000">2 seconds</option>
+                  <option value="3000">3 seconds</option>
+                  <option value="5000">5 seconds</option>
+                  <option value="10000">10 seconds</option>
+                </select>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-k">Chart range</div><div class="set-d">Default window for the resource timeline.</div></div>
+              <div class="set-ctl">
+                <div class="segmented" id="rangeSegSetting">
+                  <button class="seg-btn" data-r="150" onclick="setRange(150,this)">5m</button>
+                  <button class="seg-btn" data-r="450" onclick="setRange(450,this)">15m</button>
+                  <button class="seg-btn" data-r="900" onclick="setRange(900,this)">30m</button>
+                  <button class="seg-btn" data-r="1800" onclick="setRange(1800,this)">1h</button>
+                </div>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-k">Confirm dangerous actions</div><div class="set-d">Ask before killing processes, stopping services, removing containers…</div></div>
+              <div class="set-ctl"><label class="switch"><input type="checkbox" id="setConfirm" onchange="setSetting('confirmDanger',this.checked)"><span class="track"></span></label></div>
+            </div>
+          </article>
+
+          <article class="card hoverable set-section">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                Alerting
+              </div>
+              <label class="switch" title="Enable threshold alerting">Enabled<input type="checkbox" id="setAlerts" onchange="setSetting('alerts',this.checked)"><span class="track"></span></label>
+            </div>
+            <div class="thresh-grid">
+              <div>
+                <div class="thresh-row"><label><i style="background:#22d3ee"></i>CPU</label>
+                  <span class="inputs">warn <input type="number" id="th-cpuWarn" min="1" max="100"> % · crit <input type="number" id="th-cpuCrit" min="1" max="100"> %</span></div>
+                <div class="thresh-row"><label><i style="background:#a78bfa"></i>Memory</label>
+                  <span class="inputs">warn <input type="number" id="th-ramWarn" min="1" max="100"> % · crit <input type="number" id="th-ramCrit" min="1" max="100"> %</span></div>
+              </div>
+              <div>
+                <div class="thresh-row"><label><i style="background:#34d399"></i>Disk</label>
+                  <span class="inputs">warn <input type="number" id="th-diskWarn" min="1" max="100"> % · crit <input type="number" id="th-diskCrit" min="1" max="100"> %</span></div>
+                <div class="thresh-row"><label><i style="background:#fbbf24"></i>Temperature</label>
+                  <span class="inputs">warn <input type="number" id="th-tempWarn" min="30" max="110"> °C</span></div>
+              </div>
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary btn-sm" onclick="saveThresholds()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Save thresholds</button>
+            </div>
+          </article>
+        </div>
+
+        <div class="grid g2" style="margin-top:16px;align-items:start">
+          <article class="card hoverable set-section">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 10h20M7 15h4"/></svg>
+                Local Data
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-k">Alert history</div><div class="set-d">Stored in this browser (localStorage).</div></div>
+              <div class="set-ctl"><button class="btn btn-sm" onclick="clearAlerts()">Clear</button></div>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-k">Activity log</div><div class="set-d">Local audit trail of console actions.</div></div>
+              <div class="set-ctl"><button class="btn btn-sm" onclick="clearActivity()">Clear</button></div>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><div class="set-k">Reset all settings</div><div class="set-d">Restore defaults (theme, thresholds, intervals).</div></div>
+              <div class="set-ctl"><button class="btn btn-danger btn-sm" onclick="resetSettings()">Reset</button></div>
+            </div>
+          </article>
+
+          <article class="card hoverable set-section">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Privacy &amp; Deployment
+              </div>
+            </div>
+            <div class="kv"><span>Accounts</span><strong>none — no login, ever</strong></div>
+            <div class="kv"><span>Telemetry</span><strong>zero — nothing leaves this host</strong></div>
+            <div class="kv"><span>Storage</span><strong>preferences stay in this browser</strong></div>
+            <div class="kv"><span>Backend</span><strong>local Flask service</strong></div>
+            <p class="dim" style="font-size:.72rem;margin-top:10px">Montoring is a single-user, standalone console with enterprise-grade tooling. Secure it by keeping it on localhost or a trusted LAN only.</p>
+          </article>
+        </div>
       </section>
 
       <!-- ============ HELP ============ -->
@@ -499,7 +771,7 @@
               <img src="{{ url_for('static', filename='icon.png') }}" alt="" class="about-icon">
               <div>
                 <strong style="font-size:1rem">Montoring</strong> <span class="mono dim" id="helpVersion">v--</span><br>
-                <span class="dim" style="font-size:.76rem">Universal Linux System Monitor</span>
+                <span class="dim" style="font-size:.76rem">Universal Linux System Console</span>
               </div>
             </div>
             <div class="kv"><span>Installed at</span><strong id="helpHome">--</strong></div>
@@ -514,11 +786,14 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/></svg>
                 Keyboard Shortcuts
               </div>
+              <button class="btn btn-sm" onclick="openShortcuts()">View</button>
             </div>
             <div class="shortcut-row"><span>Command palette</span><span class="keys"><span class="kbd" id="kCtrlK">Ctrl</span><span class="kbd">K</span></span></div>
-            <div class="shortcut-row"><span>Jump to tab</span><span class="keys"><span class="kbd" id="kCtrlN">Ctrl</span><span class="kbd">1–8</span></span></div>
+            <div class="shortcut-row"><span>Jump to tab</span><span class="keys"><span class="kbd" id="kCtrlN">Ctrl</span><span class="kbd">1–9, 0</span></span></div>
             <div class="shortcut-row"><span>Focus search box</span><span class="keys"><span class="kbd">/</span></span></div>
             <div class="shortcut-row"><span>Refresh current view</span><span class="keys"><span class="kbd">R</span></span></div>
+            <div class="shortcut-row"><span>Toggle theme</span><span class="keys"><span class="kbd" id="kCtrlT">Ctrl</span><span class="kbd">T</span></span></div>
+            <div class="shortcut-row"><span>All shortcuts</span><span class="keys"><span class="kbd">?</span></span></div>
             <div class="shortcut-row"><span>Close dialog</span><span class="keys"><span class="kbd">Esc</span></span></div>
           </article>
 
@@ -532,7 +807,7 @@
             <p class="dim" style="font-size:.76rem">Montoring runs as a standalone desktop app — launch it from your application menu or with <span class="mono">montoring-app</span>.</p>
             <div class="btn-group" style="margin:12px 0 14px">
               <button class="btn btn-primary" onclick="openDesktopApp()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Launch App Window</button>
-              <button class="btn" onclick="openInBrowser()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>Open in Browser</button>
+              <button class="btn" onclick="openInBrowser()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15.3 15.3 0 0 1 0 18 15.3 15.3 0 0 1 0-18z"/></svg>Open in Browser</button>
             </div>
             <div class="terminal">
               <div class="tbar"><i></i><i></i><i></i><span>bash — montoring</span></div>
@@ -552,7 +827,7 @@ sudo ./update.sh --remote</pre>
     </div>
 
     <footer class="footer">
-      Montoring <span id="footerVersion">v--</span><span class="sep">•</span>Universal Linux Dashboard<span class="sep">•</span>local-first &amp; beautiful
+      Montoring <span id="footerVersion">v--</span><span class="sep">•</span>local-first · no accounts · no telemetry<span class="sep">•</span>enterprise tools for one machine
     </footer>
   </main>
 </div>
@@ -581,7 +856,8 @@ const ICON_PATHS={
   trash:'<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
   resize:'<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>',
   copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
-  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15.3 15.3 0 0 1 0 18 15.3 15.3 0 0 1 0-18z"/>',
   box:'<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/>',
   monitor:'<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
   terminal:'<path d="M4 17l6-6-6-6M12 19h8"/>',
@@ -606,9 +882,14 @@ const ICON_PATHS={
   thermo:'<path d="M14 14.76V5a2 2 0 1 0-4 0v9.76a4 4 0 1 0 4 0z"/>',
   battery:'<rect x="2" y="7" width="16" height="10" rx="2"/><path d="M22 11v2"/>',
   gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
-  network:'<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>'
+  network:'<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>',
+  chart:'<path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/>',
+  layers:'<path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5M3 17l9 5 9-5"/>',
+  sun:'<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/>',
+  moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'
 };
-const icon=(n,s=15)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[n]||''}</svg>`;
+const icon=(n,s=15)=>'<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(ICON_PATHS[n]||'')+'</svg>';
 
 let busy=0;
 function spinRefresh(){const b=$('#refreshBtn');if(b)b.classList.toggle('spinning',busy>0);}
@@ -631,11 +912,54 @@ function jsq(s){return esc(s).replace(/'/g,"\\'");}
 function isTyping(e){const t=e.target;return t&&(t.tagName==='INPUT'||t.tagName==='SELECT'||t.tagName==='TEXTAREA'||t.isContentEditable);}
 function fmtDur(sec){
   const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60);
-  if(d>0)return `${d}d ${h}h`;
-  if(h>0)return `${h}h ${m}m`;
-  return `${m}m`;
+  if(d>0)return d+'d '+h+'h';
+  if(h>0)return h+'h '+m+'m';
+  return m+'m';
 }
+function fmtRate(bps){
+  if(bps==null||isNaN(bps))return '—';
+  if(bps<1024)return bps.toFixed(0)+' B/s';
+  if(bps<1048576)return (bps/1024).toFixed(1)+' KB/s';
+  if(bps<1073741824)return (bps/1048576).toFixed(2)+' MB/s';
+  return (bps/1073741824).toFixed(2)+' GB/s';
+}
+function fmtBytesMB(mb){return mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(1)+' MB';}
 function statusClass(v){return v>=85?'hot':v>=60?'warm':'';}
+function nowTime(){const t=new Date();return [t.getHours(),t.getMinutes(),t.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');}
+function todayAt(ts){const d=new Date(ts);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');}
+
+// ================================================================
+// Settings store (localStorage, this browser only)
+// ================================================================
+const DEFAULT_SETTINGS={
+  theme:'system', refreshMs:3000, chartRange:450,
+  alerts:true, confirmDanger:true, procLimit:25, logWrap:true,
+  th:{cpuWarn:80,cpuCrit:92,ramWarn:85,ramCrit:95,diskWarn:85,diskCrit:93,tempWarn:75}
+};
+let S=loadSettings();
+function loadSettings(){
+  try{
+    const raw=JSON.parse(localStorage.getItem('montoring:settings')||'{}');
+    return Object.assign({},DEFAULT_SETTINGS,raw,{th:Object.assign({},DEFAULT_SETTINGS.th,(raw||{}).th||{})});
+  }catch(e){return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));}
+}
+function saveSettings(){try{localStorage.setItem('montoring:settings',JSON.stringify(S));}catch(e){}}
+function setSetting(k,v){S[k]=v;saveSettings();if(k==='alerts')refreshAlertBadge();}
+
+// ================================================================
+// Theme
+// ================================================================
+function applyTheme(){
+  const t=S.theme==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):S.theme;
+  document.documentElement.dataset.theme=t;
+  const btn=$('#themeBtn');
+  if(btn)btn.innerHTML=icon(t==='dark'?'sun':'moon',15);
+  $$('#themeSeg .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.t===S.theme));
+}
+function setTheme(t,btn){S.theme=t;saveSettings();applyTheme();if(btn)syncThemeSeg();}
+function syncThemeSeg(){$$('#themeSeg .seg-btn').forEach(b=>b.classList.toggle('active',b.dataset.t===S.theme));}
+function cycleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');logActivity('theme','Switched to '+S.theme+' theme',true);}
+matchMedia('(prefers-color-scheme: light)').addEventListener('change',()=>{if(S.theme==='system')applyTheme();});
 
 // ================================================================
 // Toasts
@@ -643,42 +967,39 @@ function statusClass(v){return v>=85?'hot':v>=60?'warm':'';}
 function toast(msg,kind){
   const t=document.createElement('div');
   t.className='toast '+(kind||'ok');
-  t.innerHTML=`<span class="t-icon">${icon(kind==='err'?'alert':kind==='info'?'info':'checkCircle',14)}</span>
-    <span class="t-msg"></span>
-    <button class="t-close" title="Dismiss">${icon('x',12)}</button>
-    <span class="t-bar"></span>`;
+  t.innerHTML='<span class="t-icon">'+icon(kind==='err'?'alert':kind==='info'?'info':'checkCircle',14)+'</span>'
+    +'<span class="t-msg"></span>'
+    +'<button class="t-close" title="Dismiss">'+icon('x',12)+'</button>'
+    +'<span class="t-bar"></span>';
   t.querySelector('.t-msg').textContent=msg;
   t.querySelector('.t-close').onclick=()=>killToast(t);
   $('#toasts').appendChild(t);
-  requestAnimationFrame(()=>t.querySelector('.t-bar').style.animation='shrink 4.2s linear forwards');
+  requestAnimationFrame(()=>{t.querySelector('.t-bar').style.animation='shrink 4.2s linear forwards';});
   setTimeout(()=>killToast(t),4300);
 }
-function killToast(t){
-  t.classList.add('out');setTimeout(()=>t.remove(),320);
-}
+function killToast(t){t.classList.add('out');setTimeout(()=>t.remove(),320);}
 
 // ================================================================
-// Modal (confirmation + forms)
+// Modal (confirmation + forms + custom html)
 // ================================================================
-function openModal({title,text='',fields=[],confirmText='Confirm',cancelText='Cancel',danger=false,icon:ic='help',note=''}){
+function openModal({title,text='',html='',fields=[],confirmText='Confirm',cancelText='Cancel',danger=false,icon:ic='help',note=''}){
   return new Promise(res=>{
     let settled=false;
     const bd=document.createElement('div');
     bd.className='modal-backdrop';
-    const fieldsHtml=fields.map(f=>`
-      <label for="mf-${f.key}">${esc(f.label)}</label>
-      <input id="mf-${f.key}" data-field="${f.key}" type="${esc(f.type||'text')}" value="${esc(f.value||'')}"
-        placeholder="${esc(f.placeholder||'')}" ${f.type==='number'?'inputmode="decimal"':''} autocomplete="off">`).join('');
-    bd.innerHTML=`<div class="modal ${danger?'danger':''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-      <div class="m-icon">${icon(ic,18)}</div>
-      <h3>${esc(title)}</h3>
-      ${text?`<p class="m-text">${esc(text)}</p>`:''}
-      ${fieldsHtml?`<div class="m-body">${fieldsHtml}</div>`:''}
-      ${note?`<p class="m-note">${esc(note)}</p>`:''}
-      <div class="m-actions">
-        <button class="btn" data-act="cancel">${esc(cancelText)}</button>
-        <button class="btn ${danger?'btn-danger':'btn-primary'}" data-act="ok">${esc(confirmText)}</button>
-      </div></div>`;
+    const fieldsHtml=fields.map(f=>
+      '<label for="mf-'+f.key+'">'+esc(f.label)+'</label>'
+      +'<input id="mf-'+f.key+'" data-field="'+f.key+'" type="'+esc(f.type||'text')+'" value="'+esc(f.value||'')+'"'
+      +' placeholder="'+esc(f.placeholder||'')+'"'+(f.type==='number'?' inputmode="decimal"':'')+' autocomplete="off">').join('');
+    bd.innerHTML='<div class="modal '+(danger?'danger':'')+'" role="dialog" aria-modal="true" aria-label="'+esc(title)+'">'
+      +'<div class="m-icon">'+icon(ic,18)+'</div>'
+      +'<h3>'+esc(title)+'</h3>'
+      +(text?'<p class="m-text">'+esc(text)+'</p>':'')
+      +(html?'<div class="m-body">'+html+'</div>':'')
+      +(fieldsHtml?'<div class="m-body">'+fieldsHtml+'</div>':'')
+      +(note?'<p class="m-note">'+esc(note)+'</p>':'')
+      +'<div class="m-actions"><button class="btn" data-act="cancel">'+esc(cancelText)+'</button>'
+      +'<button class="btn '+(danger?'btn-danger':'btn-primary')+'" data-act="ok">'+esc(confirmText)+'</button></div></div>';
     document.body.appendChild(bd);
     const done=v=>{if(settled)return;settled=true;bd.remove();document.removeEventListener('keydown',escH);res(v);};
     const escH=e=>{if(e.key==='Escape'){e.stopPropagation();done(null);}};
@@ -694,50 +1015,88 @@ function openModal({title,text='',fields=[],confirmText='Confirm',cancelText='Ca
     if(first){first.focus();first.select&&first.select();}
     else bd.querySelector('[data-act=ok]').focus();
     bd.addEventListener('keydown',e=>{
-      if(e.key==='Enter'&&!bd.querySelector('input'))bd.querySelector('[data-act=ok]').click();
+      if(e.key==='Enter'&&e.target.tagName!=='INPUT')bd.querySelector('[data-act=ok]').click();
     });
   });
 }
-const confirmDlg=(title,text,danger)=>openModal({title,text,confirmText:'Confirm',danger,icon:danger?'alert':'help'});
+async function confirmDlg(title,text,danger){
+  if(!S.confirmDanger)return {values:null}; // skip prompt when disabled
+  return openModal({title,text,confirmText:'Confirm',danger,icon:danger?'alert':'help'});
+}
+function openShortcuts(){
+  const rows=[
+    ['Command palette',MOD+' K'],['Next / previous tab',MOD+' → / ←'],
+    ['Jump to tab',MOD+' 1–9, 0'],['Refresh current view','R'],
+    ['Toggle theme',MOD+' T'],['Focus search box','/'],
+    ['Close dialog','Esc']
+  ].map(r=>'<div class="shortcut-row"><span>'+esc(r[0])+'</span><span class="keys">'
+    +r[1].split(' + ').map(k=>'<span class="kbd">'+esc(k)+'</span>').join(' ')+'</span></div>').join('');
+  openModal({title:'Keyboard Shortcuts',html:rows,confirmText:'Close',cancelText:'Close',icon:'keyboard',danger:false});
+}
 
 // ================================================================
 // Tabs
 // ================================================================
-const TAB_NAMES=['overview','processes','services','docker','vms','network','logs','help'];
+const TAB_NAMES=['overview','processes','network','services','docker','vms','logs','alerts','settings','help'];
 const TAB_LOADERS={
   overview:null,
   processes:loadProcesses,
-  services:loadServices,
-  docker:loadDocker,
-  vms:loadVMs,
   network:()=>{loadNetwork();loadPorts();},
+  services:loadServices,
+  docker:()=>{loadDocker();loadDockerImages();loadDockerUsage();},
+  vms:loadVMs,
   logs:loadLogs,
+  alerts:renderAlerts,
+  settings:renderSettings,
   help:fillHelp
 };
 let currentTab='overview';
 function showTab(name){
+  if(!TAB_NAMES.includes(name))return;
   currentTab=name;
-  $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
+  $$('.nav-btn').forEach(b=>{b.classList.toggle('active',b.dataset.tab===name);b.removeAttribute('aria-current');if(b.dataset.tab===name)b.setAttribute('aria-current','page');});
   $$('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
-  const btn=$(`.nav-btn[data-tab="${name}"]`);
+  const btn=$('.nav-btn[data-tab="'+name+'"]');
   $('#pageTitle').textContent=btn?btn.querySelector('span').textContent:name;
   $('#pageSub').textContent=btn?(btn.dataset.sub||''):'';
   if(location.hash!=='#'+name)history.replaceState(null,'','#'+name);
-  // retrigger enter animation
   const panel=$('#tab-'+name);
   if(panel&&!REDUCED){panel.style.animation='none';void panel.offsetWidth;panel.style.animation='';}
   const fn=TAB_LOADERS[name];
   if(fn)fn();
-  drawSparks();
+  drawMainChart();drawSparks();
+  if(window.innerWidth<=768){$('.sidebar').classList.remove('open');$('#menuToggle').setAttribute('aria-expanded','false');}
 }
 $$('.nav-btn').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
 
 // ================================================================
-// Sparklines (smooth, gradient area)
+// Sidebar rail (collapse) + mobile drawer
 // ================================================================
-const H=44;
-const cpuHist=[],ramHist=[],diskHist=[];
-function smoothPath(ctx,pts,w,h){
+const shell=$('#appShell');
+if(localStorage.getItem('montoring:rail')==='1')shell.classList.add('rail');
+$('#sidebarToggle').addEventListener('click',()=>{
+  shell.classList.add('rail');localStorage.setItem('montoring:rail','1');
+});
+$('#railExpand').addEventListener('click',()=>{
+  shell.classList.remove('rail');localStorage.setItem('montoring:rail','0');
+});
+const menuToggle=$('#menuToggle'),sidebar=$('.sidebar');
+menuToggle.addEventListener('click',e=>{
+  e.stopPropagation();
+  const isOpen=sidebar.classList.toggle('open');
+  menuToggle.setAttribute('aria-expanded',isOpen?'true':'false');
+});
+document.addEventListener('click',e=>{
+  if(window.innerWidth<=768&&!sidebar.contains(e.target)&&!menuToggle.contains(e.target)){
+    sidebar.classList.remove('open');menuToggle.setAttribute('aria-expanded','false');
+  }
+});
+
+// ================================================================
+// Sparklines (metric cards)
+// ================================================================
+const SPARK_H=40;
+function smoothPath(ctx,pts){
   ctx.beginPath();
   pts.forEach((p,i)=>{
     if(!i){ctx.moveTo(p[0],p[1]);return;}
@@ -752,27 +1111,183 @@ function drawSpark(cv,data,color){
   const w=cv.clientWidth;
   if(!w||w<10)return;
   const dpr=Math.min(window.devicePixelRatio||1,2);
-  cv.width=w*dpr;cv.height=H*dpr;
+  cv.width=w*dpr;cv.height=SPARK_H*dpr;
   const ctx=cv.getContext('2d');
   ctx.scale(dpr,dpr);
-  ctx.clearRect(0,0,w,H);
-  if(data.length<2)return;
+  ctx.clearRect(0,0,w,SPARK_H);
+  if(!data||data.length<2)return;
   const max=Math.max(20,...data);
-  const pts=data.map((v,i)=>[1+(i/(data.length-1))*(w-2), H-4-(v/max)*(H-10)]);
-  const g=ctx.createLinearGradient(0,0,0,H);
+  const pts=data.map((v,i)=>[1+(i/(data.length-1))*(w-2), SPARK_H-4-(v/max)*(SPARK_H-10)]);
+  const g=ctx.createLinearGradient(0,0,0,SPARK_H);
   g.addColorStop(0,color+'3d');g.addColorStop(1,color+'00');
-  smoothPath(ctx,pts,w,H);
+  smoothPath(ctx,pts);
   ctx.strokeStyle=color;ctx.lineWidth=1.6;ctx.lineJoin='round';ctx.stroke();
-  ctx.lineTo(w-1,H);ctx.lineTo(1,H);ctx.closePath();
+  ctx.lineTo(w-1,SPARK_H);ctx.lineTo(1,SPARK_H);ctx.closePath();
   ctx.fillStyle=g;ctx.fill();
   const lastP=pts[pts.length-1];
   ctx.beginPath();ctx.arc(lastP[0],lastP[1],2.4,0,7);ctx.fillStyle=color;ctx.fill();
 }
 function drawSparks(){
-  drawSpark($('#cpuSpark'),cpuHist,'#22d3ee');
-  drawSpark($('#ramSpark'),ramHist,'#a78bfa');
-  drawSpark($('#diskSpark'),diskHist,'#34d399');
+  const c=histData.map(s=>s.cpu),m=histData.map(s=>s.ram),d=histData.map(s=>s.disk);
+  drawSpark($('#cpuSpark'),c,'#22d3ee');
+  drawSpark($('#ramSpark'),m,'#a78bfa');
+  drawSpark($('#diskSpark'),d,'#34d399');
 }
+
+// ================================================================
+// Main time-series chart (CPU / RAM / NET, hover tooltip)
+// ================================================================
+let histData=[];                       // ascending samples from /api/history (+local)
+const chartCfg={range:S.chartRange,series:{cpu:true,ram:true,net:false}};
+let chartHover=null;
+const SERIES_META={
+  cpu:{color:'#22d3ee',label:'CPU',get:s=>s.cpu,fmt:v=>v.toFixed(1)+' %'},
+  ram:{color:'#a78bfa',label:'RAM',get:s=>s.ram,fmt:v=>v.toFixed(1)+' %'},
+  net:{color:'#60a5fa',label:'Net',get:s=>(s.sent_bps+s.recv_bps)/1048576,fmt:v=>v.toFixed(2)+' MB/s'}
+};
+async function loadHistory(){
+  const d=await fetchJSON('/api/history?points='+chartCfg.range);
+  if(d&&Array.isArray(d.samples)){
+    histData=d.samples;
+    if(!histData.length)histData=localHist.slice(-chartCfg.range);
+  }
+  $('#chartEmpty').hidden=histData.length>1;
+  drawMainChart();drawSparks();
+}
+function setRange(r,btn){
+  chartCfg.range=r;S.chartRange=r;saveSettings();
+  $$('#rangeSeg .seg-btn, #rangeSegSetting .seg-btn').forEach(b=>b.classList.toggle('active',+b.dataset.r===r));
+  loadHistory();
+}
+function toggleSeries(k){
+  chartCfg.series[k]=!chartCfg.series[k];
+  $('#lg-'+k).classList.toggle('on',chartCfg.series[k]);
+  drawMainChart();
+}
+function drawMainChart(){
+  const cv=$('#mainChart'),box=$('#chartBox');
+  if(!cv||!box||currentTab!=='overview')return;
+  const w=box.clientWidth,h=box.clientHeight;
+  if(!w||!h)return;
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  cv.width=w*dpr;cv.height=h*dpr;
+  const ctx=cv.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  const data=histData.slice(-chartCfg.range);
+  $('#chartEmpty').hidden=data.length>1;
+  if(data.length<2)return;
+  const cs=getComputedStyle(document.documentElement);
+  const grid=cs.getPropertyValue('--border').trim()||'rgba(148,163,184,.13)';
+  const label=cs.getPropertyValue('--text-3').trim()||'#5d6b84';
+  const netOn=chartCfg.series.net;
+  const padL=34,padR=netOn?44:12,padT=10,padB=20;
+  const iw=w-padL-padR,ih=h-padT-padB;
+  const xAt=i=>padL+(i/(data.length-1))*iw;
+  let netMax=1;
+  if(netOn){netMax=Math.max(0.1,...data.map(SERIES_META.net.get))*1.15;}
+  const yPct=v=>padT+ih-(Math.min(100,Math.max(0,v))/100)*ih;
+  const yNet=v=>padT+ih-(Math.min(netMax,Math.max(0,v))/netMax)*ih;
+
+  // grid + left axis labels (0..100)
+  ctx.font='9px JetBrains Mono, monospace';
+  ctx.fillStyle=label;ctx.strokeStyle=grid;ctx.lineWidth=1;
+  [0,25,50,75,100].forEach(p=>{
+    const y=Math.round(yPct(p))+.5;
+    ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(w-padR,y);ctx.stroke();
+    ctx.fillText(String(p),6,y+3);
+  });
+  if(netOn){
+    ctx.fillStyle=SERIES_META.net.color;
+    ctx.fillText(netMax.toFixed(1),w-padR+6,padT+8);
+  }
+  // x labels
+  ctx.fillStyle=label;
+  const ticks=Math.min(5,data.length);
+  for(let i=0;i<ticks;i++){
+    const idx=Math.round(i/(ticks-1)*(data.length-1));
+    const txt=todayAt((data[idx].t||0)*1000);
+    const x=xAt(idx);
+    ctx.textAlign=i===0?'left':i===ticks-1?'right':'center';
+    ctx.fillText(txt,x,h-6);
+  }
+  ctx.textAlign='left';
+
+  // series areas + lines
+  for(const k of ['ram','cpu','net']){
+    if(!chartCfg.series[k])continue;
+    const meta=SERIES_META[k];
+    const yAt=k==='net'?yNet:yPct;
+    const pts=data.map((s,i)=>[xAt(i),yAt(meta.get(s))]);
+    const g=ctx.createLinearGradient(0,padT,0,padT+ih);
+    g.addColorStop(0,meta.color+'3a');g.addColorStop(1,meta.color+'00');
+    smoothPath(ctx,pts);
+    ctx.strokeStyle=meta.color;ctx.lineWidth=1.8;ctx.lineJoin='round';ctx.stroke();
+    ctx.lineTo(pts[pts.length-1][0],padT+ih);ctx.lineTo(pts[0][0],padT+ih);ctx.closePath();
+    ctx.fillStyle=g;ctx.fill();
+  }
+  // hover crosshair
+  if(chartHover!=null&&chartHover>=0&&chartHover<data.length){
+    const x=xAt(chartHover);
+    ctx.strokeStyle=label;ctx.setLineDash([3,3]);ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x,padT);ctx.lineTo(x,padT+ih);ctx.stroke();
+    ctx.setLineDash([]);
+    for(const k of ['cpu','ram','net']){
+      if(!chartCfg.series[k])continue;
+      const meta=SERIES_META[k];
+      const yy=k==='net'?yNet(meta.get(data[chartHover])):yPct(meta.get(data[chartHover]));
+      ctx.beginPath();ctx.arc(x,yy,3.2,0,7);
+      ctx.fillStyle=meta.color;ctx.fill();
+      ctx.strokeStyle=cs.getPropertyValue('--surface').trim()||'#10131a';
+      ctx.lineWidth=1.5;ctx.stroke();
+    }
+    positionTip(x);
+  }
+}
+function chartBoxEvents(){
+  const box=$('#chartBox'),cv=$('#mainChart'),tip=$('#chartTip');
+  if(!box)return;
+  const idxFromEvent=e=>{
+    const r=cv.getBoundingClientRect();
+    const x=e.clientX-r.left;
+    const data=histData.slice(-chartCfg.range);
+    if(data.length<2)return null;
+    const padL=34,padR=chartCfg.series.net?44:12;
+    const iw=r.width-padL-padR;
+    const frac=Math.min(1,Math.max(0,(x-padL)/iw));
+    return Math.round(frac*(data.length-1));
+  };
+  box.addEventListener('mousemove',e=>{
+    if(!histData.length)return;
+    chartHover=idxFromEvent(e);
+    drawMainChart();
+    if(chartHover==null){tip.style.opacity=0;return;}
+    const data=histData.slice(-chartCfg.range);
+    const s=data[chartHover];
+    let html='<div class="tt-time">'+todayAt((s.t||0)*1000)+'</div>';
+    for(const k of ['cpu','ram','net']){
+      if(!chartCfg.series[k])continue;
+      const meta=SERIES_META[k];
+      html+='<div class="tt-row"><i style="background:'+meta.color+'"></i>'+meta.label+'<b>'+meta.fmt(meta.get(s))+'</b></div>';
+    }
+    tip.innerHTML=html;
+    tip.style.opacity=1;
+  });
+  box.addEventListener('mouseleave',()=>{chartHover=null;tip.style.opacity=0;drawMainChart();});
+}
+function positionTip(x){
+  const tip=$('#chartTip'),box=$('#chartBox');
+  if(!tip||!box)return;
+  const bw=box.clientWidth,tw=tip.offsetWidth;
+  let left=x+14;
+  if(left+tw>bw-8)left=x-tw-14;
+  tip.style.left=Math.max(0,left)+'px';
+  tip.style.top='10px';
+}
+
+// ================================================================
+// Rings + animated numbers
+// ================================================================
 const RING_C=188.5;
 function setRing(id,pct){
   const el=$('#'+id),txt=$('#'+id.replace('Ring','Pct'));
@@ -781,7 +1296,8 @@ function setRing(id,pct){
   el.style.stroke=(pct>=85?'#f87171':pct>=60?'#fbbf24':'');
   if(txt)txt.textContent=Math.round(pct)+'%';
 }
-function animNum(el,to,dec=0){
+function animNum(el,to,dec){
+  if(!el)return;
   const from=parseFloat(el.dataset.v||0)||0;
   if(REDUCED||Math.abs(to-from)<0.05){el.textContent=to.toFixed(dec);el.dataset.v=to;return;}
   const t0=performance.now(),dur=650;
@@ -794,9 +1310,10 @@ function animNum(el,to,dec=0){
 }
 
 // ================================================================
-// Live status
+// Live status + KPI + alerts engine
 // ================================================================
-let prevStatus=null;
+let prevStatus=null,prevNetRate=null;
+const localHist=[]; // client-side fallback when /api/history is empty
 function deltaFor(el,cur,prev){
   if(!el)return;
   if(prev==null){el.hidden=true;return;}
@@ -818,28 +1335,24 @@ async function updateStatus(){
   const p=prevStatus;
   // CPU
   animNum($('#cpuVal'),d.cpu_percent);
-  $('#cpuPct').textContent=Math.round(d.cpu_percent)+'%';
   setRing('cpuRing',d.cpu_percent);
   $('#cpuVal').className='val '+statusClass(d.cpu_percent);
   $('#cpuSub').textContent=(d.cpu_count||1)+' cores';
-  $('#cpuNote').innerHTML=(d.cpu_freq_mhz?`<b>${d.cpu_freq_mhz}</b> MHz · `:'')+`load <b>${esc(String(d.load_1))}</b>`;
+  $('#cpuNote').innerHTML=(d.cpu_freq_mhz?'<b>'+d.cpu_freq_mhz+'</b> MHz · ':'')+'load <b>'+esc(String(d.load_1))+'</b>';
   deltaFor($('#cpuDelta'),d.cpu_percent,p&&p.cpu_percent);
-  cpuHist.push(d.cpu_percent);if(cpuHist.length>60)cpuHist.shift();
   // RAM
   animNum($('#ramVal'),d.ram_percent);
   setRing('ramRing',d.ram_percent);
   $('#ramVal').className='val '+statusClass(d.ram_percent);
-  $('#memSub').textContent=`${d.ram_used_gb} / ${d.ram_total_gb} GB`;
-  $('#ramNote').innerHTML=`swap <b>${d.swap_total_gb>0?`${d.swap_used_gb}/${d.swap_total_gb} GB (${Math.round(d.swap_percent)}%)`:'off'}</b>`;
+  $('#memSub').textContent=d.ram_used_gb+' / '+d.ram_total_gb+' GB';
+  $('#ramNote').innerHTML='swap <b>'+(d.swap_total_gb>0?d.swap_used_gb+'/'+d.swap_total_gb+' GB ('+Math.round(d.swap_percent)+'%)':'off')+'</b>';
   deltaFor($('#ramDelta'),d.ram_percent,p&&p.ram_percent);
-  ramHist.push(d.ram_percent);if(ramHist.length>60)ramHist.shift();
   // Disk
   animNum($('#diskVal'),d.disk_percent);
   setRing('diskRing',d.disk_percent);
   $('#diskVal').className='val '+statusClass(d.disk_percent);
-  $('#diskSub').textContent=`${d.disk_used_gb} / ${d.disk_total_gb} GB`;
+  $('#diskSub').textContent=d.disk_used_gb+' / '+d.disk_total_gb+' GB';
   deltaFor($('#diskDelta'),d.disk_percent,p&&p.disk_percent);
-  diskHist.push(d.disk_percent);if(diskHist.length>60)diskHist.shift();
   // Uptime / load / temp / battery
   $('#uptimeVal').textContent=fmtDur(d.uptime_sec);
   const boot=new Date(Date.now()-d.uptime_sec*1000);
@@ -850,30 +1363,162 @@ async function updateStatus(){
     $('#'+v).textContent=val;
   });
   let note='';
-  if(d.temp&&d.temp!=='N/A')note+=`${icon('thermo',11)} <b>${esc(String(d.temp))}</b>  `;
-  if(d.battery)note+=`${icon('battery',12)} <b>${d.battery.percent}%</b>${d.battery.plugged?' ⚡':''}`;
+  if(d.temp&&d.temp!=='N/A')note+=icon('thermo',11)+' <b>'+esc(String(d.temp))+'</b>  ';
+  if(d.battery)note+=icon('battery',12)+' <b>'+d.battery.percent+'%</b>'+(d.battery.plugged?' ⚡':'');
   $('#uptimeNote').innerHTML=note||'load 1m · 5m · 15m';
   const tdel=$('#tempDelta');
   if(d.temp&&d.temp!=='N/A'){tdel.hidden=false;tdel.textContent=d.temp;}
   else tdel.hidden=true;
-  // System card
+  // Net rate (client-side derivative)
+  let rateStr='—';
+  if(prevNetRate){
+    const dt=(Date.now()-prevNetRate.t)/1000;
+    if(dt>0.5){
+      const rbps=Math.max(0,(d.net_recv_bytes-prevNetRate.rb)/dt);
+      const sbps=Math.max(0,(d.net_sent_bytes-prevNetRate.sb)/dt);
+      rateStr='↓ '+fmtRate(rbps)+' · ↑ '+fmtRate(sbps);
+    }
+  }
+  prevNetRate={t:Date.now(),rb:d.net_recv_bytes,sb:d.net_sent_bytes};
+  // System card + strip
   $('#osInfo').textContent=d.os;
   $('#hostnameInfo').textContent=d.hostname;
   $('#kernelInfo').textContent=d.kernel;
   $('#procsCount').textContent=d.processes;
-  $('#netVal').textContent=`↓ ${d.net_recv} · ↑ ${d.net_sent}`;
+  $('#netVal').textContent='↓ '+d.net_recv+' · ↑ '+d.net_sent;
   $('#usersVal').textContent=d.users||'0';
   $('#hostChip').textContent=d.hostname||'--';
+  $('#stripHost').innerHTML='<b>'+esc(d.hostname)+'</b>';
+  $('#stripOs').textContent=d.os;
+  $('#stripKernel').textContent=d.kernel;
+  $('#stripUptime').textContent=fmtDur(d.uptime_sec);
+  $('#stripNet').textContent=rateStr;
+  // client-side history fallback (when server sampler empty)
+  if(!histData.length){
+    localHist.push({t:Date.now()/1000,cpu:d.cpu_percent,ram:d.ram_percent,disk:d.disk_percent,
+      sent_bps:0,recv_bps:0,temp:parseFloat(d.temp)||null,load1:d.load_1});
+    if(localHist.length>chartCfg.range)localHist.shift();
+    if(localHist.length>1){histData=localHist.slice();$('#chartEmpty').hidden=true;drawMainChart();drawSparks();}
+  }
+  checkAlerts(d);
   prevStatus=d;
-  drawSparks();
 }
+
+// system strip facts (static-ish)
+let sysInfo=null;
+async function loadSystemInfo(){
+  const d=await fetchJSON('/api/systeminfo');
+  if(!d||d.error)return;
+  sysInfo=d;
+  $('#stripCpu').textContent=d.cpu_model;
+  $('#stripCpu').title=d.cpu_cores+' threads · '+d.virtualization;
+}
+
+// ================================================================
+// Alerting engine (local thresholds)
+// ================================================================
+let alertRecords=[];
+try{alertRecords=JSON.parse(localStorage.getItem('montoring:alerts')||'[]');}catch(e){alertRecords=[];}
+const activeAlerts={}; // key -> level
+function persistAlerts(){try{localStorage.setItem('montoring:alerts',JSON.stringify(alertRecords.slice(0,200)));}catch(e){}}
+function recordAlert(level,metric,msg,value){
+  alertRecords.unshift({id:Date.now()+'-'+Math.random().toString(36).slice(2,7),t:Date.now(),level,metric,msg,value});
+  alertRecords=alertRecords.slice(0,200);
+  persistAlerts();renderAlerts();refreshAlertBadge();
+}
+function checkAlerts(d){
+  if(!S.alerts)return;
+  const tempC=(typeof d.temp==='string'?parseFloat(d.temp):d.temp);
+  const rules=[
+    {k:'cpu',label:'CPU usage',v:d.cpu_percent,warn:S.th.cpuWarn,crit:S.th.cpuCrit,unit:'%'},
+    {k:'ram',label:'Memory usage',v:d.ram_percent,warn:S.th.ramWarn,crit:S.th.ramCrit,unit:'%'},
+    {k:'disk',label:'Disk usage',v:d.disk_percent,warn:S.th.diskWarn,crit:S.th.diskCrit,unit:'%'},
+    {k:'temp',label:'Temperature',v:isNaN(tempC)?null:tempC,warn:S.th.tempWarn,crit:9999,unit:'°C'}
+  ];
+  rules.forEach(r=>{
+    const level=(r.v!=null&&r.crit!=null&&r.v>=r.crit)?'crit':(r.v!=null&&r.v>=r.warn)?'warn':null;
+    const prev=activeAlerts[r.k]||null;
+    if(level&&level!==prev){
+      activeAlerts[r.k]=level;
+      const msg=r.label+' '+r.v.toFixed(1)+r.unit+' ≥ '+(level==='crit'?r.crit:r.warn)+r.unit+' threshold';
+      recordAlert(level,r.k,msg,r.v);
+      toast(msg,level==='crit'?'err':'info');
+    }else if(!level&&prev){
+      delete activeAlerts[r.k];
+      recordAlert('ok',r.k,r.label+' back to normal ('+r.v.toFixed(1)+r.unit+')',r.v);
+    }
+  });
+  refreshAlertBadge();
+}
+function refreshAlertBadge(){
+  const n=Object.keys(activeAlerts).length;
+  const bell=$('#bellCount'),dot=$('#dotAlerts');
+  if(bell){bell.hidden=n===0;bell.textContent=n;}
+  if(dot){dot.hidden=n===0;dot.textContent=n;}
+  const badge=$('#alertStatusBadge');
+  if(badge){badge.textContent=S.alerts?'on':'off';badge.className='badge '+(S.alerts?(n?'fail':'ok'):'');}
+}
+function renderAlerts(){
+  const crit=alertRecords.filter(a=>a.level==='crit').length;
+  const warn=alertRecords.filter(a=>a.level==='warn').length;
+  $('#alertCritCount').textContent=crit;
+  $('#alertWarnCount').textContent=warn;
+  $('#alertEventCount').textContent=alertRecords.length;
+  const el=$('#alertList');
+  if(!alertRecords.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('shield',22)+'</div><strong>No alerts recorded</strong><span class="dim">Everything looks healthy. Alerts appear when thresholds set in Settings are exceeded.</span></div>';
+    return;
+  }
+  el.innerHTML=alertRecords.map(a=>`
+    <div class="alert-item ${a.level==='ok'?'ok':a.level}">
+      <span class="ai-dot"></span>
+      <div class="ai-body"><div class="ai-title">${esc(a.msg)}</div>
+      <div class="ai-sub">${esc(a.metric)} · ${esc(a.level)}</div></div>
+      <span class="ai-time">${todayAt(a.t)}</span>
+    </div>`).join('');
+}
+function clearAlerts(){
+  alertRecords=[];persistAlerts();renderAlerts();refreshAlertBadge();
+  toast('Alert history cleared','info');
+}
+
+// ================================================================
+// Activity audit trail (local)
+// ================================================================
+let activity=[];
+try{activity=JSON.parse(localStorage.getItem('montoring:activity')||'[]');}catch(e){activity=[];}
+function logActivity(kind,title,ok){
+  activity.unshift({t:Date.now(),kind,title,ok:ok!==false});
+  activity=activity.slice(0,100);
+  try{localStorage.setItem('montoring:activity',JSON.stringify(activity));}catch(e){}
+  renderActivity();
+}
+const ACTIVITY_ICONS={fix:'wrench',service:'gear',docker:'box',vm:'monitor',process:'cpu',system:'gear',theme:'sun',logs:'terminal'};
+function renderActivity(){
+  const mini=$('#activityMini'),full=$('#activityFull');
+  const html=list=>list.map(a=>`
+    <div class="activity-item ${a.ok?'ok':'err'}">
+      <span class="ac-ic">${icon(ACTIVITY_ICONS[a.kind]||'pulse',12)}</span>
+      <div class="ac-body"><div class="ac-title">${esc(a.title)}</div>
+      <div class="ac-time">${todayAt(a.t)}</div></div>
+    </div>`).join('');
+  if(mini){
+    if(!activity.length){mini.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('pulse',20)+'</div><strong>No activity yet</strong><span class="dim">Actions you take will appear here.</span></div>';}
+    else mini.innerHTML=html(activity.slice(0,6));
+    $('#activityBadge').textContent=activity.length?activity.length+' events':'';
+  }
+  if(full){
+    if(!activity.length){full.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('pulse',20)+'</div><strong>No activity yet</strong></div>';}
+    else full.innerHTML=html(activity);
+    const b=$('#activityBadge2');if(b)b.textContent=activity.length+' events';
+  }
+}
+function clearActivity(){activity=[];try{localStorage.setItem('montoring:activity','[]');}catch(e){}renderActivity();toast('Activity log cleared','info');}
 
 // ================================================================
 // Health checks
 // ================================================================
-const CHECK_META={
-  'disk':'disk','update':'package','broken':'alert','service':'gear','kernel':'zap','zombie':'pulse'
-};
+const CHECK_META={'disk':'disk','update':'package','broken':'alert','service':'gear','kernel':'zap','zombie':'pulse'};
 function checkIcon(name){
   const n=name.toLowerCase();
   for(const k in CHECK_META)if(n.includes(k))return CHECK_META[k];
@@ -885,9 +1530,8 @@ async function updateChecks(){
   if(!data||data.error||!Array.isArray(data)){list.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('alert',22)+'</div><strong>Checks unavailable</strong></div>';return;}
   const warns=data.filter(c=>c.status==='warn'||c.status==='fail').length;
   const badge=$('#checksBadge');
-  badge.textContent=warns?`${warns} need${warns>1?'':''} attention`:'all clear';
+  badge.textContent=warns?warns+(warns===1?' issue':' issues'):'all clear';
   badge.className='badge '+(warns?'warn':'ok');
-  badge.textContent=warns?`${warns} ${warns===1?'issue':'issues'}`:'all clear';
   list.innerHTML=data.map(c=>`
     <div class="check-row ${c.status}">
       <div class="check-icon">${icon(checkIcon(c.name),15)}</div>
@@ -902,30 +1546,38 @@ async function updateChecks(){
 }
 
 // ================================================================
-// Quick fixes
+// Maintenance actions
 // ================================================================
 const FIX_META={
-  update:{icon:'refresh',desc:'Refresh repositories'},
-  upgrade:{icon:'up',desc:'Install available updates'},
-  autoremove:{icon:'trash',desc:'Remove unused packages'},
-  clean:{icon:'sparkles',desc:'Clear package caches'},
-  'fix-broken':{icon:'wrench',desc:'Repair broken packages'},
-  'clear-logs':{icon:'terminal',desc:'Vacuum the journal'},
-  'docker-prune':{icon:'box',desc:'Remove unused docker data'}
+  update:{icon:'refresh',label:'Update Lists',desc:'Refresh repositories'},
+  upgrade:{icon:'up',label:'Upgrade',desc:'Install available updates'},
+  autoremove:{icon:'trash',label:'Autoremove',desc:'Remove unused packages'},
+  clean:{icon:'sparkles',label:'Clean Cache',desc:'Clear package caches'},
+  'fix-broken':{icon:'wrench',label:'Fix Broken',desc:'Repair packages'},
+  'clear-logs':{icon:'terminal',label:'Clear Logs',desc:'Vacuum the journal'},
+  'docker-prune':{icon:'box',label:'Docker Prune',desc:'Remove unused docker data'}
 };
+function renderFixButtons(){
+  $('#fixGrid').innerHTML=Object.entries(FIX_META).map(([k,m])=>`
+    <button class="fix-btn" onclick="runFix('${k}',this)">
+      <span class="fix-ic">${icon(m.icon,14)}</span>
+      <span>${esc(m.label)}<span class="fdesc">${esc(m.desc)}</span></span>
+    </button>`).join('');
+}
 async function runFix(action,btn){
   const term=$('#fixTerminal'),out=$('#fixResult');
-  const meta=FIX_META[action]||{icon:'wrench'};
+  const meta=FIX_META[action]||{icon:'wrench',desc:action};
   const old=btn?btn.innerHTML:null;
-  if(btn){btn.disabled=true;btn.innerHTML=`<span class="spinner">${icon('refresh',15)}</span><span>Running…</span>`;}
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner">'+icon('refresh',15)+'</span><span>Running…</span>';}
   term.hidden=false;
   out.innerHTML='<span class="dim">$ montoring fix '+esc(action)+' …</span>';
+  logActivity('fix','Run fix: '+meta.label);
   const j=await postJSON('/api/fix',{action});
   if(btn){btn.disabled=false;btn.innerHTML=old;}
   const res=(j&&(j.result||j.error))||'Done';
   out.innerHTML='<span class="dim">$ montoring fix '+esc(action)+'</span>\n'+esc(res.length>600?res.slice(0,600)+'…':res);
-  if(j&&j.error)toast('Fix failed: '+j.error,'err');
-  else toast(meta.desc||('Completed: '+action));
+  if(j&&j.error){toast('Fix failed: '+j.error,'err');logActivity('fix','Fix failed: '+meta.label,false);}
+  else{toast(meta.desc||('Completed: '+action));logActivity('fix','Fix completed: '+meta.label);}
   updateChecks();
 }
 
@@ -952,10 +1604,11 @@ let portsData=[];
 async function loadPorts(){
   const d=await fetchJSON('/api/ports');
   portsData=(d&&d.ports)||[];
-  const count=$('#portsCount');
-  if(count)count.textContent=portsData.length?portsData.length+' open':'';
-  renderPortsOverview();
-  renderPortsTable();
+  const count=$('#portsCount'),count2=$('#portsCount2');
+  const txt=portsData.length?portsData.length+' open':'';
+  if(count)count.textContent=txt;
+  if(count2)count2.textContent=txt;
+  renderPortsOverview();renderPortsTable();
 }
 function protoLabel(p){return p&&p.endsWith('6')?p.slice(0,-1).toUpperCase()+'/6':(p||'').toUpperCase();}
 function cleanProc(s){return (s||'').replace(/users:\(\(\"/,'').replace(/\"\)\)/,'').replace(/\"/g,'');}
@@ -969,24 +1622,38 @@ function renderPortsOverview(){
       <span class="mono" style="font-size:.72rem">${esc(p.addr)}:<b style="color:var(--text)">${esc(p.port)}</b></span>
       <span class="mono dim" style="font-size:.62rem;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%">${esc(cleanProc(p.process))}</span>
     </div>`).join('')
-    +(portsData.length>7?`<div class="dim" style="font-size:.68rem;margin-top:8px">+${portsData.length-7} more — see Network</div>`:'');
+    +(portsData.length>7?'<div class="dim" style="font-size:.68rem;margin-top:8px">+'+(portsData.length-7)+' more — see Network</div>':'');
 }
 function renderPortsTable(){
   const tb=$('#portsRows');
   if(!tb)return;
   if(!portsData.length){tb.innerHTML='<tr><td colspan="4" class="dim">No listening ports</td></tr>';return;}
-  tb.innerHTML=portsData.map(p=>`<tr>
-    <td><span class="pill neutral" style="min-width:56px;justify-content:center">${esc(protoLabel(p.proto))}</span></td>
-    <td class="mono dim">${esc(p.addr)}</td>
-    <td class="mono"><b>${esc(p.port)}</b></td>
-    <td class="mono dim" style="font-size:.68rem">${esc(cleanProc(p.process))||'—'}</td></tr>`).join('');
+  tb.innerHTML=portsData.map(p=>'<tr>'
+    +'<td><span class="pill neutral" style="min-width:56px;justify-content:center">'+esc(protoLabel(p.proto))+'</span></td>'
+    +'<td class="mono dim">'+esc(p.addr)+'</td>'
+    +'<td class="mono"><b>'+esc(p.port)+'</b></td>'
+    +'<td class="mono dim" style="font-size:.68rem">'+(esc(cleanProc(p.process))||'—')+'</td></tr>').join('');
 }
+let nicsData=[],nicPrev={};
 async function loadNetwork(){
   const d=await fetchJSON('/api/network');
   const el=$('#nicList');
   if(!d||!d.nics){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('network',22)+'</div><strong>Unavailable</strong></div>';return;}
+  nicsData=d.nics;
   const maxTx=Math.max(1,...d.nics.map(n=>Math.max(n.sent_mb,n.recv_mb)));
-  el.innerHTML='<div class="grid g3">'+d.nics.map(n=>`
+  const now=Date.now();
+  el.innerHTML='<div class="grid g3">'+d.nics.map(n=>{
+    let rx='—',tx='—';
+    const pr=nicPrev[n.name];
+    if(pr){
+      const dt=(now-pr.t)/1000;
+      if(dt>0.5){
+        rx=fmtRate(Math.max(0,(n.recv_mb-pr.rb)*1048576/dt));
+        tx=fmtRate(Math.max(0,(n.sent_mb-pr.sb)*1048576/dt));
+      }
+    }
+    nicPrev[n.name]={t:now,rb:n.recv_mb,sb:n.sent_mb};
+    return `
     <div class="nic-card ${n.up?'up':''}">
       <div class="nic-head">
         <span class="nic-name">${icon('network',14)} ${esc(n.name)}</span>
@@ -997,11 +1664,15 @@ async function loadNetwork(){
         IPv6: <b>${esc(n.ipv6)||'—'}</b><br>
         MAC: <b>${esc(n.mac)||'—'}</b>${n.speed?` · <b>${n.speed} Mb/s</b>`:''}
       </div>
+      <div class="nic-rate">
+        <span class="rate rx"><span class="rv">↓ ${rx}</span><span class="rk">receive</span></span>
+        <span class="rate tx"><span class="rv">↑ ${tx}</span><span class="rk">send</span></span>
+      </div>
       <div class="nic-traffic">
         <span class="dir down" title="${n.recv_mb} MB received"><span>↓</span><span class="bar"><i style="width:${Math.max(4,n.recv_mb/maxTx*100)}%"></i></span></span>
         <span class="dir up" title="${n.sent_mb} MB sent"><span>↑</span><span class="bar"><i style="width:${Math.max(4,n.sent_mb/maxTx*100)}%"></i></span></span>
       </div>
-    </div>`).join('')+'</div>';
+    </div>`;}).join('')+'</div>';
 }
 
 // ================================================================
@@ -1009,7 +1680,7 @@ async function loadNetwork(){
 // ================================================================
 let procData=[],procSort={key:'cpu',dir:-1};
 async function loadProcesses(){
-  const d=await fetchJSON('/api/processes');
+  const d=await fetchJSON('/api/processes?limit='+(S.procLimit||25));
   if(!d||!d.processes)return;
   procData=d.processes||[];
   $('#procTotal').textContent=d.total+' total';
@@ -1017,10 +1688,11 @@ async function loadProcesses(){
 }
 function renderProcesses(){
   const tb=$('#procRows');
+  if(!tb)return;
   const q=($('#procSearch').value||'').toLowerCase();
   let rows=procData.filter(p=>!q||p.name.toLowerCase().includes(q)||String(p.pid).includes(q)||(p.user||'').toLowerCase().includes(q));
   rows.sort((a,b)=>{
-    const {key,dir}=procSort;
+    const key=procSort.key,dir=procSort.dir;
     let x=a[key],y=b[key];
     if(key==='name'){x=x.toLowerCase();y=y.toLowerCase();return x<y?-dir:x>y?dir:0;}
     return (x-y)*dir;
@@ -1030,15 +1702,15 @@ function renderProcesses(){
     th.querySelector('.arrow').textContent=procSort.key===k?(procSort.dir>0?'▲':'▼'):'';
   });
   if(!rows.length){tb.innerHTML='<tr><td colspan="7" class="dim" style="text-align:center;padding:22px">No processes match your filter</td></tr>';return;}
-  tb.innerHTML=rows.map(p=>`<tr>
-    <td class="mono dim">${p.pid}</td>
-    <td class="mono strong">${esc(p.name)}</td>
-    <td class="mono dim" style="font-size:.72rem">${esc(p.user)}</td>
-    <td><span class="cell-bars ${p.cpu>=50?'hot':p.cpu>=20?'warm':''}"><span class="num">${p.cpu}</span><span class="mini"><i style="width:${Math.min(100,p.cpu)}%"></i></span></span></td>
-    <td><span class="cell-bars ${p.mem>=60?'hot':p.mem>=30?'warm':''}"><span class="num">${p.mem}</span><span class="mini"><i style="width:${Math.min(100,p.mem)}%"></i></span></span></td>
-    <td><span class="pill ${p.status==='running'?'ok':p.status==='zombie'?'fail':'neutral'}">${esc(p.status)}</span></td>
-    <td><span class="row-actions"><button class="icon-btn" title="Kill PID ${p.pid}" onclick="killProcess(${p.pid},'${jsq(p.name)}')" style="color:#fca5a5;border-color:rgba(248,113,113,.35)">${icon('x',13)}</button></span></td>
-  </tr>`).join('');
+  tb.innerHTML=rows.map(p=>'<tr>'
+    +'<td class="mono dim">'+p.pid+'</td>'
+    +'<td class="mono strong">'+esc(p.name)+'</td>'
+    +'<td class="mono dim" style="font-size:.72rem">'+esc(p.user)+'</td>'
+    +'<td><span class="cell-bars '+(p.cpu>=50?'hot':p.cpu>=20?'warm':'')+'"><span class="num">'+p.cpu+'</span><span class="mini"><i style="width:'+Math.min(100,p.cpu)+'%"></i></span></span></td>'
+    +'<td><span class="cell-bars '+(p.mem>=60?'hot':p.mem>=30?'warm':'')+'"><span class="num">'+p.mem+'</span><span class="mini"><i style="width:'+Math.min(100,p.mem)+'%"></i></span></span></td>'
+    +'<td><span class="pill '+(p.status==='running'?'ok':p.status==='zombie'?'fail':'neutral')+'">'+esc(p.status)+'</span></td>'
+    +'<td><span class="row-actions"><button class="icon-btn danger" title="Kill PID '+p.pid+'" onclick="killProcess('+p.pid+',\''+jsq(p.name)+'\')">'+icon('x',13)+'</button></span></td>'
+  +'</tr>').join('');
 }
 $$('#procTable th.sortable').forEach(th=>th.addEventListener('click',()=>{
   const k=th.dataset.key;
@@ -1046,22 +1718,24 @@ $$('#procTable th.sortable').forEach(th=>th.addEventListener('click',()=>{
   else procSort={key:k,dir:k==='name'||k==='pid'?1:-1};
   renderProcesses();
 }));
+function setProcLimit(v){S.procLimit=+v;saveSettings();loadProcesses();}
 async function killProcess(pid,name){
-  const ok=await confirmDlg('Kill process',`Terminate “${name}” (PID ${pid})? It will be force-killed if it ignores SIGTERM.`,true);
+  const ok=await confirmDlg('Kill process','Terminate “'+name+'” (PID '+pid+')? It will be force-killed if it ignores SIGTERM.',true);
   if(!ok)return;
+  logActivity('process','Kill process '+name+' (PID '+pid+')');
   const j=await postJSON('/api/process/kill',{pid});
-  if(j.error)toast('Kill failed: '+j.error,'err');
-  else{toast(j.result||'Process terminated');loadProcesses();}
+  if(j.error){toast('Kill failed: '+j.error,'err');logActivity('process','Kill failed: '+name+' (PID '+pid+')',false);}
+  else{toast(j.result||'Process terminated');logActivity('process','Terminated '+name+' (PID '+pid+')');loadProcesses();}
 }
 
 // ================================================================
-// Services
+// Services (filter + search + pagination)
 // ================================================================
-let svcData=[],svcAvailable=true,svcFilter='all';
+let svcData=[],svcAvailable=true,svcFilter='all',svcPage=0;
+const SVC_PAGE_SIZE=12;
 $$('#svcFilter .seg-btn').forEach(b=>b.addEventListener('click',()=>{
   $$('#svcFilter .seg-btn').forEach(x=>x.classList.toggle('active',x===b));
-  svcFilter=b.dataset.f;
-  renderServices();
+  svcFilter=b.dataset.f;svcPage=0;renderServices();
 }));
 async function loadServices(){
   const d=await fetchJSON('/api/services');
@@ -1071,46 +1745,60 @@ async function loadServices(){
   $('#svcTotal').textContent=svcAvailable?svcData.length+' units':'';
   renderServices();
 }
-const svcIconBtn=(a,act,ic,t,danger)=>`<button class="icon-btn ${danger?'':''}" title="${t}" onclick="svcAction('${a}','${act}')"${danger?' style="color:#fca5a5;border-color:rgba(248,113,113,.35)"':''}>${icon(ic,12)}</button>`;
-function renderServices(){
-  const tb=$('#svcRows');
-  if(!svcAvailable){tb.innerHTML='<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">'+icon('gear',22)+'</div><strong>systemctl not available</strong><span class="dim">This system does not use systemd.</span></div></td></tr>';return;}
+function filteredServices(){
   const q=($('#svcSearch').value||'').toLowerCase();
   let rows=svcData.filter(s=>!q||s.unit.toLowerCase().includes(q)||(s.description||'').toLowerCase().includes(q));
   if(svcFilter==='active')rows=rows.filter(s=>s.active==='active');
   else if(svcFilter==='failed')rows=rows.filter(s=>s.active==='failed');
   else if(svcFilter==='other')rows=rows.filter(s=>s.active!=='active'&&s.active!=='failed');
+  return rows;
+}
+function svcPageGo(dir){svcPage=Math.max(0,svcPage+dir);renderServices();}
+const svcIconBtn=(a,act,ic,t,danger)=>'<button class="icon-btn'+(danger?' danger':'')+'" title="'+t+'" onclick="svcAction(\''+a+'\',\''+act+'\')">'+icon(ic,12)+'</button>';
+function renderServices(){
+  const tb=$('#svcRows');
+  if(!tb)return;
+  if(!svcAvailable){tb.innerHTML='<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">'+icon('gear',22)+'</div><strong>systemctl not available</strong><span class="dim">This system does not use systemd.</span></div></td></tr>';$('#svcPager').hidden=true;return;}
+  const rows=filteredServices();
+  const pages=Math.max(1,Math.ceil(rows.length/SVC_PAGE_SIZE));
+  svcPage=Math.min(svcPage,pages-1);
+  const slice=rows.slice(svcPage*SVC_PAGE_SIZE,(svcPage+1)*SVC_PAGE_SIZE);
+  $('#svcPager').hidden=rows.length<=SVC_PAGE_SIZE;
+  $('#svcRange').textContent=rows.length?(svcPage*SVC_PAGE_SIZE+1)+'–'+Math.min(rows.length,(svcPage+1)*SVC_PAGE_SIZE)+' of '+rows.length:'0';
+  $('#svcPrev').disabled=svcPage===0;
+  $('#svcNext').disabled=svcPage>=pages-1;
   if(!rows.length){tb.innerHTML='<tr><td colspan="5" class="dim" style="text-align:center;padding:22px">No services match</td></tr>';return;}
-  tb.innerHTML=rows.map(s=>{
+  tb.innerHTML=slice.map(s=>{
     const a=jsq(s.unit);
     const pill=s.active==='active'?(s.sub==='running'?'ok':'info'):s.active==='failed'?'fail':'neutral';
-    return `<tr>
-      <td class="mono strong">${esc(s.unit)}</td>
-      <td class="dim" style="font-size:.72rem;max-width:340px;overflow:hidden;text-overflow:ellipsis">${esc(s.description)}</td>
-      <td><span class="pill ${pill}">${esc(s.active)}</span></td>
-      <td class="mono dim" style="font-size:.7rem">${esc(s.sub)}</td>
-      <td><span class="row-actions">
-        ${svcIconBtn(a,'start','play','Start')}
-        ${svcIconBtn(a,'stop','stop','Stop')}
-        ${svcIconBtn(a,'restart','restart','Restart')}
-        ${svcIconBtn(a,'enable','up','Enable')}
-        ${svcIconBtn(a,'disable','x','Disable',true)}
-      </span></td></tr>`;
+    return '<tr>'
+      +'<td class="mono strong">'+esc(s.unit)+'</td>'
+      +'<td class="dim" style="font-size:.72rem;max-width:340px;overflow:hidden;text-overflow:ellipsis">'+esc(s.description)+'</td>'
+      +'<td><span class="pill '+pill+'">'+esc(s.active)+'</span></td>'
+      +'<td class="mono dim" style="font-size:.7rem">'+esc(s.sub)+'</td>'
+      +'<td><span class="row-actions">'
+        +svcIconBtn(a,'start','play','Start')
+        +svcIconBtn(a,'stop','stop','Stop')
+        +svcIconBtn(a,'restart','restart','Restart')
+        +svcIconBtn(a,'enable','up','Enable')
+        +svcIconBtn(a,'disable','x','Disable',true)
+      +'</span></td></tr>';
   }).join('');
 }
 async function svcAction(name,action){
   if(action==='stop'||action==='disable'){
-    if(!await confirmDlg(action+' service',`Are you sure you want to ${action} “${name}”?`,action==='stop'))return;
+    if(!await confirmDlg(action+' service','Are you sure you want to '+action+' “'+name+'”?',action==='stop'))return;
   }
+  logActivity('service',action+' service '+name);
   const j=await postJSON('/api/service/action',{name,action});
-  if(j.error)toast(`${action} failed: ${j.error}`,'err');
+  if(j.error){toast(action+' failed: '+j.error,'err');logActivity('service',action+' '+name+' failed',false);}
   else{toast(j.result||'OK');loadServices();}
 }
 
 // ================================================================
 // Docker
 // ================================================================
-let dockerAvailable=true;
+let dockerAvailable=true,dockerStatsData={containers:[],images:[],usage:[]};
 async function loadDocker(){
   const el=$('#dockerBody');
   const d=await fetchJSON('/api/docker');
@@ -1118,49 +1806,86 @@ async function loadDocker(){
   dockerAvailable=!!d.available;
   const dot=$('#dotDocker'),count=$('#dockerCount');
   dot.hidden=true;count.hidden=true;
+  dockerStatsData.containers=d.containers||[];
   if(!dockerAvailable){
-    el.innerHTML=`<div class="empty-state"><div class="empty-icon">${icon('box',22)}</div><strong>Docker is not available</strong><span class="dim">${esc(d.info||'Install Docker to manage containers here.')}</span></div>`;
-    return;
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('box',22)+'</div><strong>Docker is not available</strong><span class="dim">'+esc(d.info||'Install Docker to manage containers here.')+'</span></div>';
+    renderDockerStats();return;
   }
   const cs=d.containers||[];
   const up=cs.filter(c=>c.status.toLowerCase().startsWith('up')).length;
-  if(cs.length){dot.hidden=false;dot.textContent=up;count.hidden=false;count.textContent=`${up} up · ${cs.length} total`;}
+  if(cs.length){dot.hidden=false;dot.textContent=up;count.hidden=false;count.textContent=up+' up · '+cs.length+' total';}
   if(!cs.length){
     el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('box',22)+'</div><strong>No containers found</strong><span class="dim">Create or pull an image and containers will appear here.</span></div>';
-    return;
+    renderDockerStats();return;
   }
-  el.innerHTML=`<div class="table-wrap"><table class="table">
-    <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th style="text-align:right">Actions</th></tr></thead>
-    <tbody>${cs.map(c=>{
+  el.innerHTML='<div class="table-wrap"><table class="table">'
+    +'<thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th style="text-align:right">Actions</th></tr></thead>'
+    +'<tbody>'+cs.map(c=>{
       const running=c.status.toLowerCase().startsWith('up');
       const n=jsq(c.name);
       const pill=c.status.toLowerCase().includes('exit')||c.status.toLowerCase().includes('dead')?'fail':running?'ok':'warn';
-      return `<tr>
-        <td class="mono strong">${esc(c.name)}</td>
-        <td class="mono dim" style="font-size:.7rem">${esc(c.image)}</td>
-        <td><span class="pill ${pill}">${esc(c.status)}</span></td>
-        <td class="mono dim" style="font-size:.68rem">${esc(c.ports)||'—'}</td>
-        <td><span class="row-actions">
-          ${running
-            ?`<button class="icon-btn" title="Stop" onclick="dockerAction('${n}','stop')">${icon('stop',12)}</button>
-              <button class="icon-btn" title="Restart" onclick="dockerAction('${n}','restart')">${icon('restart',12)}</button>`
-            :`<button class="icon-btn" title="Start" onclick="dockerAction('${n}','start')">${icon('play',12)}</button>`}
-          <button class="icon-btn" title="Remove" style="color:#fca5a5;border-color:rgba(248,113,113,.35)" onclick="dockerAction('${n}','remove')">${icon('trash',12)}</button>
-        </span></td></tr>`;
-    }).join('')}</tbody></table></div>`;
+      return '<tr>'
+        +'<td class="mono strong">'+esc(c.name)+'</td>'
+        +'<td class="mono dim" style="font-size:.7rem">'+esc(c.image)+'</td>'
+        +'<td><span class="pill '+pill+'">'+esc(c.status)+'</span></td>'
+        +'<td class="mono dim" style="font-size:.68rem">'+(esc(c.ports)||'—')+'</td>'
+        +'<td><span class="row-actions">'
+          +(running
+            ?'<button class="icon-btn" title="Stop" onclick="dockerAction(\''+n+'\',\'stop\')">'+icon('stop',12)+'</button>'
+              +'<button class="icon-btn" title="Restart" onclick="dockerAction(\''+n+'\',\'restart\')">'+icon('restart',12)+'</button>'
+            :'<button class="icon-btn" title="Start" onclick="dockerAction(\''+n+'\',\'start\')">'+icon('play',12)+'</button>')
+          +'<button class="icon-btn danger" title="Remove" onclick="dockerAction(\''+n+'\',\'remove\')">'+icon('trash',12)+'</button>'
+        +'</span></td></tr>';
+    }).join('')+'</tbody></table></div>';
+  renderDockerStats();
+}
+function renderDockerStats(){
+  const el=$('#dockerStats');
+  if(!el)return;
+  if(!dockerAvailable){el.innerHTML='';return;}
+  const cs=dockerStatsData.containers;
+  const up=cs.filter(c=>c.status.toLowerCase().startsWith('up')).length;
+  const imgs=dockerStatsData.images||[];
+  const imgsSize=imgs.reduce((acc,im)=>{const m=String(im.size||'').match(/([\d.]+)\s*GB/i);return acc+(m?parseFloat(m[1]):0);},0);
+  el.innerHTML=
+    '<div class="stat-tile ok"><span class="st-ic">'+icon('checkCircle')+'</span><div><div class="st-v">'+up+'</div><div class="st-k">Running</div></div></div>'
+    +'<div class="stat-tile warn"><span class="st-ic">'+icon('stop')+'</span><div><div class="st-v">'+(cs.length-up)+'</div><div class="st-k">Stopped</div></div></div>'
+    +'<div class="stat-tile info"><span class="st-ic">'+icon('layers')+'</span><div><div class="st-v">'+(imgs.length||'—')+'</div><div class="st-k">Images</div></div></div>'
+    +'<div class="stat-tile violet"><span class="st-ic">'+icon('package')+'</span><div><div class="st-v">'+(imgs.length?imgsSize.toFixed(1)+' GB':'—')+'</div><div class="st-k">Image storage</div></div></div>';
+}
+async function loadDockerImages(){
+  const el=$('#imgList');
+  const d=await fetchJSON('/api/docker/images');
+  if(!d||!d.available){el.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('box',20)+'</div><strong>'+esc((d&&d.info)||'Images unavailable')+'</strong></div>';dockerStatsData.images=[];renderDockerStats();return;}
+  dockerStatsData.images=d.images||[];
+  $('#imgCount').textContent=(d.images||[]).length+' local';
+  if(!(d.images||[]).length){el.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('box',20)+'</div><strong>No images</strong><span class="dim">Pull an image with <span class="mono">docker pull</span> to get started.</span></div>';renderDockerStats();return;}
+  el.innerHTML='<div class="table-wrap"><table class="table"><thead><tr><th>Repository</th><th>ID</th><th>Size</th><th>Created</th></tr></thead><tbody>'
+    +d.images.map(im=>'<tr><td class="mono strong">'+esc(im.repo)+'</td><td class="mono dim">'+esc(im.id)+'</td><td class="mono dim">'+esc(im.size)+'</td><td class="mono dim" style="font-size:.7rem">'+esc(im.created)+'</td></tr>').join('')
+    +'</tbody></table></div>';
+  renderDockerStats();
+}
+async function loadDockerUsage(){
+  const el=$('#usageList');
+  const d=await fetchJSON('/api/docker/usage');
+  if(!d||!d.available||!d.rows||!d.rows.length){el.innerHTML='<div class="empty-state" style="padding:22px"><div class="empty-icon">'+icon('disk',20)+'</div><strong>Usage unavailable</strong><span class="dim">Run <span class="mono">docker system df</span> for details.</span></div>';return;}
+  el.innerHTML=d.rows.map(r=>`
+    <div class="kv"><span>${esc(r.type)}</span><strong>${esc(r.count)} · ${esc(r.size)} (reclaimable ${esc(r.reclaimable)})</strong></div>`).join('');
 }
 async function dockerAction(name,action){
-  if(action==='remove'&&!await confirmDlg('Remove container',`Remove container “${name}”? This permanently deletes it.`,true))return;
+  if(action==='remove'&&!await confirmDlg('Remove container','Remove container “'+name+'”? This permanently deletes it.',true))return;
+  logActivity('docker',action+' container '+name);
   const j=await postJSON('/api/docker/action',{name,action});
-  if(j.error)toast(`${action} failed: ${j.error}`,'err');
+  if(j.error){toast(action+' failed: '+j.error,'err');logActivity('docker',action+' '+name+' failed',false);}
   else{toast(j.result||'OK');loadDocker();}
 }
 async function dockerPrune(){
   if(!dockerAvailable){toast('Docker not available','err');return;}
   if(!await confirmDlg('Prune Docker','Remove all stopped containers, dangling images and unused networks?',true))return;
+  logActivity('docker','Prune unused data');
   const j=await postJSON('/api/docker/prune',{});
-  if(j.error)toast('Prune failed: '+j.error,'err');
-  else{toast('Docker pruned');loadDocker();}
+  if(j.error){toast('Prune failed: '+j.error,'err');logActivity('docker','Prune failed',false);}
+  else{toast('Docker pruned');loadDocker();loadDockerUsage();}
 }
 
 // ================================================================
@@ -1178,9 +1903,9 @@ async function loadVMs(){
     const up=vm.state==='running'||vm.state==='paused';
     const n=jsq(vm.name);
     return `
-    <div class="card hoverable" style="padding:16px 18px">
+    <div class="card hoverable" style="padding:16px 18px;background:var(--surface-2)">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <div class="m-chip" style="--mc:${up?'#34d399':'#9aa3b2'};--mc-bg:${up?'rgba(52,211,153,.12)':'rgba(255,255,255,.06)'};--mc-line:${up?'rgba(52,211,153,.28)':'rgba(255,255,255,.12)'};width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center">${icon('monitor',17)}</div>
+        <div class="m-chip" style="--mc:${up?'#34d399':'#9aa3b2'};--mc-bg:${up?'rgba(52,211,153,.12)':'rgba(148,163,184,.12)'};--mc-line:${up?'rgba(52,211,153,.28)':'rgba(148,163,184,.25)'};width:36px;height:36px">${icon('monitor',17)}</div>
         <div style="min-width:0;flex:1">
           <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
             <strong style="font-size:.95rem;letter-spacing:-.01em">${esc(vm.name)}</strong>
@@ -1191,11 +1916,11 @@ async function loadVMs(){
           </div>
         </div>
         <div class="btn-group" style="margin:0">
-          ${up
+          ${(up
             ?`<button class="btn btn-sm" onclick="vmAction('${n}','reboot')">${icon('restart',12)}Reboot</button>
               <button class="btn btn-sm" onclick="vmAction('${n}','shutdown')">${icon('power',12)}Shutdown</button>
               <button class="btn btn-sm btn-danger" onclick="vmAction('${n}','destroy')">${icon('stop',12)}Force Off</button>`
-            :`<button class="btn btn-sm btn-primary" onclick="vmAction('${n}','start')">${icon('play',12)}Start</button>`}
+            :`<button class="btn btn-sm btn-primary" onclick="vmAction('${n}','start')">${icon('play',12)}Start</button>`)}
           <button class="btn btn-sm" onclick="openResizeModal('${n}')">${icon('resize',12)}Resize Disk</button>
         </div>
       </div>
@@ -1203,13 +1928,14 @@ async function loadVMs(){
   }).join('')+'</div>';
 }
 async function vmAction(name,action){
-  if(action==='destroy'&&!await confirmDlg('Force off VM',`Force power-off “${name}”? Unsaved data in the guest will be lost.`,true))return;
+  if(action==='destroy'&&!await confirmDlg('Force off VM','Force power-off “'+name+'”? Unsaved data in the guest will be lost.',true))return;
+  logActivity('vm',action+' VM '+name);
   const j=await postJSON('/api/vm/action',{name,action});
-  if(j.error)toast(`${action} failed: ${j.error}`,'err');
+  if(j.error){toast(action+' failed: '+j.error,'err');logActivity('vm',action+' '+name+' failed',false);}
   else{toast(j.result||'OK');loadVMs();}
 }
 async function openResizeModal(name){
-  let hint=`/var/lib/libvirt/images/${name}.qcow2`;
+  let hint='/var/lib/libvirt/images/'+name+'.qcow2';
   try{
     const info=await fetchJSON('/api/vm_info/'+encodeURIComponent(name));
     const blob=[info&&info.disks,info&&info.virsh].filter(Boolean).join('\n');
@@ -1218,9 +1944,8 @@ async function openResizeModal(name){
   }catch(e){}
   const r=await openModal({
     title:'Resize virtual disk',
-    text:`Grow the disk image for “${name}”. Existing data is preserved; the guest filesystem may still need extending afterwards.`,
-    icon:'resize',
-    confirmText:'Resize',
+    text:'Grow the disk image for “'+name+'”. Existing data is preserved; the guest filesystem may still need extending afterwards.',
+    icon:'resize',confirmText:'Resize',
     fields:[
       {key:'disk_path',label:'Disk path',value:hint,placeholder:'/var/lib/libvirt/images/vm.qcow2'},
       {key:'size',label:'New size (GB)',type:'number',placeholder:'40'}
@@ -1229,8 +1954,9 @@ async function openResizeModal(name){
   if(!r)return;
   const size=parseInt(r.values.size,10);
   if(!size||size<1){toast('Enter a valid size in GB','err');return;}
+  logActivity('vm','Resize disk of '+name+' to '+size+' GB');
   const j=await postJSON('/api/vm_resize',{name,disk_path:r.values.disk_path,new_size_gb:size});
-  if(j.error)toast('Resize failed: '+j.error,'err');
+  if(j.error){toast('Resize failed: '+j.error,'err');logActivity('vm','Resize of '+name+' failed',false);}
   else toast(j.result||'Resize queued');
 }
 
@@ -1243,20 +1969,36 @@ async function loadLogs(){
   const lines=$('#logLines').value;
   const prio=$('#logPrio').value;
   const grep=$('#logGrep').value;
-  const d=await fetchJSON(`/api/logs?lines=${lines}&prio=${prio}&grep=${encodeURIComponent(grep)}`);
+  const d=await fetchJSON('/api/logs?lines='+lines+'&prio='+prio+'&grep='+encodeURIComponent(grep));
   logText=(d&&d.logs)||'No log output.';
-  view.innerHTML=(logText==='No log output.'?'<span class="ll">No log output.</span>':logText.split('\n').map(l=>{
+  const ls=logText.split('\n');
+  const tag=$('#logCountTag');
+  tag.hidden=false;tag.textContent=ls.length+' lines';
+  view.innerHTML=(logText==='No log output.'?'<span class="ll">No log output.</span>':ls.map(l=>{
     const cls=/\b(error|fail|fatal|critical|panic|segfault|emerg|alert|crit)\b/i.test(l)?'err'
       :/\bwarn/i.test(l)?'warn'
       :/\bnotice\b/i.test(l)?'notice'
       :/\binfo\b/i.test(l)?'info':'';
-    return `<span class="ll ${cls}">${esc(l)}</span>`;
+    return '<span class="ll '+cls+'">'+esc(l)+'</span>';
   }).join(''));
   if($('#logAuto').checked)view.scrollTop=view.scrollHeight;
+}
+function toggleLogWrap(){
+  const v=$('#logView');
+  v.classList.toggle('nowrap',!$('#logWrap').checked);
+  S.logWrap=$('#logWrap').checked;saveSettings();
 }
 async function copyLogs(){
   try{await navigator.clipboard.writeText(logText);toast('Logs copied to clipboard');}
   catch(e){toast('Copy failed','err');}
+}
+function downloadLogs(){
+  const blob=new Blob([logText],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='montoring-journal-'+new Date().toISOString().replace(/[:.]/g,'-')+'.log';
+  a.click();URL.revokeObjectURL(a.href);
+  toast('Log file downloaded','info');
 }
 
 // ================================================================
@@ -1280,6 +2022,50 @@ function openDesktopApp(){
 function openInBrowser(){window.open(location.origin,'_blank');}
 
 // ================================================================
+// Settings UI
+// ================================================================
+function renderSettings(){
+  syncThemeSeg();
+  $$('.refreshSel').forEach(el=>el.value=String(S.refreshMs));
+  $('#setConfirm').checked=!!S.confirmDanger;
+  $('#setAlerts').checked=!!S.alerts;
+  $('#procLimit').value=String(S.procLimit);
+  ['cpuWarn','cpuCrit','ramWarn','ramCrit','diskWarn','diskCrit','tempWarn'].forEach(k=>{const el=$('#th-'+k);if(el)el.value=S.th[k];});
+  $$('#rangeSeg .seg-btn, #rangeSegSetting .seg-btn').forEach(b=>b.classList.toggle('active',+b.dataset.r===chartCfg.range));
+}
+function saveThresholds(){
+  ['cpuWarn','cpuCrit','ramWarn','ramCrit','diskWarn','diskCrit','tempWarn'].forEach(k=>{
+    const el=$('#th-'+k);
+    if(el&&el.value!=='')S.th[k]=Math.max(1,Math.min(120,parseFloat(el.value)||S.th[k]));
+  });
+  saveSettings();toast('Thresholds saved');logActivity('system','Updated alert thresholds');
+}
+function resetSettings(){
+  openModal({title:'Reset all settings',text:'Restore default theme, thresholds, intervals and data settings?',danger:true,confirmText:'Reset',icon:'refresh'}).then(r=>{
+    if(!r)return;
+    S=JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    saveSettings();
+    applyTheme();renderSettings();setRefresh(String(S.refreshMs));setRange(S.chartRange);
+    toast('Settings reset to defaults','info');
+  });
+}
+function setRefresh(ms){
+  S.refreshMs=+ms;saveSettings();
+  $$('.refreshSel').forEach(el=>el.value=String(S.refreshMs));
+  restartTimers();
+  toast('Refresh interval: '+(S.refreshMs/1000)+'s','info');
+}
+let statusTimer=null,histCounter=0;
+function restartTimers(){
+  if(statusTimer)clearInterval(statusTimer);
+  statusTimer=setInterval(()=>{
+    if(document.hidden)return;
+    updateStatus();
+    if(++histCounter>=Math.max(2,Math.round(S.refreshMs/2000)))  {histCounter=0;loadHistory();}
+  },S.refreshMs);
+}
+
+// ================================================================
 // Command palette
 // ================================================================
 let paletteOpen=false;
@@ -1288,37 +2074,43 @@ function openPalette(){
   paletteOpen=true;
   let filter='',sel=0;
   const items=[
-    {g:'Go to',label:'Overview',icon:'gauge',hint:'⌘1',run:()=>showTab('overview')},
-    {g:'Go to',label:'Processes',icon:'cpu',hint:'⌘2',run:()=>showTab('processes')},
-    {g:'Go to',label:'Services',icon:'gear',hint:'⌘3',run:()=>showTab('services')},
-    {g:'Go to',label:'Docker',icon:'box',hint:'⌘4',run:()=>showTab('docker')},
-    {g:'Go to',label:'Virtual Machines',icon:'monitor',hint:'⌘5',run:()=>showTab('vms')},
-    {g:'Go to',label:'Network',icon:'network',hint:'⌘6',run:()=>showTab('network')},
-    {g:'Go to',label:'Logs',icon:'terminal',hint:'⌘7',run:()=>showTab('logs')},
-    {g:'Go to',label:'Help & About',icon:'help',hint:'⌘8',run:()=>showTab('help')},
+    {g:'Go to',label:'Overview',icon:'gauge',hint:MOD+'1',run:()=>showTab('overview')},
+    {g:'Go to',label:'Processes',icon:'cpu',hint:MOD+'2',run:()=>showTab('processes')},
+    {g:'Go to',label:'Network',icon:'network',hint:MOD+'3',run:()=>showTab('network')},
+    {g:'Go to',label:'Services',icon:'gear',hint:MOD+'4',run:()=>showTab('services')},
+    {g:'Go to',label:'Docker',icon:'box',hint:MOD+'5',run:()=>showTab('docker')},
+    {g:'Go to',label:'Virtual Machines',icon:'monitor',hint:MOD+'6',run:()=>showTab('vms')},
+    {g:'Go to',label:'Logs',icon:'terminal',hint:MOD+'7',run:()=>showTab('logs')},
+    {g:'Go to',label:'Alerts & Activity',icon:'pulse',hint:MOD+'8',run:()=>showTab('alerts')},
+    {g:'Go to',label:'Settings',icon:'gear',hint:MOD+'9',run:()=>showTab('settings')},
+    {g:'Go to',label:'Help & About',icon:'help',hint:MOD+'0',run:()=>showTab('help')},
     {g:'Actions',label:'Refresh current view',icon:'refresh',hint:'R',run:refreshCurrent},
     {g:'Actions',label:'Refresh everything',icon:'refresh',run:refreshAll},
+    {g:'Actions',label:'Toggle dark / light theme',icon:'sun',hint:MOD+'T',run:cycleTheme},
+    {g:'Actions',label:'Show keyboard shortcuts',icon:'keyboard',hint:'?',run:openShortcuts},
+    {g:'Actions',label:'Clear alert history',icon:'trash',run:clearAlerts},
+    {g:'Actions',label:'Clear activity log',icon:'trash',run:clearActivity},
     {g:'Actions',label:'Launch desktop window',icon:'monitor',run:openDesktopApp},
     {g:'Actions',label:'Open in browser',icon:'globe',run:openInBrowser}
   ];
   const bd=document.createElement('div');
   bd.className='palette-backdrop';
-  bd.innerHTML=`<div class="palette" role="dialog" aria-label="Command palette">
-    <div class="p-input">${icon('search',16)}<input id="palInput" placeholder="Search tabs and actions…" autocomplete="off" spellcheck="false"></div>
-    <div class="p-list" id="palList"></div></div>`;
+  bd.innerHTML='<div class="palette" role="dialog" aria-label="Command palette">'
+    +'<div class="p-input">'+icon('search',16)+'<input id="palInput" placeholder="Search tabs and actions…" autocomplete="off" spellcheck="false"></div>'
+    +'<div class="p-list" id="palList"></div></div>';
   document.body.appendChild(bd);
   const input=$('#palInput'),list=$('#palList');
   const filtered=()=>{const q=filter.trim().toLowerCase();return q?items.filter(i=>i.label.toLowerCase().includes(q)):items;};
   function render(){
     const its=filtered();
     sel=Math.max(0,Math.min(sel,its.length-1));
-    if(!its.length){list.innerHTML=`<div class="p-empty">No results for “${esc(filter)}”</div>`;return;}
+    if(!its.length){list.innerHTML='<div class="p-empty">No results for “'+esc(filter)+'”</div>';return;}
     let html='',lastG=null;
     its.forEach((it,i)=>{
-      if(it.g!==lastG){html+=`<div class="p-group">${esc(it.g)}</div>`;lastG=it.g;}
-      html+=`<button class="p-item ${i===sel?'sel':''}" data-i="${i}">
-        ${icon(it.icon,15)}<span>${esc(it.label)}</span>
-        ${it.hint?`<span class="hint">${esc(it.hint)}</span>`:''}</button>`;
+      if(it.g!==lastG){html+='<div class="p-group">'+esc(it.g)+'</div>';lastG=it.g;}
+      html+='<button class="p-item '+(i===sel?'sel':'')+'" data-i="'+i+'">'
+        +icon(it.icon,15)+'<span>'+esc(it.label)+'</span>'
+        +(it.hint?'<span class="hint">'+esc(it.hint)+'</span>':'')+'</button>';
     });
     list.innerHTML=html;
     const selEl=list.querySelector('.p-item.sel');
@@ -1338,8 +2130,7 @@ function openPalette(){
     else if(e.key==='Enter'){e.preventDefault();pick();}
   });
   bd.addEventListener('mousedown',e=>{if(e.target===bd)close();});
-  render();
-  input.focus();
+  render();input.focus();
 }
 
 // ================================================================
@@ -1348,50 +2139,34 @@ function openPalette(){
 function refreshCurrent(){
   const fn=TAB_LOADERS[currentTab];
   if(fn)fn();
-  if(currentTab==='overview'||!fn){updateStatus();updateChecks();}
+  if(currentTab==='overview'||!fn){updateStatus();updateChecks();loadHistory();}
 }
 function refreshAll(){
-  updateStatus();updateChecks();loadDisks();loadPorts();
-  loadProcesses();loadServices();loadDocker();loadVMs();loadNetwork();loadLogs();
+  updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();
+  loadProcesses();loadServices();loadDocker();loadDockerImages();loadDockerUsage();loadVMs();loadNetwork();loadLogs();
 }
 function focusSearch(){
   const panel=$('#tab-'+currentTab);
   if(panel){const inp=panel.querySelector('input[type=search]');if(inp){inp.focus();inp.select();}}
 }
-// Mobile menu toggle
-const menuToggle=$('#menuToggle');
-const sidebar=$('.sidebar');
-if(menuToggle&&sidebar){
-  menuToggle.addEventListener('click',()=>{
-    const isOpen=sidebar.classList.toggle('open');
-    menuToggle.setAttribute('aria-expanded',isOpen?'true':'false');
-  });
-  // Close sidebar when clicking outside on mobile
-  document.addEventListener('click',(e)=>{
-    if(window.innerWidth<=768&&!sidebar.contains(e.target)&&!menuToggle.contains(e.target)){
-      sidebar.classList.remove('open');
-      menuToggle.setAttribute('aria-expanded','false');
-    }
-  });
-}
-
 document.addEventListener('keydown',e=>{
   const mod=e.metaKey||e.ctrlKey;
   if(mod&&e.key.toLowerCase()==='k'){e.preventDefault();openPalette();return;}
-  if(mod&&/^[1-8]$/.test(e.key)){e.preventDefault();showTab(TAB_NAMES[+e.key-1]);return;}
+  if(mod&&e.key.toLowerCase()==='t'){e.preventDefault();cycleTheme();return;}
+  if(mod&&/^[0-9]$/.test(e.key)){e.preventDefault();showTab(TAB_NAMES[(+e.key+9)%10]);return;}
+  if(mod&&e.key==='ArrowRight'){e.preventDefault();const i=TAB_NAMES.indexOf(currentTab);showTab(TAB_NAMES[(i+1)%TAB_NAMES.length]);return;}
+  if(mod&&e.key==='ArrowLeft'){e.preventDefault();const i=TAB_NAMES.indexOf(currentTab);showTab(TAB_NAMES[(i-1+TAB_NAMES.length)%TAB_NAMES.length]);return;}
   if(isTyping(e)||mod)return;
   if(e.key==='/'&&document.activeElement===document.body){e.preventDefault();focusSearch();return;}
+  if(e.key==='?'){e.preventDefault();openShortcuts();return;}
   if(e.key.toLowerCase()==='r'){refreshCurrent();}
-  // Escape to close mobile menu
   if(e.key==='Escape'&&window.innerWidth<=768){
     sidebar.classList.remove('open');
-    if(menuToggle)menuToggle.setAttribute('aria-expanded','false');
+    menuToggle.setAttribute('aria-expanded','false');
   }
 });
-function tickClock(){
-  const t=new Date();
-  $('#clock').textContent=[t.getHours(),t.getMinutes(),t.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
-}
+function tickClock(){$('#clock').textContent=nowTime();}
+window.addEventListener('resize',()=>{drawMainChart();drawSparks();});
 
 // ================================================================
 // Init
@@ -1401,24 +2176,33 @@ function tickClock(){
   $('#palKbd2').textContent=MOD+' K';
   $('#kCtrlK').textContent=IS_MAC?'⌘':MOD;
   $('#kCtrlN').textContent=IS_MAC?'⌘':MOD;
+  $('#kCtrlT').textContent=IS_MAC?'⌘':MOD;
   const v=await fetchJSON('/api/version');
   if(v){
     const vs='v'+(v.version||'');
     $('#footerVersion').textContent=vs;
-    $('#brandVer').textContent=vs;
+    $('#brandVer').textContent=vs+' · local-first';
   }
   tickClock();
 })();
 
-updateStatus();updateChecks();loadDisks();loadPorts();
-loadProcesses();loadServices();loadDocker();loadVMs();loadNetwork();loadLogs();
-setInterval(updateStatus,3000);
-setInterval(updateChecks,8000);
-setInterval(()=>{if(!document.hidden)loadDisks();},20000);
+applyTheme();
+renderFixButtons();
+renderActivity();
+renderAlerts();
+refreshAlertBadge();
+renderSettings();
+chartBoxEvents();
+$('#logWrap').checked=!!S.logWrap;
+toggleLogWrap(); // apply wrap setting
+updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();
+loadProcesses();loadServices();loadDocker();loadDockerImages();loadDockerUsage();loadVMs();loadNetwork();loadLogs();
+restartTimers();
+setInterval(updateChecks,15000);
+setInterval(()=>{if(!document.hidden)loadDisks();},30000);
 setInterval(()=>{if(!document.hidden&&$('#procAuto').checked)loadProcesses();},5000);
 setInterval(()=>{if(!document.hidden&&$('#logAuto').checked&&$('#tab-logs').classList.contains('active'))loadLogs();},5000);
 setInterval(tickClock,1000);
-window.addEventListener('resize',drawSparks);
 
 // Deep link
 const initial=location.hash.replace('#','');
