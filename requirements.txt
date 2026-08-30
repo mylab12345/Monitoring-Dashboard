@@ -1,2 +1,25 @@
-flask>=2.2
-psutil>=5.9
+# Core dependencies with pinned secure versions
+flask>=3.0.0,<4.0.0
+psutil>=5.9.0,<7.0.0
+markupsafe>=2.1.3
+
+# Security enhancements
+flask-limiter>=3.5.0
+python-dotenv>=1.0.0
+
+# HTTP client libraries (pinned to secure versions)
+aiohttp>=3.14.3
+urllib3>=2.6.3
+requests>=2.32.3
+
+# Auth library (pinned to secure version)
+authlib>=1.6.11
+
+# Template engine
+werkzeug>=3.1.6
+
+# Async support
+tornado>=6.5.7
+
+# ML libraries (if needed, use safe loading practices)
+# transformers - use with trust_remote_code=False always

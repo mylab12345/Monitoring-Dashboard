@@ -19,8 +19,25 @@ import threading
 import time
 import json
 from datetime import datetime
+from functools import wraps
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, abort
+from markupsafe import escape
+
+# Import rate limiter
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    HAS_LIMITER = True
+except ImportError:
+    HAS_LIMITER = False
+
+# Load environment variables for secrets
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 APP_HOME = os.environ.get("MONITORING_HOME", os.path.dirname(os.path.abspath(__file__)))
 APP_PORT = int(os.environ.get("MONITORING_PORT", "8050"))
@@ -38,6 +55,35 @@ def _read_version():
 APP_VERSION = _read_version()
 
 app = Flask(__name__)
+
+# Set secure Flask configuration - use environment variable or generate secure random key
+app.config['SECRET_KEY'] = os.environ.get('MONITORING_SECRET_KEY', os.urandom(32).hex())
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
+
+# Initialize rate limiter
+if HAS_LIMITER:
+    limiter = Limiter(
+        app=app,
+        key_func=get_remote_address,
+        default_limits=["200 per day", "50 per hour"],
+        storage_uri="memory://"
+    )
+else:
+    limiter = None
+
+def rate_limit(limit_string):
+    """Decorator for custom rate limits on specific endpoints."""
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            if HAS_LIMITER and limiter:
+                return limiter.limit(limit_string)(f)(*args, **kwargs)
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
 
 # ------------------------------------------------------------------
 # Safe command runner (sudo-aware)
@@ -59,17 +105,42 @@ def _sudo_test():
 
 PASSWORDLESS_SUDO = _sudo_test() if HAVE_SUDO else False
 
-def run(cmd, timeout=10, sudo=False):
-    """Run a shell command; optionally prefix sudo when not root."""
+def run(cmd, timeout=10, sudo=False, check=False):
+    """Run a shell command; optionally prefix sudo when not root.
+    
+    Args:
+        cmd: Command string (when shell=True) or list of args (when shell=False)
+        timeout: Maximum execution time in seconds
+        sudo: Whether to run with sudo privileges
+        check: If True, raise exception on non-zero exit code
+        
+    Returns:
+        tuple: (returncode, stdout, stderr)
+    """
     if sudo and os.geteuid() != 0:
-        if PASSWORDLESS_SUDO:
-            cmd = "sudo -n " + cmd
-        else:
-            # Try anyway — commands that don't need root will still work.
-            cmd = "sudo -n " + cmd
+        if isinstance(cmd, str):
+            if PASSWORDLESS_SUDO:
+                cmd = "sudo -n " + cmd
+            else:
+                cmd = "sudo -n " + cmd
+        elif isinstance(cmd, list):
+            cmd = ["sudo", "-n"] + cmd
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        # Use shell=False when possible for security
+        shell_mode = isinstance(cmd, str)
+        r = subprocess.run(
+            cmd,
+            shell=shell_mode,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=check
+        )
         return r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired as e:
+        return -1, "", f"Command timed out after {timeout}s"
+    except subprocess.CalledProcessError as e:
+        return e.returncode, e.stdout or "", e.stderr or ""
     except Exception as e:
         return -1, "", str(e)
 
@@ -80,6 +151,49 @@ def safe_name(name):
     """Validate identifiers (unit names, VM names, container names...)."""
     return bool(name) and re.fullmatch(r"[A-Za-z0-9_@.\-: _\[\]]{1,120}", name) is not None
 
+def validate_systemctl_action(action):
+    """Validate systemctl action against whitelist."""
+    allowed_actions = ("start", "stop", "restart", "reload", "enable", "disable", "status")
+    return action in allowed_actions
+
+def validate_service_name(name):
+    """Validate systemd service name strictly."""
+    if not name or not isinstance(name, str):
+        return False
+    # Service names: alphanumeric, hyphens, periods, @ for templates, max 256 chars
+    if len(name) > 256 or name.startswith('-'):
+        return False
+    return bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9@.\-_]*", name))
+
+def validate_vm_name(name):
+    """Validate libvirt VM name strictly."""
+    if not name or not isinstance(name, str):
+        return False
+    if len(name) > 120 or name.startswith('-'):
+        return False
+    return bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.\-]*", name))
+
+def validate_disk_path(path):
+    """Validate disk path - must be absolute with safe characters only."""
+    if not path or not isinstance(path, str):
+        return False
+    if len(path) > 256 or not path.startswith('/'):
+        return False
+    # Only allow alphanumeric, dots, hyphens, underscores, slashes
+    return bool(re.fullmatch(r"/[a-zA-Z0-9./\-_]+", path))
+
+def sanitize_int(value, default=0, min_val=None, max_val=None):
+    """Safely convert to int with bounds checking."""
+    try:
+        result = int(str(value).strip())
+        if min_val is not None and result < min_val:
+            return min_val
+        if max_val is not None and result > max_val:
+            return max_val
+        return result
+    except (TypeError, ValueError):
+        return default
+
 # ------------------------------------------------------------------
 # Index
 # ------------------------------------------------------------------
@@ -88,6 +202,7 @@ def index():
     return render_template("index.html")
 
 @app.route("/api/health")
+@rate_limit("100 per minute")
 def api_health():
     """Cheap liveness/readiness probe used by the UI and service monitors.
 
@@ -103,6 +218,7 @@ def api_health():
     })
 
 @app.route("/api/version")
+@rate_limit("30 per minute")
 def api_version():
     return jsonify({
         "app": "Monitoring",
@@ -433,7 +549,8 @@ TROUBLESHOOT_FIXES = {
 
 SYSTEMD_FIXES = {
     "reset_failed": "systemctl reset-failed",
-    "restart_failed": "for s in $(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}'); do systemctl restart $s 2>/dev/null; done",
+    # Use a safer approach with proper quoting for restarting failed services
+    "restart_failed": "for s in $(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | head -20); do systemctl restart \"$s\" 2>/dev/null; done",
 }
 
 LOG_FIXES = {
@@ -1434,6 +1551,7 @@ def api_processes():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/process/kill", methods=["POST"])
+@rate_limit("30 per minute")
 def api_process_kill():
     data = request.json or {}
     try:
@@ -1442,6 +1560,9 @@ def api_process_kill():
         return jsonify({"error": "invalid pid"}), 400
     if pid <= 1:
         return jsonify({"error": "refusing to kill init"}), 400
+    # Additional security check - ensure PID is a reasonable value
+    if pid > 1000000:
+        return jsonify({"error": "invalid pid range"}), 400
     try:
         import psutil
         p = psutil.Process(pid)
@@ -1451,13 +1572,14 @@ def api_process_kill():
             p.wait(timeout=3)
         except psutil.TimeoutExpired:
             p.kill()
-        return jsonify({"result": f"Terminated {name} (pid {pid})"})
+        return jsonify({"result": f"Terminated {escape(name)} (pid {pid})"})
     except psutil.NoSuchProcess:
         return jsonify({"error": f"No process with pid {pid}"}), 404
     except psutil.AccessDenied:
-        _, _, err = run(f"kill -9 {pid}", sudo=True)
+        # Use list-based command for safety - pid is already validated as int
+        _, _, err = run(["kill", "-9", str(pid)], sudo=True)
         if err:
-            return jsonify({"error": err.strip()[:200]}), 403
+            return jsonify({"error": escape(err.strip()[:200])}), 403
         return jsonify({"result": f"Killed pid {pid} (sudo)"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1488,17 +1610,24 @@ def api_services():
 SERVICE_ACTIONS = ("start", "stop", "restart", "reload", "enable", "disable")
 
 @app.route("/api/service/action", methods=["POST"])
+@rate_limit("20 per minute")
 def api_service_action():
     data = request.json or {}
-    name, action = data.get("name", ""), data.get("action", "")
-    if not safe_name(name):
+    name = data.get("name", "")
+    action = data.get("action", "")
+    
+    # Strict validation for service name and action
+    if not validate_service_name(name):
         return jsonify({"error": "invalid unit name"}), 400
-    if action not in SERVICE_ACTIONS:
+    if not validate_systemctl_action(action):
         return jsonify({"error": "invalid action"}), 400
-    _, out, err = run(f"systemctl {action} {shlex.quote(name)}", timeout=30, sudo=True)
+    
+    # Use list-based command to avoid shell injection entirely
+    cmd_list = ["systemctl", action, name]
+    _, out, err = run(cmd_list, timeout=30, sudo=True)
     if err and "Created symlink" not in err:
-        return jsonify({"error": err.strip()[:300]}), 500
-    return jsonify({"result": f"{action} {name}: ok"})
+        return jsonify({"error": escape(err.strip()[:300])}), 500
+    return jsonify({"result": f"{action} {escape(name)}: ok"})
 
 # ------------------------------------------------------------------
 # Logs (journalctl with fallback)
@@ -1507,8 +1636,9 @@ def api_service_action():
 def api_logs():
     lines = min(max(_int_or(request.args.get("lines", 60), 60), 10), 500)
     prio = _int_or(request.args.get("prio", 0), 0)  # 0 = all
-    grep = request.args.get("grep", "").strip()
+    grep = request.args.get("grep", "")
     if grep:
+        # Sanitize grep input to prevent command injection
         grep = re.sub(r"[^\w\s\-\.\[\]/:]", "", grep)[:80]
     if which("journalctl"):
         cmd = f"journalctl --no-pager -n {lines} -o short"
@@ -1522,7 +1652,7 @@ def api_logs():
     else:
         for cand in ("/var/log/syslog", "/var/log/messages"):
             if os.path.exists(cand):
-                code, out, _ = run(f"tail -n {lines} {cand}", timeout=10, sudo=True)
+                code, out, _ = run(f"tail -n {lines} {shlex.quote(cand)}", timeout=10, sudo=True)
                 break
         else:
             out = "No journalctl and no readable syslog found."
@@ -1651,8 +1781,11 @@ def api_vms():
     if code == 0 and out.strip():
         names = [n.strip() for n in out.splitlines() if n.strip()]
         for n in names:
-            _, info, _ = run(f"virsh dominfo '{n}' 2>/dev/null")
-            _, state_raw, _ = run(f"virsh domstate '{n}' 2>/dev/null")
+            # Validate VM name before using in command
+            if not safe_name(n):
+                continue
+            _, info, _ = run(f"virsh dominfo {shlex.quote(n)} 2>/dev/null")
+            _, state_raw, _ = run(f"virsh domstate {shlex.quote(n)} 2>/dev/null")
             state = state_raw.strip().splitlines()[0] if state_raw else "unknown"
             mem, vcpus = "N/A", "N/A"
             for line in info.splitlines():
@@ -1660,10 +1793,10 @@ def api_vms():
                     try:
                         mem = f"{int(line.split(':')[1].strip().split()[0]) // 1024 // 1024} GB"
                     except Exception:
-                        mem = line.split(":")[1].strip()
+                        mem = escape(line.split(":")[1].strip())
                 if "CPU(s)" in line:
-                    vcpus = line.split(":")[1].strip()
-            vms.append({"name": n, "state": state, "mem": mem, "vcpus": vcpus})
+                    vcpus = escape(line.split(":")[1].strip())
+            vms.append({"name": escape(n), "state": escape(state), "mem": mem, "vcpus": vcpus})
     if not vms:
         try:
             import libvirt
@@ -1673,7 +1806,7 @@ def api_vms():
                              4: "shutdown", 5: "shutoff", 6: "crashed", 7: "pmsuspended"}
                 for dom in conn.listAllDomains():
                     info = dom.info()
-                    vms.append({"name": dom.name(), "state": state_map.get(info[0], "unknown"),
+                    vms.append({"name": escape(dom.name()), "state": escape(state_map.get(info[0], "unknown")),
                                 "mem": f"{info[1] // 1024 // 1024} MB", "vcpus": str(info[3])})
                 conn.close()
         except Exception:
@@ -1681,32 +1814,42 @@ def api_vms():
     return jsonify(vms)
 
 @app.route("/api/vm/action", methods=["POST"])
+@rate_limit("20 per minute")
 def api_vm_action():
     data = request.json or {}
     if not which("virsh") and not which("libvirt"):
         return jsonify({"error": "virsh/libvirt not available on this system"}), 400
-    name, action = data.get("name", ""), data.get("action", "")
-    if not safe_name(name):
+    name = data.get("name", "")
+    action = data.get("action", "")
+    
+    # Strict validation for VM name and action
+    if not validate_vm_name(name):
         return jsonify({"error": "invalid VM name"}), 400
     if action not in VM_ACTIONS:
         return jsonify({"error": "invalid action"}), 400
-    _, out, err = run(f"virsh {action} '{name}' 2>&1", timeout=60, sudo=True)
+    
+    # Use list-based command to avoid shell injection
+    cmd_list = ["virsh", action, name]
+    _, out, err = run(cmd_list, timeout=60, sudo=True)
     if err and "error" in (out + err).lower():
-        return jsonify({"error": (out + err).strip()[:300]}), 500
-    return jsonify({"result": (out or err or f"{action} {name}: ok").strip()[:300]})
+        return jsonify({"error": escape((out + err).strip()[:300])}), 500
+    return jsonify({"result": escape((out or err or f"{action} {escape(name)}: ok").strip()[:300])})
 
 @app.route("/api/vm_info/<name>")
+@rate_limit("30 per minute")
 def api_vm_info(name):
-    if not safe_name(name):
+    if not validate_vm_name(name):
         return jsonify({"error": "invalid name"}), 400
     info = {}
-    _, out, _ = run(f"virsh dominfo '{name}' 2>/dev/null")
+    # Use list-based command to avoid shell injection
+    _, out, _ = run(["virsh", "dominfo", name], timeout=30)
     info["virsh"] = out
-    _, out2, _ = run(f"virsh domblklist '{name}' 2>/dev/null")
+    _, out2, _ = run(["virsh", "domblklist", name], timeout=30)
     info["disks"] = out2
     return jsonify(info)
 
 @app.route("/api/vm_resize", methods=["POST"])
+@rate_limit("10 per minute")
 def api_vm_resize():
     data = request.json or {}
     name = data.get("name")
@@ -1714,10 +1857,21 @@ def api_vm_resize():
     new_size_gb = data.get("new_size_gb")
     if not (name and disk_path and new_size_gb):
         return jsonify({"error": "name, disk_path, new_size_gb required"}), 400
-    if not (safe_name(name) and re.fullmatch(r"[\w./\-_ ]{1,200}", disk_path)):
-        return jsonify({"error": "invalid input"}), 400
-    _, msg, err = run(f"qemu-img resize '{disk_path}' {int(new_size_gb)}G 2>&1", sudo=True)
-    return jsonify({"result": (msg or err or "").strip()[:400], "disk": disk_path, "size_gb": new_size_gb})
+    if not validate_vm_name(name):
+        return jsonify({"error": "invalid VM name"}), 400
+    # Validate disk_path strictly using our validation function
+    if not validate_disk_path(disk_path):
+        return jsonify({"error": "invalid disk path"}), 400
+    try:
+        new_size_int = sanitize_int(new_size_gb, default=0, min_val=1, max_val=10000)
+        if new_size_int == 0:
+            return jsonify({"error": "invalid size value"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid size value"}), 400
+    # Use list-based command for safety
+    cmd_list = ["qemu-img", "resize", disk_path, f"{new_size_int}G"]
+    _, msg, err = run(cmd_list, timeout=120, sudo=True)
+    return jsonify({"result": escape((msg or err or "").strip()[:400]), "disk": escape(disk_path), "size_gb": new_size_int})
 
 # ------------------------------------------------------------------
 # Start
@@ -1728,4 +1882,11 @@ if __name__ == "__main__":
         p = os.path.join(here, d)
         if not os.path.isdir(p):
             os.makedirs(p, exist_ok=True)
+    
+    # Check for required environment variable for production
+    secret_key = os.environ.get('MONITORING_SECRET_KEY')
+    if not secret_key:
+        print("WARNING: MONITORING_SECRET_KEY not set. Using random key (sessions will be lost on restart).")
+        print("For production, set MONITORING_SECRET_KEY environment variable.")
+    
     app.run(host="0.0.0.0", port=APP_PORT, debug=False, threaded=True)
