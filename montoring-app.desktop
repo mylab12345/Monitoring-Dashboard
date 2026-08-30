@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Montoring
+GenericName=System Monitor
+Comment=Monitor and manage your Linux system — CPU, processes, services, Docker, VMs
+Exec=montoring-app
+Icon=montoring
+Terminal=false
+Categories=System;Monitor;Utility;
+Keywords=system;monitor;dashboard;processes;services;docker;vm;network;logs;
+StartupNotify=true

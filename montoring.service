@@ -1,0 +1,18 @@
+[Unit]
+Description=Montoring — Linux System Dashboard
+Documentation=https://github.com/mylab12345/Montoring
+After=network.target libvirtd.service
+Wants=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=__ENVFILE__
+WorkingDirectory=__HOME__
+ExecStart=__PYBIN__ __HOME__/app.py
+Restart=always
+RestartSec=5
+# Runs as root so maintenance actions (apt, systemctl, virsh, docker) work.
+User=root
+
+[Install]
+WantedBy=multi-user.target

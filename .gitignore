@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+venv/
+.backups/
+montoring.env
+nohup.out
