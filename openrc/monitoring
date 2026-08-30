@@ -1,17 +1,19 @@
 #!/sbin/openrc-run
 # Monitoring — OpenRC service script (Alpine & other OpenRC flavours)
 # Path placeholders are substituted by install.sh
+# The service runs as the dedicated non-login user "monitoring".
 
 name="monitoring"
 description="Monitoring — Linux System Dashboard"
 HOME_DIR="__HOME__"
 command="${HOME_DIR}/venv/bin/python"
 command_args="${HOME_DIR}/app.py"
+command_user="monitoring"
 command_background="yes"
 pidfile="/run/monitoring.pid"
 directory="${HOME_DIR}"
-output_log="${HOME_DIR}/monitoring.log"
-error_log="${HOME_DIR}/monitoring.log"
+output_log="/var/log/monitoring/monitoring.log"
+error_log="/var/log/monitoring/monitoring.log"
 
 depend() {
     need net
@@ -24,4 +26,6 @@ start_pre() {
     fi
     export MONITORING_PORT="${MONITORING_PORT:-8050}"
     [ -f /etc/monitoring.env ] && . /etc/monitoring.env && export MONITORING_PORT
+    mkdir -p /var/log/monitoring
+    chown monitoring:monitoring /var/log/monitoring 2>/dev/null || chown monitoring /var/log/monitoring 2>/dev/null || true
 }

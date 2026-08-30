@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""monitoring-package - validated package-manager control for the app.
+
+The monitoring service is granted sudo for this helper only. The helper maps
+an explicit (manager, action) pair to fixed argv lists. It never uses a shell
+and never accepts arbitrary package names from the service (with one
+exception: pacman autoremove enumerates orphans itself).
+"""
+import shutil
+import subprocess
+import sys
+
+ACTIONS = {"update", "upgrade", "autoremove", "clean", "fix-broken"}
+MANAGERS = {"apt", "dnf", "yum", "zypper", "pacman", "apk"}
+
+# Fixed, non-injectable command lists. The helper resolves the real binary
+# with shutil.which() from the existing PATH.
+BASE = {
+    "apt": {
+        "update": ["apt-get", "update", "-qq"],
+        "upgrade": ["apt-get", "upgrade", "-y", "-qq"],
+        "autoremove": ["apt-get", "autoremove", "-y", "-qq"],
+        "clean": ["apt-get", "clean"],
+        "fix-broken": ["apt-get", "install", "-f", "-y", "-qq"],
+    },
+    "dnf": {
+        "update": ["dnf", "makecache", "--quiet"],
+        "upgrade": ["dnf", "upgrade", "-y", "--quiet"],
+        "autoremove": ["dnf", "autoremove", "-y", "--quiet"],
+        "clean": ["dnf", "clean", "all", "-y"],
+        "fix-broken": ["dnf", "distro-sync", "-y", "--quiet"],
+    },
+    "yum": {
+        "update": ["yum", "makecache", "--quiet"],
+        "upgrade": ["yum", "upgrade", "-y", "--quiet"],
+        "autoremove": ["yum", "autoremove", "-y"],
+        "clean": ["yum", "clean", "all"],
+        "fix-broken": ["yum", "distro-sync", "-y"],
+    },
+    "zypper": {
+        "update": ["zypper", "refresh"],
+        "upgrade": ["zypper", "update", "-y", "--quiet"],
+        "autoremove": ["zypper", "clean"],
+        "clean": ["zypper", "clean"],
+        "fix-broken": ["zypper", "dist-upgrade", "-y", "--quiet"],
+    },
+    "pacman": {
+        "update": ["pacman", "-Sy", "--noconfirm", "--quiet"],
+        "upgrade": ["pacman", "-Syu", "--noconfirm"],
+        "autoremove": None,  # handled specially below
+        "clean": ["pacman", "-Sc", "--noconfirm"],
+        "fix-broken": ["pacman", "-Syu", "--noconfirm"],
+    },
+    "apk": {
+        "update": ["apk", "update", "--quiet"],
+        "upgrade": ["apk", "upgrade", "--quiet"],
+        "autoremove": ["apk", "autoremove", "--quiet"],
+        "clean": ["apk", "cache", "clean"],
+        "fix-broken": ["apk", "fix"],
+    },
+}
+
+
+def _run(argv):
+    """Resolve argv[0] through PATH and run without a shell."""
+    exe = shutil.which(argv[0])
+    if not exe:
+        print(f"monitoring-package: executable not found: {argv[0]}", file=sys.stderr)
+        return 127
+    return subprocess.run([exe] + argv[1:], shell=False).returncode
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-package: ok")
+        return 0
+
+    if len(argv) == 4 and argv[0] == "--manager" and argv[2] == "--action":
+        manager, action = argv[1], argv[3]
+    else:
+        print("usage: monitoring-package --manager <mgr> --action <action>", file=sys.stderr)
+        return 2
+
+    if manager not in MANAGERS:
+        print(f"monitoring-package: invalid manager: {manager}", file=sys.stderr)
+        return 2
+    if action not in ACTIONS:
+        print(f"monitoring-package: invalid action: {action}", file=sys.stderr)
+        return 2
+
+    # apt fix-broken is a two-step operation with no injection surface.
+    if manager == "apt" and action == "fix-broken":
+        rc = _run(["dpkg", "--configure", "-a"])
+        if rc != 0:
+            return rc
+        return _run(BASE["apt"]["fix-broken"])
+
+    if manager == "pacman" and action == "autoremove":
+        # Enumerate orphans read-only, filter them, then remove by name.
+        r = subprocess.run([shutil.which("pacman") or "pacman", "-Qdtq"],
+                           shell=False, capture_output=True, text=True)
+        orphans = []
+        for line in (r.stdout or "").splitlines():
+            pkg = line.strip()
+            if pkg and re_valid_pkg(pkg):
+                orphans.append(pkg)
+        if not orphans:
+            return 0
+        return subprocess.run([shutil.which("pacman") or "pacman",
+                               "-Rns", "--noconfirm"] + orphans,
+                              shell=False).returncode
+
+    cmd = BASE.get(manager, {}).get(action)
+    if cmd is None:
+        print(f"monitoring-package: no command for {manager}/{action}", file=sys.stderr)
+        return 2
+    return _run(cmd)
+
+
+def re_valid_pkg(pkg):
+    import re
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", pkg) is not None
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

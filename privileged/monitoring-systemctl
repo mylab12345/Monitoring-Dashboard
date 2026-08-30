@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""monitoring-systemctl - strictly validated systemd control for the app.
+
+This helper is the ONLY systemctl operation granted to the monitoring service
+user through sudo. It refuses any action/unit that is not explicitly
+whitelisted, and never invokes a shell.
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+ACTIONS = {"start", "stop", "restart", "reload", "enable", "disable", "reset-failed"}
+UNIT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._-]*$")
+MAX_UNIT = 256
+
+
+def _fail(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def _validate_unit(name):
+    if not isinstance(name, str) or not name or name.startswith("-"):
+        return False
+    if len(name) > MAX_UNIT:
+        return False
+    return UNIT_RE.match(name) is not None
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-systemctl: ok")
+        return 0
+
+    if len(argv) == 1 and argv[0] == "reset-failed":
+        action = "reset-failed"
+        unit = None
+    elif len(argv) == 2:
+        action, unit = argv
+    else:
+        print("usage: monitoring-systemctl <action> <unit> | reset-failed", file=sys.stderr)
+        return 2
+
+    if action not in ACTIONS:
+        print(f"monitoring-systemctl: invalid action: {action}", file=sys.stderr)
+        return 2
+    if action != "reset-failed" and not _validate_unit(unit):
+        print("monitoring-systemctl: invalid unit name", file=sys.stderr)
+        return 2
+
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        print("monitoring-systemctl: systemctl not found", file=sys.stderr)
+        return 127
+    cmd = [systemctl, action]
+    if action != "reset-failed":
+        cmd.append(unit)
+    return subprocess.run(cmd, shell=False).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

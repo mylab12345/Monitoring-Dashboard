@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+"""monitoring-journal-vacuum - fixed journal rotation operation.
+
+The monitoring service is allowed to run this helper through sudo. It only
+executes a fixed journalctl invocation with no user-controlled arguments.
+"""
+import shutil
+import subprocess
+import sys
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-journal-vacuum: ok")
+        return 0
+    if argv:
+        print("monitoring-journal-vacuum: no arguments accepted", file=sys.stderr)
+        return 2
+    journalctl = shutil.which("journalctl")
+    if not journalctl:
+        print("monitoring-journal-vacuum: journalctl not found", file=sys.stderr)
+        return 127
+    return subprocess.run(
+        [journalctl, "--vacuum-time=7d", "--vacuum-size=100M"],
+        shell=False,
+    ).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""monitoring-qemu - validated qemu-img resize for libvirt disks.
+
+The helper only resizes a disk path that `virsh domblklist` reports for the
+given domain, so a compromised service cannot use qemu-img to modify arbitrary
+files. No shell is used.
+"""
+import re
+import shutil
+import subprocess
+import sys
+
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+PATH_RE = re.compile(r"^/[A-Za-z0-9/._-]+$")
+MAX_PATH = 256
+
+
+def dom_blk_paths(domname):
+    virsh = shutil.which("virsh")
+    if not virsh:
+        return []
+    r = subprocess.run([virsh, "domblklist", "--details", domname],
+                       shell=False, capture_output=True, text=True, timeout=20)
+    if r.returncode != 0:
+        return []
+    paths = []
+    for line in (r.stdout or "").splitlines():
+        parts = line.split()
+        # --details output: Target  Source  Capacity  Allocation  ...
+        for part in parts:
+            if part.startswith("/") and PATH_RE.match(part) is not None:
+                paths.append(part)
+    return paths
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-qemu: ok")
+        return 0
+
+    if len(argv) != 4 or argv[0] != "resize":
+        print("monitoring-qemu: usage resize <name> <disk_path> <size_gb>",
+              file=sys.stderr)
+        return 2
+    _, name, disk_path, size_arg = argv
+    if not isinstance(name, str) or not name or len(name) > 120 or name.startswith("-"):
+        print("monitoring-qemu: invalid VM name", file=sys.stderr)
+        return 2
+    if NAME_RE.match(name) is None:
+        print("monitoring-qemu: invalid VM name", file=sys.stderr)
+        return 2
+    if not isinstance(disk_path, str) or not disk_path or len(disk_path) > MAX_PATH:
+        print("monitoring-qemu: invalid disk path", file=sys.stderr)
+        return 2
+    if PATH_RE.match(disk_path) is None:
+        print("monitoring-qemu: invalid disk path", file=sys.stderr)
+        return 2
+    try:
+        size_gb = int(size_arg)
+    except ValueError:
+        print("monitoring-qemu: invalid size", file=sys.stderr)
+        return 2
+    if size_gb < 1 or size_gb > 10000:
+        print("monitoring-qemu: size out of range", file=sys.stderr)
+        return 2
+
+    # The disk must belong to this domain before it can be resized.
+    allowed = dom_blk_paths(name)
+    if disk_path not in allowed:
+        print("monitoring-qemu: disk path is not attached to the named domain",
+              file=sys.stderr)
+        return 2
+
+    qemu_img = shutil.which("qemu-img")
+    if not qemu_img:
+        print("monitoring-qemu: qemu-img not found", file=sys.stderr)
+        return 127
+    return subprocess.run([qemu_img, "resize", disk_path, f"{size_gb}G"],
+                          shell=False).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

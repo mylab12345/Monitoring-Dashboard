@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""monitoring-clean-old-logs - safely remove old rotated .gz logs.
+
+Scope is intentionally narrow: only regular files named *.gz directly under
+/var/log (or one level deep in standard log subdirectories) older than the
+requested age. No shell, no symlink following, no recursion outside /var/log,
+and no unrestricted filesystem write access.
+"""
+import os
+import sys
+import time
+
+LOG_ROOT = "/var/log"
+MAX_DAYS = 730
+MAX_DEPTH = 3
+
+
+def _is_old_regular_file(path, mtime_threshold):
+    try:
+        st = os.lstat(path)
+    except (OSError, FileNotFoundError):
+        return False
+    if not (st.st_mode & 0o170000) == 0o100000:  # regular file only
+        return False
+    if not path.endswith(".gz"):
+        return False
+    return int(st.st_mtime) < mtime_threshold
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-clean-old-logs: ok")
+        return 0
+
+    min_days = 30
+    if argv:
+        if len(argv) != 2 or argv[0] != "--min-age-days":
+            print("monitoring-clean-old-logs: usage --min-age-days <days>",
+                  file=sys.stderr)
+            return 2
+        try:
+            min_days = int(argv[1])
+        except ValueError:
+            print("monitoring-clean-old-logs: invalid days", file=sys.stderr)
+            return 2
+    if min_days < 0 or min_days > MAX_DAYS:
+        print("monitoring-clean-old-logs: days out of range", file=sys.stderr)
+        return 2
+
+    now = int(time.time())
+    threshold = now - min_days * 86400
+    removed = 0
+    for root, dirs, files in os.walk(LOG_ROOT, topdown=True, followlinks=False):
+        # Never recurse into non-directories, symlinks or outside /var/log.
+        dirs[:] = [d for d in dirs
+                   if os.path.isdir(os.path.join(root, d))
+                   and not os.path.islink(os.path.join(root, d))
+                   and os.path.abspath(os.path.join(root, d)).startswith(LOG_ROOT + os.sep)]
+        rel_depth = os.path.relpath(root, LOG_ROOT).count(os.sep)
+        if rel_depth > MAX_DEPTH:
+            dirs[:] = []
+            continue
+        for name in files:
+            path = os.path.join(root, name)
+            if _is_old_regular_file(path, threshold):
+                try:
+                    os.unlink(path)
+                    removed += 1
+                except OSError:
+                    pass
+    print(f"monitoring-clean-old-logs: removed {removed}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -6,15 +6,17 @@ logs and libvirt VMs — on any Linux flavour.
 
 Run:  python3 app.py   (binds 0.0.0.0:$MONITORING_PORT, default 8050)
 Requirements: flask, psutil  (see requirements.txt)
-Privileges:   fixes/service/vm actions use sudo automatically when
-              not running as root (works best under the bundled systemd
-              service which runs as root).
+Privileges:   the service runs as the non-login account "monitoring".
+              Privileged controls (systemd/package/journal/libvirt/qemu/kill)
+              go through installed helper commands that the account may
+              execute passwordlessly via sudo. No shell is ever used and no
+              sudo ALL is granted.
 """
 import os
 import re
 import shlex
-import subprocess
 import shutil
+import subprocess
 import threading
 import time
 import json
@@ -41,6 +43,8 @@ except ImportError:
 
 APP_HOME = os.environ.get("MONITORING_HOME", os.path.dirname(os.path.abspath(__file__)))
 APP_PORT = int(os.environ.get("MONITORING_PORT", "8050"))
+PRIVILEGE_DIR = os.environ.get("MONITORING_PRIVILEGE_DIR", "/usr/local/lib/monitoring")
+SUDOERS_FILE = "/etc/sudoers.d/monitoring"
 
 # ------------------------------------------------------------------
 # Version
@@ -86,63 +90,87 @@ def rate_limit(limit_string):
     return decorator
 
 # ------------------------------------------------------------------
-# Safe command runner (sudo-aware)
+# Safe command runner (argv-only, sudo via whitelisted helpers)
 # ------------------------------------------------------------------
-def _have_sudo():
+HAVE_SUDO = shutil.which("sudo") is not None
+
+def _sudo_list():
+    """Best-effort detection of passwordless sudo without running 'true'.
+
+    `sudo -n -l` only reports whether a passwordless sudo rule applies to the
+    caller; it does not grant or execute anything. It is never used to obtain
+    the `true` privilege.
+    """
     if os.geteuid() == 0:
-        return False  # already root, no prefix needed
-    return shutil.which("sudo") is not None
-
-HAVE_SUDO = _have_sudo()
-
-def _sudo_test():
-    """Detect passwordless sudo once."""
+        return True
+    if not HAVE_SUDO:
+        return False
     try:
-        r = subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=5)
+        r = subprocess.run(["sudo", "-n", "-l"], capture_output=True,
+                           text=True, timeout=5)
         return r.returncode == 0
     except Exception:
         return False
 
-PASSWORDLESS_SUDO = _sudo_test() if HAVE_SUDO else False
+PASSWORDLESS_SUDO = _sudo_list()
+
+def privileged_tool(name):
+    """Return the absolute path to an installed monitoring helper."""
+    if os.sep in name or name.startswith("."):
+        raise ValueError("invalid privileged helper name")
+    return os.path.join(PRIVILEGE_DIR, name)
 
 def run(cmd, timeout=10, sudo=False, check=False):
-    """Run a shell command; optionally prefix sudo when not root.
-    
+    """Run an argv list; optionally prefix passwordless sudo when not root.
+
     Args:
-        cmd: Command string (when shell=True) or list of args (when shell=False)
+        cmd: List of command+arguments. Strings are rejected to eliminate
+            shell injection by construction.
         timeout: Maximum execution time in seconds
         sudo: Whether to run with sudo privileges
         check: If True, raise exception on non-zero exit code
-        
+
     Returns:
         tuple: (returncode, stdout, stderr)
     """
+    if isinstance(cmd, (str, bytes)):
+        raise ValueError("run() requires an argv list; shell strings are "
+                        "not allowed (command injection prevention)")
+    argv = list(cmd)
+    if not argv or not all(isinstance(a, str) for a in argv):
+        raise ValueError("run() requires a list of strings")
     if sudo and os.geteuid() != 0:
-        if isinstance(cmd, str):
-            if PASSWORDLESS_SUDO:
-                cmd = "sudo -n " + cmd
-            else:
-                cmd = "sudo -n " + cmd
-        elif isinstance(cmd, list):
-            cmd = ["sudo", "-n"] + cmd
+        if not HAVE_SUDO:
+            return -1, "", "sudo is not available"
+        argv = ["sudo", "-n", "--"] + argv
     try:
-        # Use shell=False when possible for security
-        shell_mode = isinstance(cmd, str)
         r = subprocess.run(
-            cmd,
-            shell=shell_mode,
+            argv,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=timeout,
-            check=check
+            check=check,
+            start_new_session=True,
         )
         return r.returncode, r.stdout, r.stderr
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired:
         return -1, "", f"Command timed out after {timeout}s"
     except subprocess.CalledProcessError as e:
         return e.returncode, e.stdout or "", e.stderr or ""
     except Exception as e:
         return -1, "", str(e)
+
+def run_lines(cmd, timeout=10, sudo=False):
+    """Run an argv command and return (code, non-empty stripped lines)."""
+    code, out, err = run(cmd, timeout=timeout, sudo=sudo)
+    lines = [line.strip() for line in (out or "").splitlines() if line.strip()]
+    return code, lines
+
+def run_privileged(helper, args=None, timeout=60):
+    """Run one whitelisted monitoring privilege helper through sudo."""
+    argv = [privileged_tool(helper)] + (list(args) if args else [])
+    return run(argv, timeout=timeout, sudo=True)
 
 def which(binary):
     return shutil.which(binary) is not None
@@ -228,8 +256,72 @@ def api_version():
         "euid": os.geteuid(),
         "root": os.geteuid() == 0,
         "sudo": PASSWORDLESS_SUDO,
+        "privilege_dir": PRIVILEGE_DIR,
+        "service_user": "monitoring",
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     })
+
+# ------------------------------------------------------------------
+# Privilege check (which bounded operations the service account may do)
+# ------------------------------------------------------------------
+_PRIVILEGE_HELPERS = [
+    "monitoring-systemctl",
+    "monitoring-package",
+    "monitoring-journal-vacuum",
+    "monitoring-clean-old-logs",
+    "monitoring-vm",
+    "monitoring-qemu",
+    "monitoring-kill",
+    "monitoring-zombie-clean",
+]
+
+def _check_sudo_helper(helper):
+    """Run the helper's --check through passwordless sudo."""
+    tool = privileged_tool(helper)
+    if not os.path.isfile(tool) or not os.access(tool, os.X_OK):
+        return "missing"
+    if os.geteuid() == 0:
+        return "root-direct-ok"
+    if not PASSWORDLESS_SUDO:
+        return "sudo-not-available"
+    code, out, err = run([tool, "--check"], timeout=8, sudo=True)
+    return "ok" if code == 0 else "denied"
+
+def _privilege_status():
+    import grp
+    import pwd
+    report = {
+        "service_user": "monitoring",
+        "uid": os.geteuid(),
+        "user": pwd.getpwuid(os.geteuid()).pw_name if os.geteuid() > 0 else "root",
+        "groups": [],
+        "sudoers_file": SUDOERS_FILE,
+        "sudoers_present": os.path.isfile(SUDOERS_FILE),
+        "privilege_dir": PRIVILEGE_DIR,
+        "helpers": [],
+    }
+    for gid in os.getgroups():
+        try:
+            name = grp.getgrgid(gid).gr_name
+        except KeyError:
+            name = str(gid)
+        if name not in report["groups"]:
+            report["groups"].append(name)
+    for helper in _PRIVILEGE_HELPERS:
+        report["helpers"].append({
+            "name": helper,
+            "path": privileged_tool(helper),
+            "status": _check_sudo_helper(helper),
+        })
+    return report
+
+@app.route("/api/privileges")
+@rate_limit("30 per minute")
+def api_privileges():
+    try:
+        return jsonify(_cached("privileges", 30, _privilege_status))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ------------------------------------------------------------------
 # Metrics history (server-side ring buffer, powers charts that survive
@@ -342,7 +434,7 @@ def _cpu_model():
 
 def _virtualization():
     if which("systemd-detect-virt"):
-        code, out, _ = run("systemd-detect-virt 2>/dev/null")
+        code, out, _ = run(["systemd-detect-virt"])
         v = (out or "").strip()
         if code == 0 and v and v != "none":
             return v
@@ -475,27 +567,24 @@ def _int_or(value, default=0):
 
 def _build_checks():
     results = []
-    code, out, err = run("df -h /")
+    code, out, err = run(["df", "-h", "/"])
     results.append({"name": "Disk Usage", "status": "ok" if code == 0 else "fail",
                     "detail": out.splitlines()[1].strip() if out and len(out.splitlines()) > 1 else (err or "ok")})
     updates = _updatable_packages()
     results.append({"name": "Pending Updates", "status": "warn" if updates["count"] > 0 else "ok",
                     "detail": f"{updates['count']} packages upgradable ({updates['manager'] or 'n/a'})"})
-    code, out, err = run("dpkg --audit 2>&1")
+    code, out, err = run(["dpkg", "--audit"])
     broken = "found" if "error" in (out + err).lower() else "none"
     results.append({"name": "Broken Packages", "status": "warn" if broken != "none" else "ok", "detail": broken})
     failed = "0"
     if which("systemctl"):
-        code, out, err = run("systemctl --failed --no-pager --quiet 2>/dev/null | wc -l")
-        failed = out.strip() if out else "0"
+        code, out, err = run(["systemctl", "--failed", "--no-pager", "--quiet"])
+        failed = str(len([l for l in out.splitlines() if l.strip()]))
         results.append({"name": "Failed Services", "status": "warn" if _int_or(failed) > 0 else "ok",
                         "detail": f"{failed} failed"})
-    if which("journalctl"):
-        kernel_cmd = "journalctl -k -b -p err..alert --no-pager -q 2>/dev/null"
-    else:
-        kernel_cmd = "dmesg --level=err,crit,alert,emerg 2>/dev/null"
-    code, out, err = run(f"{kernel_cmd} | wc -l")
-    dmsg = out.strip() if code == 0 and out else "0"
+    code, out, err = run(["journalctl", "-k", "-b", "-p", "err..alert", "--no-pager", "-q"]) \
+        if which("journalctl") else run(["dmesg", "--level=err,crit,alert,emerg"])
+    dmsg = str(len([l for l in out.splitlines() if l.strip()])) if code == 0 and out else "0"
     results.append({"name": "Kernel Errors", "status": "warn" if _int_or(dmsg) > 0 else "ok",
                     "detail": f"{dmsg} current-boot error lines"})
     try:
@@ -514,48 +603,49 @@ def api_checks():
 # ------------------------------------------------------------------
 # Troubleshooting Hub - Comprehensive diagnostic & auto-fix
 # ------------------------------------------------------------------
+# These maps are INTERNAL argv lists used by the executor. They are never
+# concatenated with user input and never go through a shell.
 TROUBLESHOOT_FIXES = {
     "apt": {
-        "broken_packages": "dpkg --configure -a && apt install -f -y -qq",
-        "clean_cache": "apt clean && apt autoclean",
-        "autoremove": "apt autoremove -y -qq",
+        "broken_packages": ["monitoring-package", "--manager", "apt", "--action", "fix-broken"],
+        "clean_cache": ["monitoring-package", "--manager", "apt", "--action", "clean"],
+        "autoremove": ["monitoring-package", "--manager", "apt", "--action", "autoremove"],
     },
     "dnf": {
-        "broken_packages": "dnf distro-sync -y --quiet",
-        "clean_cache": "dnf clean all -y",
-        "autoremove": "dnf autoremove -y --quiet",
+        "broken_packages": ["monitoring-package", "--manager", "dnf", "--action", "fix-broken"],
+        "clean_cache": ["monitoring-package", "--manager", "dnf", "--action", "clean"],
+        "autoremove": ["monitoring-package", "--manager", "dnf", "--action", "autoremove"],
     },
     "yum": {
-        "broken_packages": "yum distro-sync -y",
-        "clean_cache": "yum clean all",
-        "autoremove": "yum autoremove -y",
+        "broken_packages": ["monitoring-package", "--manager", "yum", "--action", "fix-broken"],
+        "clean_cache": ["monitoring-package", "--manager", "yum", "--action", "clean"],
+        "autoremove": ["monitoring-package", "--manager", "yum", "--action", "autoremove"],
     },
     "zypper": {
-        "broken_packages": "zypper dist-upgrade -y --quiet",
-        "clean_cache": "zypper clean",
-        "autoremove": "zypper clean",
+        "broken_packages": ["monitoring-package", "--manager", "zypper", "--action", "fix-broken"],
+        "clean_cache": ["monitoring-package", "--manager", "zypper", "--action", "clean"],
+        "autoremove": ["monitoring-package", "--manager", "zypper", "--action", "autoremove"],
     },
     "pacman": {
-        "broken_packages": "pacman -Syu --noconfirm",
-        "clean_cache": "pacman -Sc --noconfirm",
-        "autoremove": "pacman -Rns $(pacman -Qdtq) --noconfirm 2>/dev/null || true",
+        "broken_packages": ["monitoring-package", "--manager", "pacman", "--action", "fix-broken"],
+        "clean_cache": ["monitoring-package", "--manager", "pacman", "--action", "clean"],
+        "autoremove": ["monitoring-package", "--manager", "pacman", "--action", "autoremove"],
     },
     "apk": {
-        "broken_packages": "apk fix",
-        "clean_cache": "apk cache clean",
-        "autoremove": "apk autoremove --quiet",
+        "broken_packages": ["monitoring-package", "--manager", "apk", "--action", "fix-broken"],
+        "clean_cache": ["monitoring-package", "--manager", "apk", "--action", "clean"],
+        "autoremove": ["monitoring-package", "--manager", "apk", "--action", "autoremove"],
     },
 }
 
 SYSTEMD_FIXES = {
-    "reset_failed": "systemctl reset-failed",
-    # Use a safer approach with proper quoting for restarting failed services
-    "restart_failed": "for s in $(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | head -20); do systemctl restart \"$s\" 2>/dev/null; done",
+    "reset_failed": ["monitoring-systemctl", "reset-failed"],
+    "restart_failed": [],  # populated from the actual failed-unit list, per unit
 }
 
 LOG_FIXES = {
-    "vacuum_journal": "journalctl --vacuum-time=7d --vacuum-size=100M",
-    "clear_old_logs": "find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null",
+    "vacuum_journal": ["monitoring-journal-vacuum"],
+    "clear_old_logs": ["monitoring-clean-old-logs", "--min-age-days", "30"],
 }
 
 # ------------------------------------------------------------------
@@ -674,7 +764,7 @@ def _diag_scan():
                 impact="Continuous growth may soon trigger failed writes, truncated logs and service failures.",
                 recommended_fix=disk_fix, verify=disk_verify))
         # inodes
-        code, out, _ = run("df -i / 2>/dev/null")
+        code, out, _ = run(["df", "-i", "/"])
         if code == 0 and out:
             lines = out.splitlines()
             if len(lines) > 1:
@@ -838,7 +928,7 @@ def _diag_scan():
 
     # -------------------------------------------------- 4. Services
     if which("systemctl"):
-        code, out, err = run("systemctl --failed --no-pager --plain --no-legend 2>/dev/null")
+        code, out, err = run(["systemctl", "--failed", "--no-pager", "--plain", "--no-legend"])
         failed_services = []
         for line in (out or "").splitlines():
             parts = line.split()
@@ -910,7 +1000,7 @@ def _diag_scan():
 
     # -------------------------------------------------- 6. Packages
     mgr = _pkg_manager()
-    code, out, err = run("dpkg --audit 2>/dev/null")
+    code, out, err = run(["dpkg", "--audit"])
     if (out or err) and ("error" in (out + err).lower()):
         put("critical", _diag_issue(
             "broken_packages", "Broken Packages",
@@ -972,15 +1062,16 @@ def _diag_scan():
     # Restrict the scan to real err..alert priority records from this boot.
     # Text matching produced false warnings for harmless lines containing words
     # such as "failed" or "error".
-    kernel_log_cmd = "journalctl -k -b -p err..alert --no-pager -q"
-    code, out, err = run(f"{kernel_log_cmd} -n 20 2>/dev/null")
+    code, lines = run_lines(["journalctl", "-k", "-b", "-p", "err..alert", "--no-pager", "-q", "-n", "20"])
+    kernel_cmd = "journalctl -k -b -p err..alert --no-pager -q -n 20"
     if code != 0:
-        kernel_log_cmd = "dmesg --level=err,crit,alert,emerg"
-        code, out, err = run(f"{kernel_log_cmd} 2>/dev/null | tail -20")
-    error_lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
+        code, lines = run_lines(["dmesg", "--level=err,crit,alert,emerg"])
+        kernel_cmd = "dmesg --level=err,crit,alert,emerg"
+        lines = lines[-20:]
+    error_lines = lines
     if error_lines:
         text = "\n".join(error_lines).lower()
-        commands = [kernel_log_cmd + " | tail -80"]
+        commands = [kernel_cmd + " | tail -80"]
         guidance = "Review the exact component in the log before changing the system; kernel faults do not have a safe universal automatic fix."
         if any(k in text for k in ("i/o error", "blk_update", "buffer i/o", "nvme", "ata1:", "ata2:", "ata error")):
             guidance = "A storage fault is indicated. Back up important data first, identify the affected disk, then inspect its health."
@@ -1001,8 +1092,8 @@ def _diag_scan():
             "kernel_errors", "Kernel Errors Detected",
             f"{len(error_lines)} current-boot kernel error line(s) found.",
             "kernel", "warning", "zap", evidence=[
-                _diag_ev("Error lines (last 20)", f"{len(error_lines)}", kernel_log_cmd),
-                _diag_ev("Sample", error_lines[0][:180], kernel_log_cmd + " | tail"),
+                _diag_ev("Error lines (last 20)", f"{len(error_lines)}", kernel_cmd),
+                _diag_ev("Sample", error_lines[0][:180], kernel_cmd + " | tail"),
             ],
             sample=error_lines[:3],
             impact="Kernel errors can indicate failing hardware, driver bugs, memory pressure or filesystem corruption.",
@@ -1011,12 +1102,12 @@ def _diag_scan():
                 "description": guidance,
                 "risk": "medium", "commands": commands,
             },
-            verify=[_diag_ev("Re-check current-boot kernel errors", "no new errors after remediation/reboot", kernel_log_cmd)],
+            verify=[_diag_ev("Re-check current-boot kernel errors", "no new errors after remediation/reboot", kernel_cmd)],
             deep={"kind": "logs", "title": "Current-boot kernel errors", "lines": error_lines[:8]}))
 
     # -------------------------------------------------- 9. Log hygiene (disk)
-    code, out, err = run("find /var/log -type f -name '*.gz' -mtime +30 2>/dev/null | wc -l")
-    old_logs = _int_or((out or "").strip()) if out else 0
+    code, old_lines = run_lines(["find", "/var/log", "-type", "f", "-name", "*.gz", "-mtime", "+30"])
+    old_logs = len(old_lines)
     if old_logs > 10:
         put("info", _diag_issue(
             "old_logs", "Old Log Files",
@@ -1031,7 +1122,7 @@ def _diag_scan():
                 "risk": "low", "commands": ["find /var/log -type f -name '*.gz' -mtime +30 -delete"],
             },
             verify=[_diag_ev("Re-check old logs", "10 or fewer", "find /var/log -name '*.gz' -mtime +30 | wc -l")]))
-    code, out, err = run("journalctl --disk-usage 2>/dev/null")
+    code, out, err = run(["journalctl", "--disk-usage"])
     if out:
         match = re.search(r'(\d+(?:\.\d+)?)([KMGT]?)B', out)
         if match:
@@ -1164,7 +1255,7 @@ def _verify_issue(iid):
         if iid in ("disk_critical", "disk_warning", "disk_inodes"):
             pct = psutil.disk_usage("/").percent
             if iid == "disk_inodes":
-                _, out, _ = run("df -i / 2>/dev/null")
+                _, out, _ = run(["df", "-i", "/"])
                 parts = (out.splitlines() or ["", ""])[1].split() if out and len(out.splitlines()) > 1 else []
                 ipct = int(parts[4].replace("%", "")) if len(parts) >= 5 else 0
                 return res(ipct < 90, f"Inode usage {ipct}%",
@@ -1194,11 +1285,11 @@ def _verify_issue(iid):
             zb = [p for p in psutil.process_iter(["status"]) if p.info["status"] == "zombie"]
             return res(not zb, f"{len(zb)} zombie(s)", [_diag_ev("Zombies", str(len(zb)), "ps -eo stat | grep -c '^Z'")])
         if iid == "failed_services":
-            _, out, _ = run("systemctl --failed --no-pager --quiet 2>/dev/null | wc -l")
-            n = _int_or((out or "").strip()) if out else 0
+            _, out, _ = run(["systemctl", "--failed", "--no-pager", "--quiet"])
+            n = len([l for l in out.splitlines() if l.strip()])
             return res(n == 0, f"{n} failed service(s)", [_diag_ev("Failed units", str(n), "systemctl --failed")])
         if iid == "broken_packages":
-            _, out, err = run("dpkg --audit 2>&1")
+            _, out, err = run(["dpkg", "--audit"])
             bad = "error" in (out + err).lower()
             return res(not bad, "dpkg audit clean" if not bad else "dpkg reports errors",
                        [_diag_ev("dpkg audit", "clean" if not bad else "errors", "dpkg --audit")])
@@ -1212,11 +1303,13 @@ def _verify_issue(iid):
             return res(u["count"] == 0, f"{u['count']} pending update(s)",
                        [_diag_ev("Pending updates", str(u["count"]), check_cmd)])
         if iid == "kernel_errors":
-            cmd = "journalctl -k -b -p err..alert --no-pager -q 2>/dev/null"
-            code, out, _ = run(cmd)
+            cmd = "journalctl -k -b -p err..alert --no-pager -q"
+            argv = ["journalctl", "-k", "-b", "-p", "err..alert", "--no-pager", "-q"]
+            code, out, _ = run(argv)
             if code != 0:
-                cmd = "dmesg --level=err,crit,alert,emerg 2>/dev/null"
-                _, out, _ = run(cmd)
+                cmd = "dmesg --level=err,crit,alert,emerg"
+                argv = ["dmesg", "--level=err,crit,alert,emerg"]
+                _, out, _ = run(argv)
             n = len([line for line in (out or "").splitlines() if line.strip()])
             return res(n == 0, f"{n} current-boot kernel error line(s)",
                        [_diag_ev("Kernel errors", str(n), cmd)])
@@ -1233,11 +1326,11 @@ def _verify_issue(iid):
             return res(not down, "all configured interfaces up" if not down else "down: " + ", ".join(down),
                        [_diag_ev("Interfaces", "up" if not down else ", ".join(down), "ip -br addr")])
         if iid == "old_logs":
-            _, out, _ = run("find /var/log -type f -name '*.gz' -mtime +30 2>/dev/null | wc -l")
-            n = _int_or((out or "").strip()) if out else 0
+            _, out, _ = run(["find", "/var/log", "-type", "f", "-name", "*.gz", "-mtime", "+30"])
+            n = len([l for l in out.splitlines() if l.strip()])
             return res(n <= 10, f"{n} old log file(s)", [_diag_ev("Old logs", str(n), "find /var/log -name '*.gz' -mtime +30 | wc -l")])
         if iid == "large_journal":
-            _, out, _ = run("journalctl --disk-usage 2>/dev/null")
+            _, out, _ = run(["journalctl", "--disk-usage"])
             m = re.search(r'(\d+(?:\.\d+)?)([KMGT]?)B', out or "")
             if m:
                 size_mb = float(m.group(1))
@@ -1307,52 +1400,58 @@ def api_troubleshooting_fix_all():
         else:
             results["failed"].append(fix_result)
 
-    # Execute fixes
+    def helper_run(name, args=None, timeout=60):
+        return run_privileged(name, args, timeout=timeout)
+
+    def helper_list(name, argv):
+        """Turn a ['monitoring-helper', ...args] argv list into run_privileged."""
+        if not argv or argv[0] != name:
+            raise ValueError("internal fix command mismatch")
+        return helper_run(argv[0], argv[1:])
+
+    # Execute fixes (all privileged operations route through helpers)
     for fix in fixes_needed:
         fix_result = {"fix": fix, "output": ""}
         code = 0
         try:
             if fix == "fix-broken-packages" and mgr:
-                cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("broken_packages", "")
+                cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("broken_packages", [])
                 if cmd:
-                    code, out, err = run(cmd, timeout=300, sudo=True)
-                    fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                    code, out, err = helper_list("monitoring-package", cmd)
+                    fix_result["output"] = (out or err or "Done").strip()[-500:]
                     record_fix(fix_result, code)
                 else:
                     fix_result["output"] = f"No fix available for {mgr}"
                     results["skipped"].append(fix_result)
-            
+
             elif fix == "clear-logs":
-                code, out, err = run(
-                    "journalctl --vacuum-time=7d --vacuum-size=100M >/dev/null 2>&1; "
-                    "find /var/log -type f -name '*.gz' -delete 2>/dev/null; echo 'Logs cleared'",
-                    timeout=60, sudo=True)
-                fix_result["output"] = (out or err or "Logs cleared").strip()[-500:]
+                c1, o1, e1 = helper_run("monitoring-journal-vacuum")
+                c2, o2, e2 = helper_run("monitoring-clean-old-logs", ["--min-age-days", "7"])
+                code = 0 if c1 == 0 and c2 == 0 else 1
+                fix_result["output"] = ((o1 or e1 or "") + (o2 or e2 or "")).strip()[-500:] or "Logs cleared"
                 record_fix(fix_result, code)
-            
+
             elif fix == "clear-old-logs":
-                code, out, err = run("find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null; echo 'Old logs cleared'", timeout=60, sudo=True)
-                fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                code, out, err = helper_run("monitoring-clean-old-logs", ["--min-age-days", "30"])
+                fix_result["output"] = (out or err or "Old logs cleared").strip()[-500:]
                 record_fix(fix_result, code)
-            
+
             elif fix == "vacuum-journal":
-                code, out, err = run("journalctl --vacuum-time=7d --vacuum-size=100M 2>/dev/null; echo 'Journal vacuumed'", timeout=60, sudo=True)
-                fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                code, out, err = helper_run("monitoring-journal-vacuum")
+                fix_result["output"] = (out or err or "Journal vacuumed").strip()[-500:]
                 record_fix(fix_result, code)
-            
+
             elif fix == "update-packages" and mgr:
-                # Updating package metadata is not the same as removing
-                # packages. Use the manager's update command here.
-                cmd = FIX_COMMANDS.get(mgr, {}).get("update", "")
+                cmd = FIX_COMMANDS.get(mgr, {}).get("update", [])
                 if cmd:
-                    code, out, err = run(cmd, timeout=300, sudo=True)
-                    fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                    code, out, err = helper_list("monitoring-package", cmd)
+                    fix_result["output"] = (out or err or "Done").strip()[-500:]
                     record_fix(fix_result, code)
 
             elif fix == "upgrade-packages" and mgr:
-                cmd = FIX_COMMANDS.get(mgr, {}).get("upgrade", "")
+                cmd = FIX_COMMANDS.get(mgr, {}).get("upgrade", [])
                 if cmd:
-                    code, out, err = run(cmd, timeout=600, sudo=True)
+                    code, out, err = helper_list("monitoring-package", cmd)
                     fix_result["output"] = (out or err or "Upgrade complete").strip()[-500:]
                     record_fix(fix_result, code)
                 else:
@@ -1361,41 +1460,38 @@ def api_troubleshooting_fix_all():
 
             elif fix == "restart-failed-services":
                 if which("systemctl"):
-                    code, out, err = run(SYSTEMD_FIXES["reset_failed"], timeout=30, sudo=True)
-                    code2, out2, err2 = run(SYSTEMD_FIXES["restart_failed"], timeout=60, sudo=True)
-                    fix_result["output"] = ((out or "") + (out2 or "")).strip()[-500:] or "Reset complete"
+                    code, out, err = helper_run("monitoring-systemctl", ["reset-failed"], timeout=30)
+                    _, failed_out, _ = run(["systemctl", "--failed", "--no-pager", "--plain", "--no-legend"])
+                    failed_units = []
+                    for line in failed_out.splitlines():
+                        parts = line.split()
+                        if parts:
+                            failed_units.append(parts[0])
+                    c2, o2, e2 = 0, "", ""
+                    for unit in failed_units[:20]:
+                        cr, orr, er = helper_run("monitoring-systemctl", ["restart", unit], timeout=30)
+                        c2 = c2 or cr
+                        o2 += orr or er or ""
+                    code = 0 if code == 0 and c2 == 0 else 1
+                    fix_result["output"] = ((out or "") + (o2 or "")).strip()[-500:] or "Reset complete"
                     record_fix(fix_result, code)
-            
+
             elif fix == "clean-zombies":
-                try:
-                    import psutil
-                    killed = 0
-                    for p in psutil.process_iter(["pid", "name", "status"]):
-                        try:
-                            if p.info["status"] == "zombie":
-                                parent = p.parent()
-                                if parent:
-                                    parent.terminate()
-                                    killed += 1
-                        except:
-                            pass
-                    fix_result["output"] = f"Attempted to clean {killed} zombie processes"
-                    record_fix(fix_result, code)
-                except Exception as e:
-                    fix_result["output"] = str(e)
-                    results["failed"].append(fix_result)
-            
+                code, out, err = helper_run("monitoring-zombie-clean")
+                fix_result["output"] = (out or err or "Zombie cleanup complete").strip()[-500:]
+                record_fix(fix_result, code)
+
             else:
                 fix_result["output"] = f"Unknown fix: {fix}"
                 results["skipped"].append(fix_result)
-                
+
         except Exception as e:
             fix_result["output"] = str(e)
             results["failed"].append(fix_result)
-    
+
     if not fixes_needed:
         results["skipped"].append({"fix": "all", "output": "No fixes needed - system is healthy!"})
-    
+
     return jsonify(results)
 
 # ------------------------------------------------------------------
@@ -1409,18 +1505,30 @@ def _pkg_manager():
     return None
 
 FIX_COMMANDS = {
-    "apt":    {"update": "apt update -qq", "upgrade": "apt upgrade -y -qq",
-               "autoremove": "apt autoremove -y -qq", "clean": "apt clean"},
-    "dnf":    {"update": "dnf makecache --quiet", "upgrade": "dnf upgrade -y --quiet",
-               "autoremove": "dnf autoremove -y --quiet", "clean": "dnf clean all -y"},
-    "yum":    {"update": "yum makecache --quiet", "upgrade": "yum upgrade -y --quiet",
-               "autoremove": "yum autoremove -y", "clean": "yum clean all"},
-    "zypper": {"update": "zypper refresh", "upgrade": "zypper update -y --quiet",
-               "autoremove": "zypper clean", "clean": "zypper clean"},
-    "pacman": {"update": "pacman -Sy --noconfirm --quiet", "upgrade": "pacman -Syu --noconfirm",
-               "autoremove": "pacman -Rns $(pacman -Qdtq) --noconfirm", "clean": "pacman -Sc --noconfirm"},
-    "apk":    {"update": "apk update --quiet", "upgrade": "apk upgrade --quiet",
-               "autoremove": "apk autoremove --quiet", "clean": "apk cache clean"},
+    "apt":    {"update": ["monitoring-package", "--manager", "apt", "--action", "update"],
+               "upgrade": ["monitoring-package", "--manager", "apt", "--action", "upgrade"],
+               "autoremove": ["monitoring-package", "--manager", "apt", "--action", "autoremove"],
+               "clean": ["monitoring-package", "--manager", "apt", "--action", "clean"]},
+    "dnf":    {"update": ["monitoring-package", "--manager", "dnf", "--action", "update"],
+               "upgrade": ["monitoring-package", "--manager", "dnf", "--action", "upgrade"],
+               "autoremove": ["monitoring-package", "--manager", "dnf", "--action", "autoremove"],
+               "clean": ["monitoring-package", "--manager", "dnf", "--action", "clean"]},
+    "yum":    {"update": ["monitoring-package", "--manager", "yum", "--action", "update"],
+               "upgrade": ["monitoring-package", "--manager", "yum", "--action", "upgrade"],
+               "autoremove": ["monitoring-package", "--manager", "yum", "--action", "autoremove"],
+               "clean": ["monitoring-package", "--manager", "yum", "--action", "clean"]},
+    "zypper": {"update": ["monitoring-package", "--manager", "zypper", "--action", "update"],
+               "upgrade": ["monitoring-package", "--manager", "zypper", "--action", "upgrade"],
+               "autoremove": ["monitoring-package", "--manager", "zypper", "--action", "autoremove"],
+               "clean": ["monitoring-package", "--manager", "zypper", "--action", "clean"]},
+    "pacman": {"update": ["monitoring-package", "--manager", "pacman", "--action", "update"],
+               "upgrade": ["monitoring-package", "--manager", "pacman", "--action", "upgrade"],
+               "autoremove": ["monitoring-package", "--manager", "pacman", "--action", "autoremove"],
+               "clean": ["monitoring-package", "--manager", "pacman", "--action", "clean"]},
+    "apk":    {"update": ["monitoring-package", "--manager", "apk", "--action", "update"],
+               "upgrade": ["monitoring-package", "--manager", "apk", "--action", "upgrade"],
+               "autoremove": ["monitoring-package", "--manager", "apk", "--action", "autoremove"],
+               "clean": ["monitoring-package", "--manager", "apk", "--action", "clean"]},
 }
 
 @app.route("/api/fix", methods=["POST"])
@@ -1428,24 +1536,33 @@ def api_fix():
     action = (request.json or {}).get("action", "")
     mgr = _pkg_manager()
     msg = ""
-    cmds = FIX_COMMANDS.get(mgr, {})
+
+    def pkg(action_name):
+        cmd = FIX_COMMANDS.get(mgr, {}).get(action_name, [])
+        if not cmd:
+            return None, "No command for package manager"
+        return run_privileged(cmd[0], cmd[1:], timeout=300)
+
     if action in ("update", "upgrade", "autoremove", "clean"):
         if mgr:
-            _, msg, err = run(cmds[action], timeout=300, sudo=True)
+            _, msg, err = pkg(action)
             if err:
                 msg = (msg or "") + (err or "")
         else:
             msg = "No supported package manager found"
     elif action == "fix-broken":
         if mgr == "apt":
-            _, msg, err = run("dpkg --configure -a && apt install -f -y -qq", timeout=300, sudo=True)
+            code, msg, err = run_privileged("monitoring-package",
+                                            ["--manager", "apt", "--action", "fix-broken"],
+                                            timeout=300)
+            if err:
+                msg = (msg or "") + (err or "")
         else:
             msg = "fix-broken is only supported on apt-based systems"
     elif action == "clear-logs":
-        _, msg, _ = run(
-            "journalctl --vacuum-time=7d >/dev/null 2>&1; "
-            "find /var/log -type f -name '*.gz' -delete 2>/dev/null; echo 'Logs cleared'",
-            timeout=60, sudo=True)
+        c1, o1, e1 = run_privileged("monitoring-journal-vacuum")
+        c2, o2, e2 = run_privileged("monitoring-clean-old-logs", ["--min-age-days", "7"])
+        msg = ((o1 or e1 or "") + (o2 or e2 or "")).strip() or "Logs cleared"
     else:
         msg = "Unknown action"
     return jsonify({"result": (msg or "Done")[:500]})
@@ -1465,29 +1582,29 @@ def _updatable_packages():
     pkgs = []
     try:
         if mgr == "apt":
-            _, out, _ = run("apt list --upgradable 2>/dev/null", timeout=30)
+            _, out, _ = run(["apt", "list", "--upgradable"], timeout=30)
             for line in out.splitlines():
                 if "/" in line and " " in line:
                     name = line.split("/")[0].strip()
                     ver = line.split()[1] if len(line.split()) > 1 else ""
                     pkgs.append({"name": name, "version": ver})
         elif mgr in ("dnf", "yum"):
-            _, out, _ = run(f"{mgr} check-update -q", timeout=60)
+            _, out, _ = run([mgr, "check-update", "-q"], timeout=60)
             for line in out.splitlines():
                 parts = line.split()
                 if len(parts) >= 3 and not line.startswith(("Last metadata", "Loaded plugins")):
                     pkgs.append({"name": parts[0], "version": parts[1]})
         elif mgr == "pacman":
-            _, out, _ = run("pacman -Qu --quiet", timeout=30)
+            _, out, _ = run(["pacman", "-Qu", "--quiet"], timeout=30)
             pkgs = [{"name": l.strip(), "version": ""} for l in out.splitlines() if l.strip()]
         elif mgr == "apk":
-            _, out, _ = run("apk version -l '<' 2>/dev/null", timeout=30)
+            _, out, _ = run(["apk", "version", "-l", "<"], timeout=30)
             for line in out.splitlines()[1:]:
                 parts = line.split()
                 if parts:
                     pkgs.append({"name": parts[0], "version": parts[1] if len(parts) > 1 else ""})
         elif mgr == "zypper":
-            _, out, _ = run("zypper -q list-updates", timeout=60)
+            _, out, _ = run(["zypper", "-q", "list-updates"], timeout=60)
             for line in out.splitlines():
                 parts = line.split()
                 if len(parts) >= 3 and parts[0] in ("v",):
@@ -1575,12 +1692,12 @@ def api_process_kill():
         return jsonify({"result": f"Terminated {escape(name)} (pid {pid})"})
     except psutil.NoSuchProcess:
         return jsonify({"error": f"No process with pid {pid}"}), 404
-    except psutil.AccessDenied:
-        # Use list-based command for safety - pid is already validated as int
-        _, _, err = run(["kill", "-9", str(pid)], sudo=True)
-        if err:
-            return jsonify({"error": escape(err.strip()[:200])}), 403
-        return jsonify({"result": f"Killed pid {pid} (sudo)"})
+    except (psutil.AccessDenied, psutil.TimeoutExpired, PermissionError):
+        # Use the whitelisted helper; pid is already validated as an int.
+        code, out, err = run_privileged("monitoring-kill", ["--force", str(pid)], timeout=15)
+        if code != 0:
+            return jsonify({"error": escape(((err or out) or "kill failed").strip()[:200])}), 403
+        return jsonify({"result": f"Killed pid {pid} (privileged helper)"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1591,7 +1708,7 @@ def api_process_kill():
 def api_services():
     if not which("systemctl"):
         return jsonify({"available": False, "services": []})
-    _, out, err = run("systemctl list-units --type=service --all --plain --no-pager --no-legend", timeout=15)
+    _, out, err = run(["systemctl", "list-units", "--type=service", "--all", "--plain", "--no-pager", "--no-legend"], timeout=15)
     services = []
     for line in out.splitlines():
         parts = line.split(None, 4)
@@ -1622,11 +1739,10 @@ def api_service_action():
     if not validate_systemctl_action(action):
         return jsonify({"error": "invalid action"}), 400
     
-    # Use list-based command to avoid shell injection entirely
-    cmd_list = ["systemctl", action, name]
-    _, out, err = run(cmd_list, timeout=30, sudo=True)
-    if err and "Created symlink" not in err:
-        return jsonify({"error": escape(err.strip()[:300])}), 500
+    # Route systemd mutations through the whitelisted helper only.
+    code, out, err = run_privileged("monitoring-systemctl", [action, name], timeout=30)
+    if code != 0 and (err or out) and "Created symlink" not in (err or out):
+        return jsonify({"error": escape(((err or out).strip()[:300]))}), 500
     return jsonify({"result": f"{action} {escape(name)}: ok"})
 
 # ------------------------------------------------------------------
@@ -1641,10 +1757,12 @@ def api_logs():
         # Sanitize grep input to prevent command injection
         grep = re.sub(r"[^\w\s\-\.\[\]/:]", "", grep)[:80]
     if which("journalctl"):
-        cmd = f"journalctl --no-pager -n {lines} -o short"
+        argv = ["journalctl", "--no-pager", "-n", str(lines), "-o", "short"]
         if prio:
-            cmd += f" -p {prio}"
-        code, out, err = run(cmd, timeout=15, sudo=True)
+            argv += ["-p", str(prio)]
+        # Log reads are handled through group access (systemd-journal/adm);
+        # sudo is intentionally not granted for reading journal content.
+        code, out, err = run(argv, timeout=15, sudo=False)
         if grep and out:
             out = "\n".join(l for l in out.splitlines() if grep.lower() in l.lower())
         if code != 0 and not out:
@@ -1652,7 +1770,7 @@ def api_logs():
     else:
         for cand in ("/var/log/syslog", "/var/log/messages"):
             if os.path.exists(cand):
-                code, out, _ = run(f"tail -n {lines} {shlex.quote(cand)}", timeout=10, sudo=True)
+                code, out, _ = run(["tail", "-n", str(lines), cand], timeout=10, sudo=False)
                 break
         else:
             out = "No journalctl and no readable syslog found."
@@ -1665,7 +1783,13 @@ def api_logs():
 # ------------------------------------------------------------------
 @app.route("/api/ports")
 def api_ports():
-    _, out, _ = run("ss -tulnpH 2>/dev/null || ss -tulnH 2>/dev/null || netstat -tulpn 2>/dev/null", timeout=10, sudo=True)
+    # Port listing is read-only and does not need sudo. Process info may be
+    # omitted for other users; that is intentionally fine.
+    out = ""
+    for argv in (["ss", "-tulnpH"], ["ss", "-tulnH"], ["netstat", "-tulpn"]):
+        code, out, _ = run(argv, timeout=10, sudo=False)
+        if code == 0 and out:
+            break
     ports = []
     for line in out.splitlines():
         parts = line.split()
@@ -1777,15 +1901,15 @@ VM_ACTIONS = ("start", "shutdown", "reboot", "reset", "destroy", "resume", "susp
 @app.route("/api/vms")
 def api_vms():
     vms = []
-    code, out, err = run("virsh list --all --name 2>/dev/null")
+    code, out, err = run(["virsh", "list", "--all", "--name"])
     if code == 0 and out.strip():
         names = [n.strip() for n in out.splitlines() if n.strip()]
         for n in names:
             # Validate VM name before using in command
             if not safe_name(n):
                 continue
-            _, info, _ = run(f"virsh dominfo {shlex.quote(n)} 2>/dev/null")
-            _, state_raw, _ = run(f"virsh domstate {shlex.quote(n)} 2>/dev/null")
+            _, info, _ = run(["virsh", "dominfo", n])
+            _, state_raw, _ = run(["virsh", "domstate", n])
             state = state_raw.strip().splitlines()[0] if state_raw else "unknown"
             mem, vcpus = "N/A", "N/A"
             for line in info.splitlines():
@@ -1828,10 +1952,9 @@ def api_vm_action():
     if action not in VM_ACTIONS:
         return jsonify({"error": "invalid action"}), 400
     
-    # Use list-based command to avoid shell injection
-    cmd_list = ["virsh", action, name]
-    _, out, err = run(cmd_list, timeout=60, sudo=True)
-    if err and "error" in (out + err).lower():
+    # Mutations go through the whitelisted helper (or libvirt group access).
+    code, out, err = run_privileged("monitoring-vm", [action, name], timeout=60)
+    if code != 0 and "error" in (out + err).lower():
         return jsonify({"error": escape((out + err).strip()[:300])}), 500
     return jsonify({"result": escape((out or err or f"{action} {escape(name)}: ok").strip()[:300])})
 
@@ -1868,9 +1991,9 @@ def api_vm_resize():
             return jsonify({"error": "invalid size value"}), 400
     except (TypeError, ValueError):
         return jsonify({"error": "invalid size value"}), 400
-    # Use list-based command for safety
-    cmd_list = ["qemu-img", "resize", disk_path, f"{new_size_int}G"]
-    _, msg, err = run(cmd_list, timeout=120, sudo=True)
+    # Resize through the whitelisted qemu helper which verifies the disk
+    # actually belongs to the named domain before touching it.
+    code, msg, err = run_privileged("monitoring-qemu", ["resize", name, disk_path, str(new_size_int)], timeout=120)
     return jsonify({"result": escape((msg or err or "").strip()[:400]), "disk": escape(disk_path), "size_gb": new_size_int})
 
 # ------------------------------------------------------------------

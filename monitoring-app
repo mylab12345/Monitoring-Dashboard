@@ -62,8 +62,6 @@ def start_backend():
     cmds = [
         ["monitoring", "start"],
         ["/usr/local/bin/monitoring", "start"],
-        ["sudo", "-n", "monitoring", "start"],
-        ["pkexec", "/usr/local/bin/monitoring", "start"],
     ]
     for c in cmds:
         if shutil.which(c[0]) or os.path.exists(c[0]):

@@ -30,10 +30,102 @@ WITH_VM=1
 START_SERVICE=1
 SELF_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/install.sh"
 APP_NAME="monitoring"
+MONITORING_USER="monitoring"
+MONITORING_GROUP="monitoring"
+PRIVILEGE_DIR="/usr/local/lib/monitoring"
+SUDOERS_FILE="/etc/sudoers.d/monitoring"
+LOG_DIR="/var/log/monitoring"
 
 log()  { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# --- Dedicated non-login service account --------------------------------------
+NOLOGIN="$(command -v nologin || echo /usr/sbin/nologin)"
+
+create_service_account() {
+  if ! getent group "$MONITORING_GROUP" >/dev/null 2>&1; then
+    if command -v groupadd >/dev/null 2>&1; then
+      groupadd --system "$MONITORING_GROUP" || die "could not create group $MONITORING_GROUP"
+    else
+      warn "groupadd not found; creating $MONITORING_GROUP via addgroup"
+      addgroup --system "$MONITORING_GROUP" 2>/dev/null || addgroup -S "$MONITORING_GROUP" || die "could not create group $MONITORING_GROUP"
+    fi
+  fi
+  if ! id "$MONITORING_USER" >/dev/null 2>&1; then
+    if command -v useradd >/dev/null 2>&1; then
+      useradd --system --no-create-home --home-dir "$MONITORING_HOME" \
+        --shell "$NOLOGIN" --gid "$MONITORING_GROUP" "$MONITORING_USER" \
+        || die "could not create user $MONITORING_USER"
+    elif command -v adduser >/dev/null 2>&1; then
+      adduser -S -D -H -h "$MONITORING_HOME" -s "$NOLOGIN" -G "$MONITORING_GROUP" "$MONITORING_USER" \
+        || die "could not create user $MONITORING_USER"
+    else
+      die "neither useradd nor adduser is available to create $MONITORING_USER"
+    fi
+    log "Created system user $MONITORING_USER (non-login, no home)"
+  else
+    log "Service account $MONITORING_USER already exists"
+  fi
+}
+
+add_supplementary_groups() {
+  # Read-only system info and optional subsystems are delegated to group access
+  # instead of sudo. Add any groups that exist on this host.
+  SUPP=""
+  for g in systemd-journal adm libvirt docker kvm; do
+    if getent group "$g" >/dev/null 2>&1; then
+      SUPP="${SUPP:+${SUPP},}$g"
+    fi
+  done
+  if [ -n "$SUPP" ]; then
+    if command -v usermod >/dev/null 2>&1; then
+      usermod -a -G "$SUPP" "$MONITORING_USER" >/dev/null 2>&1 || warn "could not add supplementary groups $SUPP"
+      log "Added supplementary groups: $SUPP"
+    fi
+  fi
+  printf '%s\n' "${SUPP:-}"
+}
+
+# --- Privileged helper install -------------------------------------------------
+install_privileges() {
+  local src_helper_dir="$SRC/privileged"
+  [ -d "$src_helper_dir" ] || die "privileged/ helper directory missing from sources"
+  mkdir -p "$PRIVILEGE_DIR"
+  install -m 755 "$src_helper_dir"/monitoring-* "$PRIVILEGE_DIR/" \
+    || { cp -f "$src_helper_dir"/monitoring-* "$PRIVILEGE_DIR/" && chmod 755 "$PRIVILEGE_DIR"/monitoring-*; }
+  chown -R root:root "$PRIVILEGE_DIR"
+
+  local sudo_src="$SRC/sudoers/monitoring"
+  [ -f "$sudo_src" ] || die "sudoers/monitoring template missing from sources"
+  install -m 440 "$sudo_src" "$SUDOERS_FILE" \
+    || { cp -f "$sudo_src" "$SUDOERS_FILE" && chmod 440 "$SUDOERS_FILE"; }
+  chown root:root "$SUDOERS_FILE"
+
+  if command -v visudo >/dev/null 2>&1; then
+    if visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
+      log "sudoers validated with visudo ✓"
+    else
+      visudo -cf "$SUDOERS_FILE" || die "sudoers validation failed: $SUDOERS_FILE"
+    fi
+  else
+    die "visudo not found; cannot safely install $SUDOERS_FILE"
+  fi
+  # Best-effort proof that the service account can use its NOPASSWD rules.
+  if command -v runuser >/dev/null 2>&1 && id "$MONITORING_USER" >/dev/null 2>&1; then
+    if runuser -u "$MONITORING_USER" -- sudo -n -l >/dev/null 2>&1; then
+      log "Service account passwordless sudo check: OK"
+    else
+      warn "Service account could not list passwordless sudo privileges (run: monitoring check-privileges)"
+    fi
+  elif command -v su >/dev/null 2>&1 && id "$MONITORING_USER" >/dev/null 2>&1; then
+    if su -s /bin/sh -c 'sudo -n -l' "$MONITORING_USER" >/dev/null 2>&1; then
+      log "Service account passwordless sudo check: OK"
+    else
+      warn "Service account could not list passwordless sudo privileges (run: monitoring check-privileges)"
+    fi
+  fi
+}
 
 # --- Parse flags -------------------------------------------------------------
 while [ $# -gt 0 ]; do
@@ -80,6 +172,15 @@ if [ -z "$SRC" ]; then
   [ -n "$SRC" ] || die "Downloaded archive does not contain app.py"
   log "Source extracted: $SRC"
 fi
+
+# --- Create dedicated service account -----------------------------------------
+log "Setting up dedicated service account $MONITORING_USER…"
+create_service_account
+SUPP_GROUPS="$(add_supplementary_groups)"
+install_privileges
+mkdir -p "$LOG_DIR"
+chown "$MONITORING_USER:$MONITORING_GROUP" "$LOG_DIR" 2>/dev/null || chown "$MONITORING_USER" "$LOG_DIR" 2>/dev/null || true
+chmod 755 "$LOG_DIR"
 
 # --- Detect OS / package manager --------------------------------------------
 PKG=""
@@ -134,6 +235,9 @@ if [ "$WITH_VM" -eq 1 ]; then
   esac
 fi
 
+# Re-apply groups now that subsystem groups may have been created.
+SUPP_GROUPS="$(add_supplementary_groups)"
+
 # --- Install application files ------------------------------------------------
 if [ ! -f "$SRC/VERSION" ] && [ -f "$MONITORING_HOME/VERSION" ]; then
   warn "Downloaded sources have no VERSION file — they look OLDER than the installed $(cat "$MONITORING_HOME/VERSION"). Continuing anyway (use a newer branch for a real upgrade)."
@@ -148,6 +252,9 @@ cp -f "$SRC/uninstall.sh" "$MONITORING_HOME/uninstall.sh" 2>/dev/null || true
 mkdir -p "$MONITORING_HOME/templates" "$MONITORING_HOME/static"
 cp -f "$SRC/templates/"* "$MONITORING_HOME/templates/" 2>/dev/null || true
 cp -f "$SRC/static/"* "$MONITORING_HOME/static/" 2>/dev/null || true
+# The code is owned root and is not writable by the service account.
+chown -R root:"$MONITORING_GROUP" "$MONITORING_HOME" 2>/dev/null || chown -R root "$MONITORING_HOME" || true
+chmod -R o+rX "$MONITORING_HOME" 2>/dev/null || true
 
 # --- Python environment (venv preferred, system pip fallback) ------------------
 PYBIN=""
@@ -175,8 +282,12 @@ cat > /etc/monitoring.env <<EOF
 MONITORING_HOME="$MONITORING_HOME"
 MONITORING_PORT="$PORT"
 PYBIN="$PYBIN"
+MONITORING_PRIVILEGE_DIR="$PRIVILEGE_DIR"
+MONITORING_USER="$MONITORING_USER"
+MONITORING_LOG_FILE="$LOG_DIR/monitoring.log"
 EOF
 chmod 644 /etc/monitoring.env
+chown root:root /etc/monitoring.env
 
 # --- Service definition -----------------------------------------------------------
 SYSTEMD_UNIT="/etc/systemd/system/monitoring.service"
@@ -188,7 +299,10 @@ elif command -v rc-service >/dev/null 2>&1; then USE_OPENRC=1; fi
 if [ "$USE_SYSTEMD" -eq 1 ]; then
   log "Installing systemd service…"
   sed -e "s|__HOME__|${MONITORING_HOME}|g" -e "s|__PYBIN__|${PYBIN}|g" \
-      -e "s|__ENVFILE__|/etc/monitoring.env|g" "$SRC/monitoring.service" > "$SYSTEMD_UNIT"
+      -e "s|__ENVFILE__|/etc/monitoring.env|g" \
+      -e "s|__SUPP_GROUPS__|${SUPP_GROUPS}|g" "$SRC/monitoring.service" > "$SYSTEMD_UNIT"
+  chown root:root "$SYSTEMD_UNIT"
+  chmod 644 "$SYSTEMD_UNIT"
   systemctl daemon-reload
   systemctl enable monitoring >/dev/null 2>&1 || true
 elif [ "$USE_OPENRC" -eq 1 ]; then

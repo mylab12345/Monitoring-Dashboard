@@ -8,7 +8,7 @@ Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rock
 
 ## 🚀 Install (global one-liner)
 
-The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **installs the app** to `/opt/monitoring`, registers it as a **system service**, installs the **desktop app** (menu shortcut + autostart) and adds a **`monitoring` CLI**:
+The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **creates a dedicated non-login system account `monitoring`**, installs only the explicitly whitelisted sudo helpers in `/etc/sudoers.d/monitoring` (validated with `visudo`), **installs the app** to `/opt/monitoring`, registers it as a **system service running as `monitoring`**, installs the **desktop app** (menu shortcut + autostart) and adds a **`monitoring` CLI**:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/install.sh | sudo bash
@@ -78,11 +78,12 @@ It automatically: finds the installed app → backs up the current version (last
 ## 🛠 CLI (`monitoring`)
 
 ```bash
-monitoring status    # service status + URL
-monitoring logs      # tail service logs
-monitoring restart   # restart the dashboard
-monitoring update    # run the updater from the installed copy
-monitoring open      # open the dashboard in your browser
+monitoring status          # service status + URL
+monitoring logs            # tail service logs
+monitoring restart         # restart the dashboard
+monitoring update          # run the updater from the installed copy
+monitoring open            # open the dashboard in your browser
+monitoring check-privileges # report the service account, groups and sudo grants
 ```
 
 ## 📦 Layout
@@ -98,15 +99,19 @@ uninstall.sh           # Clean uninstaller (--purge for everything)
 monitoring              # CLI control tool          -> /usr/local/bin/monitoring
 monitoring-app          # Desktop app launcher      -> /usr/local/bin/monitoring-app
 monitoring-app.desktop  # Menu shortcut/autostart   -> /usr/share/applications + /etc/xdg/autostart
-monitoring.service      # systemd unit template
+monitoring.service      # systemd unit template (runs as the monitoring account)
 openrc/monitoring       # OpenRC script (Alpine etc.)
+privileged/             # sudo helper scripts (validated argv, no shell, no sudo ALL)
+sudoers/monitoring      # exact sudoers fragment for the service account
 VERSION                # App version (shown in the dashboard)
 ```
 
 ## 🔐 Notes
 
-- The service runs as **root** so fixes, service control and VM actions work — it binds `0.0.0.0:8050`, so only expose it to networks you trust. There is **no login by design**: this is a single-user, standalone console — keep it on localhost or a trusted LAN.
-- All UI preferences (theme, thresholds, activity, alert history) live in your browser's localStorage; metrics history lives in the service's memory only.
+- The service runs as the dedicated **non-login system account `monitoring`**, never as root. It binds `0.0.0.0:8050`, so only expose it to networks you trust. There is **no login by design**: this is a single-user, standalone console — keep it on localhost or a trusted LAN.
+- Elevated operations are limited to specific helper scripts under `/usr/local/lib/monitoring` authorised by `/etc/sudoers.d/monitoring` with `NOPASSWD` and **absolute paths only**. There is **no `sudo ALL`**, and the helpers validate every argument and never use a shell.
+- Read-only information (journals, logs, libvirt list/detail, `ss`, `df`, `/proc`/`/sys`) is obtained through group access (`systemd-journal`, `adm`, `libvirt`, `docker`, `kvm`) instead of root. The installer adds those groups only when they exist on the host.
+- Check what the service is allowed to do with **`monitoring check-privileges`**; the dashboard also exposes `GET /api/privileges`.
 - For VM management as a regular user: `sudo usermod -aG libvirt $USER`, then re-login.
 - Change the port any time: edit `/etc/monitoring.env` then `monitoring restart`, or reinstall with `install.sh --port N`.
 
