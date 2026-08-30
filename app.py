@@ -123,6 +123,25 @@ HISTORY_MAX = 1800  # 60 min @ 2s
 _HISTORY = {"samples": [], "lock": threading.Lock()}
 _last_cpu = {"value": 0.0}
 
+# ------------------------------------------------------------------
+# Response cache — prevents duplicate work when multiple browser tabs
+# or the desktop app poll the same endpoint simultaneously.
+# ------------------------------------------------------------------
+_resp_cache = {}  # key -> (expiry, payload)
+_resp_lock = threading.Lock()
+
+def _cached(key, ttl, fn):
+    """Return cached result of fn() if called within ttl seconds."""
+    now = time.time()
+    with _resp_lock:
+        entry = _resp_cache.get(key)
+        if entry and entry[0] > now:
+            return entry[1]
+    result = fn()
+    with _resp_lock:
+        _resp_cache[key] = (now + ttl, result)
+    return result
+
 def _read_temp_c():
     """Best-effort CPU temperature in °C (float) or None."""
     try:
@@ -255,8 +274,7 @@ def _battery():
     except Exception:
         return None
 
-@app.route("/api/status")
-def api_status():
+def _build_status():
     try:
         import psutil
         cpu = _last_cpu["value"] or psutil.cpu_percent(interval=None)
@@ -319,9 +337,16 @@ def api_status():
             "time": datetime.now().strftime("%H:%M:%S"),
             "version": APP_VERSION,
         }
-        return jsonify(data)
+        return data
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}
+
+@app.route("/api/status")
+def api_status():
+    data = _cached("_status", 2, _build_status)
+    if isinstance(data, dict) and "error" in data:
+        return jsonify(data), 500
+    return jsonify(data)
 
 # ------------------------------------------------------------------
 # Health checks
@@ -332,30 +357,23 @@ def _int_or(value, default=0):
     except Exception:
         return default
 
-@app.route("/api/checks")
-def api_checks():
+def _build_checks():
     results = []
-    # Disk usage
     code, out, err = run("df -h /")
     results.append({"name": "Disk Usage", "status": "ok" if code == 0 else "fail",
                     "detail": out.splitlines()[1].strip() if out and len(out.splitlines()) > 1 else (err or "ok")})
-    # Pending updates (package-manager aware)
     updates = _updatable_packages()
     results.append({"name": "Pending Updates", "status": "warn" if updates["count"] > 0 else "ok",
                     "detail": f"{updates['count']} packages upgradable ({updates['manager'] or 'n/a'})"})
-    # Broken packages
     code, out, err = run("dpkg --audit 2>&1")
     broken = "found" if "error" in (out + err).lower() else "none"
     results.append({"name": "Broken Packages", "status": "warn" if broken != "none" else "ok", "detail": broken})
-    # Failed systemd services
     failed = "0"
     if which("systemctl"):
         code, out, err = run("systemctl --failed --no-pager --quiet 2>/dev/null | wc -l")
         failed = out.strip() if out else "0"
         results.append({"name": "Failed Services", "status": "warn" if _int_or(failed) > 0 else "ok",
                         "detail": f"{failed} failed"})
-    # Current-boot kernel errors. Use journal priority instead of matching words
-    # such as "error" in otherwise harmless device names/messages.
     if which("journalctl"):
         kernel_cmd = "journalctl -k -b -p err..alert --no-pager -q 2>/dev/null"
     else:
@@ -364,7 +382,6 @@ def api_checks():
     dmsg = out.strip() if code == 0 and out else "0"
     results.append({"name": "Kernel Errors", "status": "warn" if _int_or(dmsg) > 0 else "ok",
                     "detail": f"{dmsg} current-boot error lines"})
-    # Zombie processes
     try:
         import psutil
         zombies = [p for p in psutil.process_iter(["status"]) if p.info["status"] == "zombie"]
@@ -372,7 +389,11 @@ def api_checks():
                         "detail": f"{len(zombies)} zombies"})
     except Exception:
         pass
-    return jsonify(results)
+    return results
+
+@app.route("/api/checks")
+def api_checks():
+    return jsonify(_cached("_checks", 10, _build_checks))
 
 # ------------------------------------------------------------------
 # Troubleshooting Hub - Comprehensive diagnostic & auto-fix
@@ -1368,37 +1389,41 @@ def api_updates():
 # ------------------------------------------------------------------
 _PRIMED = {"flag": False}
 
+def _build_processes(limit):
+    import psutil
+    procs = []
+    attrs = ["pid", "name", "username", "memory_percent", "status", "nice"]
+    for p in psutil.process_iter(attrs):
+        try:
+            info = p.info
+            cpu = p.cpu_percent(interval=None)  # 0.0 on first (priming) call
+            procs.append({
+                "pid": info["pid"],
+                "name": info["name"] or "?",
+                "user": info["username"] or "-",
+                "cpu": round(cpu, 1),
+                "mem": round(info["memory_percent"] or 0.0, 1),
+                "status": info["status"],
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    _PRIMED["flag"] = True  # subsequent polls return real CPU values
+    top_cpu = sorted(procs, key=lambda x: x["cpu"], reverse=True)[:limit]
+    top_mem = sorted(procs, key=lambda x: x["mem"], reverse=True)[:limit]
+    seen, merged = set(), []
+    for p in top_cpu + top_mem:
+        if p["pid"] not in seen:
+            seen.add(p["pid"])
+            merged.append(p)
+    merged.sort(key=lambda x: x["cpu"], reverse=True)
+    return {"processes": merged[:limit * 2], "total": len(procs)}
+
 @app.route("/api/processes")
 def api_processes():
     limit = min(max(_int_or(request.args.get("limit"), 25), 5), 200)
     try:
-        import psutil
-        procs = []
-        attrs = ["pid", "name", "username", "memory_percent", "status", "nice"]
-        for p in psutil.process_iter(attrs):
-            try:
-                info = p.info
-                cpu = p.cpu_percent(interval=None)  # 0.0 on first (priming) call
-                procs.append({
-                    "pid": info["pid"],
-                    "name": info["name"] or "?",
-                    "user": info["username"] or "-",
-                    "cpu": round(cpu, 1),
-                    "mem": round(info["memory_percent"] or 0.0, 1),
-                    "status": info["status"],
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                continue
-        _PRIMED["flag"] = True  # subsequent polls return real CPU values
-        top_cpu = sorted(procs, key=lambda x: x["cpu"], reverse=True)[:limit]
-        top_mem = sorted(procs, key=lambda x: x["mem"], reverse=True)[:limit]
-        seen, merged = set(), []
-        for p in top_cpu + top_mem:
-            if p["pid"] not in seen:
-                seen.add(p["pid"])
-                merged.append(p)
-        merged.sort(key=lambda x: x["cpu"], reverse=True)
-        return jsonify({"processes": merged[:limit * 2], "total": len(procs)})
+        data = _cached(f"_procs_{limit}", 3, lambda: _build_processes(limit))
+        return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
