@@ -353,6 +353,374 @@ def api_checks():
     return jsonify(results)
 
 # ------------------------------------------------------------------
+# Troubleshooting Hub - Comprehensive diagnostic & auto-fix
+# ------------------------------------------------------------------
+TROUBLESHOOT_FIXES = {
+    "apt": {
+        "broken_packages": "dpkg --configure -a && apt install -f -y -qq",
+        "clean_cache": "apt clean && apt autoclean",
+        "autoremove": "apt autoremove -y -qq",
+    },
+    "dnf": {
+        "broken_packages": "dnf distro-sync -y --quiet",
+        "clean_cache": "dnf clean all -y",
+        "autoremove": "dnf autoremove -y --quiet",
+    },
+    "yum": {
+        "broken_packages": "yum distro-sync -y",
+        "clean_cache": "yum clean all",
+        "autoremove": "yum autoremove -y",
+    },
+    "zypper": {
+        "broken_packages": "zypper dist-upgrade -y --quiet",
+        "clean_cache": "zypper clean",
+        "autoremove": "zypper clean",
+    },
+    "pacman": {
+        "broken_packages": "pacman -Syu --noconfirm",
+        "clean_cache": "pacman -Sc --noconfirm",
+        "autoremove": "pacman -Rns $(pacman -Qdtq) --noconfirm 2>/dev/null || true",
+    },
+    "apk": {
+        "broken_packages": "apk fix",
+        "clean_cache": "apk cache clean",
+        "autoremove": "apk autoremove --quiet",
+    },
+}
+
+SYSTEMD_FIXES = {
+    "reset_failed": "systemctl reset-failed",
+    "restart_failed": "for s in $(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}'); do systemctl restart $s 2>/dev/null; done",
+}
+
+LOG_FIXES = {
+    "vacuum_journal": "journalctl --vacuum-time=7d --vacuum-size=100M",
+    "clear_old_logs": "find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null",
+}
+
+DOCKER_FIXES = {
+    "prune_system": "docker system prune -f",
+    "prune_volumes": "docker volume prune -f",
+    "prune_images": "docker image prune -af",
+}
+
+@app.route("/api/troubleshooting")
+def api_troubleshooting():
+    """Comprehensive troubleshooting diagnostics."""
+    issues = {"critical": [], "warnings": [], "info": []}
+    
+    # 1. Disk space check
+    code, out, err = run("df -h /")
+    if code == 0 and out:
+        lines = out.splitlines()
+        if len(lines) > 1:
+            parts = lines[1].split()
+            if len(parts) >= 5:
+                disk_pct = int(parts[4].replace('%', ''))
+                if disk_pct >= 95:
+                    issues["critical"].append({
+                        "id": "disk_critical",
+                        "name": "Critical Disk Space",
+                        "detail": f"Root partition is {disk_pct}% full",
+                        "fix": "clear-logs",
+                        "icon": "storage"
+                    })
+                elif disk_pct >= 85:
+                    issues["warnings"].append({
+                        "id": "disk_warning",
+                        "name": "Low Disk Space",
+                        "detail": f"Root partition is {disk_pct}% full",
+                        "fix": "clear-logs",
+                        "icon": "storage"
+                    })
+    
+    # 2. Failed systemd services
+    if which("systemctl"):
+        code, out, err = run("systemctl --failed --no-pager --plain --no-legend 2>/dev/null")
+        if out:
+            failed_services = []
+            for line in out.splitlines():
+                parts = line.split()
+                if parts:
+                    svc_name = parts[0]
+                    failed_services.append(svc_name)
+            if failed_services:
+                issues["critical"].append({
+                    "id": "failed_services",
+                    "name": "Failed Systemd Services",
+                    "detail": f"{len(failed_services)} service(s) failed: {', '.join(failed_services[:5])}" + ("..." if len(failed_services) > 5 else ""),
+                    "services": failed_services,
+                    "fix": "restart-failed-services",
+                    "icon": "settings"
+                })
+    
+    # 3. Broken packages
+    code, out, err = run("dpkg --audit 2>/dev/null")
+    if code != 0 or "error" in (out + err).lower():
+        issues["critical"].append({
+            "id": "broken_packages",
+            "name": "Broken Packages",
+            "detail": "Package database has inconsistencies",
+            "fix": "fix-broken-packages",
+            "icon": "package"
+        })
+    
+    # 4. Pending updates
+    updates = _updatable_packages()
+    if updates["count"] > 50:
+        issues["warnings"].append({
+            "id": "many_updates",
+            "name": "Many Pending Updates",
+            "detail": f"{updates['count']} packages can be updated ({updates['manager'] or 'unknown'})",
+            "fix": "update-packages",
+            "icon": "update"
+        })
+    elif updates["count"] > 0:
+        issues["info"].append({
+            "id": "pending_updates",
+            "name": "Pending Updates",
+            "detail": f"{updates['count']} packages upgradable",
+            "fix": "update-packages",
+            "icon": "update"
+        })
+    
+    # 5. Kernel errors from dmesg
+    code, out, err = run("dmesg 2>/dev/null | grep -iE 'error|fail|critical' | tail -20")
+    if out:
+        error_lines = [l.strip() for l in out.splitlines() if l.strip()]
+        if len(error_lines) > 10:
+            issues["warnings"].append({
+                "id": "kernel_errors",
+                "name": "Kernel Errors Detected",
+                "detail": f"{len(error_lines)} recent kernel error(s) found in dmesg",
+                "sample": error_lines[:3],
+                "icon": "memory"
+            })
+    
+    # 6. Zombie processes
+    try:
+        import psutil
+        zombies = [p for p in psutil.process_iter(["pid", "name", "status"]) if p.info["status"] == "zombie"]
+        if zombies:
+            zombie_info = [{"pid": z.info["pid"], "name": z.info["name"]} for z in zombies[:5]]
+            issues["warnings"].append({
+                "id": "zombie_processes",
+                "name": "Zombie Processes",
+                "detail": f"{len(zombies)} zombie process(es) detected",
+                "processes": zombie_info,
+                "fix": "clean-zombies",
+                "icon": "process"
+            })
+    except Exception:
+        pass
+    
+    # 7. High memory pressure
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        if mem.percent >= 95:
+            issues["critical"].append({
+                "id": "memory_critical",
+                "name": "Critical Memory Usage",
+                "detail": f"System memory is {mem.percent}% full",
+                "icon": "memory"
+            })
+        elif mem.percent >= 85:
+            issues["warnings"].append({
+                "id": "memory_warning",
+                "name": "High Memory Usage",
+                "detail": f"System memory is {mem.percent}% full",
+                "icon": "memory"
+            })
+    except Exception:
+        pass
+    
+    # 8. Docker issues
+    if which("docker"):
+        code, out, err = run("docker info 2>&1 | grep -i 'warning\\|error' | head -5")
+        if out:
+            issues["warnings"].append({
+                "id": "docker_warnings",
+                "name": "Docker Warnings",
+                "detail": out.strip(),
+                "fix": "docker-prune",
+                "icon": "container"
+            })
+        
+        # Check for dangling images
+        code, out, err = run("docker images -f 'dangling=true' -q 2>/dev/null | wc -l")
+        dangling_count = _int_or(out.strip()) if out else 0
+        if dangling_count > 5:
+            issues["info"].append({
+                "id": "dangling_images",
+                "name": "Dangling Docker Images",
+                "detail": f"{dangling_count} dangling images can be removed",
+                "fix": "docker-prune",
+                "icon": "container"
+            })
+    
+    # 9. Old log files
+    code, out, err = run("find /var/log -type f -name '*.gz' -mtime +30 2>/dev/null | wc -l")
+    old_logs = _int_or(out.strip()) if out else 0
+    if old_logs > 10:
+        issues["info"].append({
+            "id": "old_logs",
+            "name": "Old Log Files",
+            "detail": f"{old_logs} compressed log files older than 30 days",
+            "fix": "clear-old-logs",
+            "icon": "description"
+        })
+    
+    # 10. Journal size
+    code, out, err = run("journalctl --disk-usage 2>/dev/null")
+    if out:
+        match = re.search(r'(\d+(?:\.\d+)?)([KMGT]?B)', out)
+        if match:
+            size_val = float(match.group(1))
+            unit = match.group(2)
+            size_mb = size_val
+            if unit == 'K': size_mb = size_val / 1024
+            elif unit == 'M': pass
+            elif unit == 'G': size_mb = size_val * 1024
+            elif unit == 'T': size_mb = size_val * 1024 * 1024
+            
+            if size_mb > 2048:  # > 2GB
+                issues["info"].append({
+                    "id": "large_journal",
+                    "name": "Large Journal",
+                    "detail": f"System journal using {match.group(1)}{unit}",
+                    "fix": "vacuum-journal",
+                    "icon": "description"
+                })
+    
+    total_issues = len(issues["critical"]) + len(issues["warnings"]) + len(issues["info"])
+    health_score = max(0, 100 - (len(issues["critical"]) * 20) - (len(issues["warnings"]) * 10) - (len(issues["info"]) * 3))
+    
+    return jsonify({
+        "issues": issues,
+        "total": total_issues,
+        "health_score": health_score,
+        "timestamp": datetime.now().isoformat()
+    })
+
+@app.route("/api/troubleshooting/fix-all", methods=["POST"])
+def api_troubleshooting_fix_all():
+    """Fix all detected issues with sudo access."""
+    results = {"fixed": [], "failed": [], "skipped": []}
+    mgr = _pkg_manager()
+    
+    data = request.json or {}
+    fixes_to_run = data.get("fixes", [])
+    
+    # Get current issues to determine what to fix
+    _, issues_json, _ = run(f"curl -s http://localhost:{APP_PORT}/api/troubleshooting")
+    try:
+        issues_data = json.loads(issues_json) if issues_json else {"issues": {"critical": [], "warnings": [], "info": []}}
+    except:
+        issues_data = {"issues": {"critical": [], "warnings": [], "info": []}}
+    
+    all_issues = issues_data.get("issues", {}).get("critical", []) + \
+                 issues_data.get("issues", {}).get("warnings", []) + \
+                 issues_data.get("issues", {}).get("info", [])
+    
+    # Determine which fixes to run
+    fixes_needed = set()
+    for issue in all_issues:
+        if "fix" in issue:
+            fixes_needed.add(issue["fix"])
+    
+    # If specific fixes requested, filter
+    if fixes_to_run:
+        fixes_needed = fixes_needed.intersection(set(fixes_to_run))
+    
+    # Execute fixes
+    for fix in fixes_needed:
+        fix_result = {"fix": fix, "output": ""}
+        try:
+            if fix == "fix-broken-packages" and mgr:
+                cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("broken_packages", "")
+                if cmd:
+                    code, out, err = run(cmd, timeout=300, sudo=True)
+                    fix_result["output"] = (out or err or "Done").strip()[-500:]
+                    results["fixed"].append(fix_result)
+                else:
+                    fix_result["output"] = f"No fix available for {mgr}"
+                    results["skipped"].append(fix_result)
+            
+            elif fix == "clear-logs":
+                code, out, err = run(
+                    "journalctl --vacuum-time=7d --vacuum-size=100M >/dev/null 2>&1; "
+                    "find /var/log -type f -name '*.gz' -delete 2>/dev/null; echo 'Logs cleared'",
+                    timeout=60, sudo=True)
+                fix_result["output"] = (out or "Logs cleared").strip()[-500:]
+                results["fixed"].append(fix_result)
+            
+            elif fix == "clear-old-logs":
+                code, out, err = run("find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null; echo 'Old logs cleared'", timeout=60, sudo=True)
+                fix_result["output"] = (out or "Done").strip()[-500:]
+                results["fixed"].append(fix_result)
+            
+            elif fix == "vacuum-journal":
+                code, out, err = run("journalctl --vacuum-time=7d --vacuum-size=100M 2>/dev/null; echo 'Journal vacuumed'", timeout=60, sudo=True)
+                fix_result["output"] = (out or "Done").strip()[-500:]
+                results["fixed"].append(fix_result)
+            
+            elif fix == "update-packages" and mgr:
+                cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("autoremove", "")
+                if cmd:
+                    code, out, err = run(cmd, timeout=300, sudo=True)
+                    fix_result["output"] = (out or err or "Done").strip()[-500:]
+                    results["fixed"].append(fix_result)
+            
+            elif fix == "restart-failed-services":
+                if which("systemctl"):
+                    code, out, err = run(SYSTEMD_FIXES["reset_failed"], timeout=30, sudo=True)
+                    code2, out2, err2 = run(SYSTEMD_FIXES["restart_failed"], timeout=60, sudo=True)
+                    fix_result["output"] = ((out or "") + (out2 or "")).strip()[-500:] or "Reset complete"
+                    results["fixed"].append(fix_result)
+            
+            elif fix == "docker-prune":
+                if which("docker"):
+                    code, out, err = run("docker system prune -f", timeout=120, sudo=True)
+                    fix_result["output"] = (out or err or "Done").strip()[-500:]
+                    results["fixed"].append(fix_result)
+                else:
+                    fix_result["output"] = "Docker not installed"
+                    results["skipped"].append(fix_result)
+            
+            elif fix == "clean-zombies":
+                try:
+                    import psutil
+                    killed = 0
+                    for p in psutil.process_iter(["pid", "name", "status"]):
+                        try:
+                            if p.info["status"] == "zombie":
+                                parent = p.parent()
+                                if parent:
+                                    parent.terminate()
+                                    killed += 1
+                        except:
+                            pass
+                    fix_result["output"] = f"Attempted to clean {killed} zombie processes"
+                    results["fixed"].append(fix_result)
+                except Exception as e:
+                    fix_result["output"] = str(e)
+                    results["failed"].append(fix_result)
+            
+            else:
+                fix_result["output"] = f"Unknown fix: {fix}"
+                results["skipped"].append(fix_result)
+                
+        except Exception as e:
+            fix_result["output"] = str(e)
+            results["failed"].append(fix_result)
+    
+    if not fixes_needed:
+        results["skipped"].append({"fix": "all", "output": "No fixes needed - system is healthy!"})
+    
+    return jsonify(results)
+
+# ------------------------------------------------------------------
 # Maintenance / fix actions (safe, non-destructive)
 # ------------------------------------------------------------------
 def _pkg_manager():

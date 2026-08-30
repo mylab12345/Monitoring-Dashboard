@@ -107,6 +107,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             <span>Alerts</span><em class="dot" id="dotAlerts" hidden></em>
           </button>
+          <button class="nav-btn" data-tab="troubleshooting" data-sub="Critical errors, warnings &amp; auto-fix">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>Troubleshooting</span><em class="dot" id="dotTrouble" hidden></em>
+          </button>
         </nav>
       </div>
 
@@ -643,6 +647,61 @@
         </div>
       </section>
 
+      <!-- ============ TROUBLESHOOTING HUB ============ -->
+      <section class="tab-panel" id="tab-troubleshooting" aria-label="Troubleshooting Hub">
+        <div class="troubleshoot-header">
+          <div class="health-score-card">
+            <div class="score-circle" id="healthScoreCircle">
+              <svg viewBox="0 0 120 120" width="120" height="120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(148,163,184,.2)" stroke-width="12"/>
+                <circle cx="60" cy="60" r="52" fill="none" stroke="url(#g-cpu)" stroke-width="12" stroke-linecap="round" 
+                        stroke-dasharray="326.7" stroke-dashoffset="326.7" id="healthScoreBar"
+                        transform="rotate(-90 60 60)"/>
+              </svg>
+              <div class="score-value" id="healthScoreValue">--</div>
+            </div>
+            <div class="score-info">
+              <h3>System Health Score</h3>
+              <p class="dim">Based on critical issues, warnings, and system diagnostics</p>
+            </div>
+          </div>
+          
+          <div class="issue-summary">
+            <div class="issue-tile crit" id="issueCritTile">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span class="issue-count" id="issueCritCount">0</span>
+              <span class="issue-label">Critical</span>
+            </div>
+            <div class="issue-tile warn" id="issueWarnTile">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span class="issue-count" id="issueWarnCount">0</span>
+              <span class="issue-label">Warnings</span>
+            </div>
+            <div class="issue-tile info" id="issueInfoTile">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <span class="issue-count" id="issueInfoCount">0</span>
+              <span class="issue-label">Info</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card hoverable troubleshoot-card">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              Detected Issues
+              <span class="badge" id="totalIssuesBadge">0 total</span>
+            </div>
+            <button class="btn btn-primary btn-fix-all" onclick="fixAllIssues()" id="fixAllBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+              Fix All Issues
+            </button>
+          </div>
+          <div id="troubleshootList" class="troubleshoot-list"></div>
+          <div id="fixResults" class="fix-results" hidden></div>
+        </div>
+      </section>
+
       <!-- ============ SETTINGS ============ -->
       <section class="tab-panel" id="tab-settings" aria-label="Settings">
         <div class="grid g2" style="align-items:start">
@@ -1037,7 +1096,7 @@ function openShortcuts(){
 // ================================================================
 // Tabs
 // ================================================================
-const TAB_NAMES=['overview','processes','network','services','docker','vms','logs','alerts','settings','help'];
+const TAB_NAMES=['overview','processes','network','services','docker','vms','logs','alerts','troubleshooting','settings','help'];
 const TAB_LOADERS={
   overview:null,
   processes:loadProcesses,
@@ -1047,6 +1106,7 @@ const TAB_LOADERS={
   vms:loadVMs,
   logs:loadLogs,
   alerts:renderAlerts,
+  troubleshooting:loadTroubleshooting,
   settings:renderSettings,
   help:fillHelp
 };
@@ -1480,6 +1540,180 @@ function renderAlerts(){
 function clearAlerts(){
   alertRecords=[];persistAlerts();renderAlerts();refreshAlertBadge();
   toast('Alert history cleared','info');
+}
+
+// ================================================================
+// Troubleshooting Hub
+// ================================================================
+let troubleshootingData = { issues: { critical: [], warnings: [], info: [] }, health_score: 0 };
+
+async function loadTroubleshooting() {
+  try {
+    const r = await fetch('/api/troubleshooting');
+    const data = await r.json();
+    troubleshootingData = data;
+    renderTroubleshooting(data);
+    refreshTroubleBadge();
+  } catch (e) {
+    console.error('Failed to load troubleshooting data:', e);
+  }
+}
+
+function renderTroubleshooting(data) {
+  const issues = data.issues || { critical: [], warnings: [], info: [] };
+  
+  // Update health score
+  const score = data.health_score || 0;
+  $('#healthScoreValue').textContent = score;
+  const maxDash = 326.7;
+  const offset = maxDash - (score / 100) * maxDash;
+  $('#healthScoreBar').style.strokeDashoffset = offset;
+  
+  // Color based on score
+  const scoreColor = score >= 80 ? '#34d399' : score >= 50 ? '#fbbf24' : '#f87171';
+  $('#healthScoreBar').style.stroke = scoreColor;
+  
+  // Update issue counts
+  $('#issueCritCount').textContent = issues.critical.length;
+  $('#issueWarnCount').textContent = issues.warnings.length;
+  $('#issueInfoCount').textContent = issues.info.length;
+  $('#totalIssuesBadge').textContent = data.total + ' total';
+  
+  // Render issue list
+  const allIssues = [...issues.critical, ...issues.warnings, ...issues.info];
+  const container = $('#troubleshootList');
+  
+  if (allIssues.length === 0) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">' + icon('check-circle', 32) + '</div><strong>All systems healthy!</strong><span class="dim">No issues detected. Your system is running smoothly.</span></div>';
+    $('#fixAllBtn').disabled = true;
+    return;
+  }
+  
+  $('#fixAllBtn').disabled = false;
+  container.innerHTML = allIssues.map(issue => {
+    const severityClass = issue.id && issues.critical.find(i => i.id === issue.id) ? 'crit' : 
+                          issue.id && issues.warnings.find(i => i.id === issue.id) ? 'warn' : 'info';
+    const iconMap = { storage: 'storage', settings: 'gear', package: 'package', update: 'download', memory: 'memory', process: 'cpu', container: 'box', description: 'description' };
+    const iconName = iconMap[issue.icon] || 'alert-triangle';
+    
+    return `
+      <div class="issue-item ${severityClass}" data-issue-id="${issue.id || ''}">
+        <div class="issue-icon">${icon(iconName, 20)}</div>
+        <div class="issue-body">
+          <div class="issue-title">
+            <span class="severity-badge ${severityClass}">${severityClass.toUpperCase()}</span>
+            ${esc(issue.name)}
+          </div>
+          <div class="issue-detail">${esc(issue.detail)}</div>
+          ${issue.sample ? `<div class="issue-sample dim"><code>${esc(issue.sample.join('; '))}</code></div>` : ''}
+          ${issue.processes ? `<div class="issue-processes dim">PIDs: ${issue.processes.map(p => p.pid).join(', ')}</div>` : ''}
+          ${issue.services ? `<div class="issue-services dim">Services: ${issue.services.slice(0, 3).join(', ')}${issue.services.length > 3 ? '...' : ''}</div>` : ''}
+        </div>
+        ${issue.fix ? `<button class="btn btn-sm btn-fix" onclick="fixIssue('${issue.fix}', '${issue.id || ''}')">${icon('wrench', 14)} Fix</button>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function refreshTroubleBadge() {
+  const badge = $('#dotTrouble');
+  const crit = troubleshootingData.issues?.critical?.length || 0;
+  if (badge) {
+    badge.hidden = crit === 0;
+    if (crit > 0) {
+      badge.textContent = crit;
+      badge.className = 'dot';
+    }
+  }
+}
+
+async function fixIssue(fixType, issueId) {
+  if (!fixType) return;
+  
+  const btn = event.target.closest('button');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = icon('loader', 14) + ' Fixing...';
+  }
+  
+  try {
+    const r = await fetch('/api/troubleshooting/fix-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fixes: [fixType] })
+    });
+    const result = await r.json();
+    
+    const fixed = result.fixed?.find(f => f.fix === fixType);
+    const failed = result.failed?.find(f => f.fix === fixType);
+    
+    if (fixed) {
+      toast('Fix applied: ' + (fixed.output || 'Success'), 'success');
+      logActivity('fix', 'Fixed ' + fixType, true);
+      loadTroubleshooting(); // Refresh
+    } else if (failed) {
+      toast('Fix failed: ' + (failed.output || 'Unknown error'), 'error');
+      logActivity('fix', 'Failed ' + fixType, false);
+    } else {
+      toast('Fix completed', 'info');
+      loadTroubleshooting();
+    }
+  } catch (e) {
+    toast('Error applying fix: ' + e.message, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = icon('wrench', 14) + ' Fix';
+    }
+  }
+}
+
+async function fixAllIssues() {
+  const btn = $('#fixAllBtn');
+  if (!btn || btn.disabled) return;
+  
+  btn.disabled = true;
+  btn.innerHTML = icon('loader', 16) + ' Fixing all...';
+  
+  try {
+    const r = await fetch('/api/troubleshooting/fix-all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const result = await r.json();
+    
+    const fixedCount = result.fixed?.length || 0;
+    const failedCount = result.failed?.length || 0;
+    const skippedCount = result.skipped?.length || 0;
+    
+    let msg = `Fixed ${fixedCount} issue(s)`;
+    if (failedCount > 0) msg += `, ${failedCount} failed`;
+    if (skippedCount > 0) msg += `, ${skippedCount} skipped`;
+    
+    toast(msg, fixedCount > 0 ? 'success' : 'info');
+    logActivity('fix', 'Fixed all issues', fixedCount > 0);
+    
+    // Show results
+    const resultsDiv = $('#fixResults');
+    resultsDiv.hidden = false;
+    resultsDiv.innerHTML = `
+      <div class="fix-summary">
+        <div class="fix-stat success">${fixedCount} Fixed</div>
+        <div class="fix-stat error">${failedCount} Failed</div>
+        <div class="fix-stat skip">${skippedCount} Skipped</div>
+      </div>
+      ${result.fixed?.map(f => `<div class="fix-item success"><strong>${esc(f.fix)}</strong>: ${esc(f.output)}</div>`).join('') || ''}
+      ${result.failed?.map(f => `<div class="fix-item error"><strong>${esc(f.fix)}</strong>: ${esc(f.output)}</div>`).join('') || ''}
+      ${result.skipped?.map(f => `<div class="fix-item skip"><strong>${esc(f.fix)}</strong>: ${esc(f.output)}</div>`).join('') || ''}
+    `;
+    
+    loadTroubleshooting(); // Refresh the list
+  } catch (e) {
+    toast('Error fixing issues: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = icon('wrench', 16) + ' Fix All Issues';
+  }
 }
 
 // ================================================================
