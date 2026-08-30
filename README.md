@@ -1,6 +1,6 @@
-# Montoring — Universal Linux System Dashboard
+# Montoring — Universal Linux System Console
 
-Monitor, fix and manage any Linux machine from one beautiful glassmorphic desktop app — **CPU/RAM/disk metrics, health checks, one-click fixes, processes, systemd services, live logs, Docker containers, libvirt VMs and network inspection.**
+Monitor, fix and manage any Linux machine from one enterprise-grade console — **live metrics with history charts, threshold alerting, health checks, one-click fixes, processes, systemd services, live logs, Docker containers, libvirt VMs and network inspection.** 100% local-first: **no accounts, no cloud, no telemetry** — pro tooling for your own machine.
 
 Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rocky/Alma, openSUSE, Arch/Manjaro, Alpine.
 
@@ -53,22 +53,27 @@ It automatically: finds the installed app → backs up the current version (last
 ## ✨ Features
 
 **Overview**
-- Live CPU / RAM / Disk / Swap metrics with sparkline history charts, load average, temperature, battery, uptime
+- Live CPU / RAM / Disk / Swap metrics with ring gauges, sparkline history, load average, temperature, battery, uptime
+- **Resource timeline** — CPU/RAM/throughput area chart with hover tooltip and 5m/15m/30m/1h ranges, backed by a server-side metrics ring buffer (charts survive page reloads)
 - System health checks: disk usage, pending updates, broken packages, failed services, kernel errors, zombie processes
 - One-click safe fixes: update, upgrade, autoremove, clean cache, fix broken, clear logs, docker prune — package-manager aware (apt/dnf/yum/zypper/pacman/apk)
-- Mounted disks overview + listening ports + system info
+- Mounted disks overview + listening ports + system info banner (CPU model, kernel, uptime, live network rate)
 
-**Processes** — top processes by CPU/RAM with search, auto-refresh and kill button
+**Alerts & Activity** — local threshold alerting (CPU/RAM/disk/temperature with warn & critical levels), alert bell with live breach count, full alert history, and an audit trail of every action taken from the console (stored in your browser only)
 
-**Services** — browse/filter systemd units, start / stop / restart / enable / disable with confirmation
+**Processes** — top processes by CPU/RAM with search, adjustable fetch size (25/50/100), sortable columns and kill button
 
-**Docker** — list containers, start / stop / restart / remove, prune unused data (auto-detects Docker)
+**Services** — browse/filter systemd units, start / stop / restart / enable / disable with confirmation and pagination
+
+**Docker** — container stats header (running/stopped/images/storage), list containers, start / stop / restart / remove, local image inventory, storage usage, prune unused data (auto-detects Docker)
 
 **VMs** — libvirt/QEMU VM list with state, start / shutdown / reboot / force-off and disk resize via `qemu-img`
 
-**Network** — per-interface cards (IPv4/IPv6/MAC, up/down, traffic, speed) + full listening-ports table
+**Network** — per-interface cards (IPv4/IPv6/MAC, up/down, **live RX/TX throughput rates**, totals, speed) + full listening-ports table
 
-**Logs** — live journal viewer with priority filter, text filter, line count and auto-refresh
+**Logs** — live journal viewer with priority filter, text filter, line count, wrap toggle, copy and download
+
+**Console UX** — dark/light/system theme (persisted), collapsible sidebar, command palette (Ctrl K), keyboard shortcuts (press `?`), configurable refresh interval and thresholds in **Settings** — all local, no login required
 
 ## 🛠 CLI (`montoring`)
 
@@ -100,7 +105,8 @@ VERSION                # App version (shown in the dashboard)
 
 ## 🔐 Notes
 
-- The service runs as **root** so fixes, service control, VM and Docker actions work — it binds `0.0.0.0:8050`, so only expose it to networks you trust.
+- The service runs as **root** so fixes, service control, VM and Docker actions work — it binds `0.0.0.0:8050`, so only expose it to networks you trust. There is **no login by design**: this is a single-user, standalone console — keep it on localhost or a trusted LAN.
+- All UI preferences (theme, thresholds, activity, alert history) live in your browser's localStorage; metrics history lives in the service's memory only.
 - For VM management as a regular user: `sudo usermod -aG libvirt $USER`, then re-login.
 - Change the port any time: edit `/etc/montoring.env` then `montoring restart`, or reinstall with `install.sh --port N`.
 
