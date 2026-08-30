@@ -142,6 +142,16 @@ cp -f "$SRC/static/"* "$TARGET/static/" 2>/dev/null || true
 if [ -f /usr/local/bin/montoring ] && [ -f "$SRC/montoring" ]; then
   sed -e "s|__HOME__|${TARGET}|g" "$SRC/montoring" > /usr/local/bin/montoring && chmod 755 /usr/local/bin/montoring
 fi
+# Desktop app pieces
+if [ -f "$SRC/montoring-app" ]; then
+  install -m 755 "$SRC/montoring-app" /usr/local/bin/montoring-app 2>/dev/null || true
+  if [ -f "$SRC/montoring-app.desktop" ]; then
+    mkdir -p /usr/share/pixmaps /usr/share/applications /etc/xdg/autostart 2>/dev/null || true
+    cp -f "$SRC/static/icon.png" /usr/share/pixmaps/montoring.png 2>/dev/null || true
+    cp -f "$SRC/montoring-app.desktop" /usr/share/applications/montoring.desktop 2>/dev/null || true
+    cp -f "$SRC/montoring-app.desktop" /etc/xdg/autostart/montoring.desktop 2>/dev/null || true
+  fi
+fi
 PYBIN_CURRENT=""
 [ -f /etc/montoring.env ] && . /etc/montoring.env 2>/dev/null && PYBIN_CURRENT="${PYBIN:-}"
 if [ "$SYSTEMD_ACTIVE" -eq 1 ] || [ -f /etc/systemd/system/montoring.service ]; then

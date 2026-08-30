@@ -604,6 +604,22 @@ def api_docker_prune():
     return jsonify({"result": (out or err or "pruned")[-400:]})
 
 # ------------------------------------------------------------------
+# Desktop app integration
+# ------------------------------------------------------------------
+@app.route("/api/open_app", methods=["POST"])
+def api_open_app():
+    """Open the native desktop window (montoring-app) from the dashboard.
+    Only meaningful when browsing on the same machine."""
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        return jsonify({"error": "No graphical session on the server — run 'montoring-app' locally instead."}), 400
+    launcher = shutil.which("montoring-app") or "/usr/local/bin/montoring-app"
+    if not os.path.exists(launcher):
+        return jsonify({"error": "montoring-app launcher not installed"}), 404
+    subprocess.Popen([launcher], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    return jsonify({"result": "Desktop window launched"})
+
+# ------------------------------------------------------------------
 # VM / Libvirt management
 # ------------------------------------------------------------------
 VM_ACTIONS = ("start", "shutdown", "reboot", "reset", "destroy", "resume", "suspend")

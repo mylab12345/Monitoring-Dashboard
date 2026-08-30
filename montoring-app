@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""
+Montoring — Desktop App Launcher
+--------------------------------
+Launches Montoring as a standalone desktop application:
+
+  1. Ensures the backend service is running (starts it if needed)
+  2. Shows a small splash screen while connecting (tkinter, optional)
+  3. Opens the dashboard in a native chromeless window using, in order:
+       - pywebview  (best: real native webview)
+       - Chrome/Chromium/Brave/Edge --app  (chromeless app window)
+       - Firefox --kiosk
+       - xdg-open (regular browser tab, fallback)
+
+Usage:
+    montoring-app             # launch the app
+    montoring-app --check     # print what would be used, then exit
+"""
+import os
+import sys
+import json
+import time
+import shutil
+import subprocess
+import urllib.request
+
+HOME_DIR = os.environ.get("MONTORING_HOME", "/opt/montoring")
+PORT = os.environ.get("MONTORING_PORT", "8050")
+ENVFILE = "/etc/montoring.env"
+URL = f"http://127.0.0.1:{PORT}"
+CHECK = "--check" in sys.argv
+
+# Load install configuration (port, home, pybin)
+try:
+    with open(ENVFILE) as f:
+        for line in f:
+            if "=" in line:
+                k, v = line.rstrip("\n").split("=", 1)
+                os.environ.setdefault(k, v.strip('"'))
+except Exception:
+    pass
+PORT = os.environ.get("MONTORING_PORT", PORT)
+HOME_DIR = os.environ.get("MONTORING_HOME", HOME_DIR)
+URL = f"http://127.0.0.1:{PORT}"
+ICON = os.path.join(HOME_DIR, "static", "icon.png")
+
+
+def api_up(timeout=2):
+    try:
+        with urllib.request.urlopen(f"{URL}/api/version", timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except Exception:
+        return None
+
+
+def backend_running():
+    return api_up() is not None
+
+
+def start_backend():
+    """Try to start the montoring service without user interaction."""
+    cmds = [
+        ["montoring", "start"],
+        ["/usr/local/bin/montoring", "start"],
+        ["sudo", "-n", "montoring", "start"],
+        ["pkexec", "/usr/local/bin/montoring", "start"],
+    ]
+    for c in cmds:
+        if shutil.which(c[0]) or os.path.exists(c[0]):
+            try:
+                subprocess.run(c, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+            except Exception:
+                pass
+            if backend_running():
+                return True
+    return backend_running()
+
+
+def pick_window_opener():
+    """Return (kind, command) for opening the standalone window."""
+    try:
+        import webview  # noqa: F401
+        return ("webview", None)
+    except Exception:
+        pass
+    for b in ("chromium-browser", "chromium", "google-chrome", "google-chrome-stable",
+              "brave-browser", "microsoft-edge", "microsoft-edge-stable"):
+        exe = shutil.which(b)
+        if exe:
+            return ("chrome", [exe, f"--app={URL}", f"--window-size=1440,920",
+                               "--class=Montoring", "--user-data-dir="
+                               + os.path.expanduser("~/.config/montoring-app")])
+    ff = shutil.which("firefox")
+    if ff:
+        return ("firefox", [ff, "--kiosk", URL])
+    return ("browser", [shutil.which("xdg-open") or "xdg-open", URL])
+
+
+SPLASH_HTML = None  # reserved
+
+
+def splash_show():
+    """Show a tiny splash window; returns a close() function or None."""
+    if CHECK:
+        return None
+    try:
+        import tkinter as tk
+    except Exception:
+        return None
+    try:
+        root = tk.Tk()
+        root.overrideredirect(True)
+        w, h = 340, 130
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2 - 60}")
+        root.configure(bg="#0b0d12", highlightthickness=1,
+                       highlightbackground="rgba(126,231,135,0.4)" if False else "#2a3f33")
+        tk.Label(root, text="Montoring", font=("Outfit", 20, "bold"),
+                 bg="#0b0d12", fg="#7ee787").pack(pady=(28, 2))
+        status = tk.Label(root, text="Starting dashboard…", font=("Outfit", 10),
+                          bg="#0b0d12", fg="#a1a1aa")
+        status.pack()
+        root.update()
+        return root  # caller keeps reference; destroy() when done
+    except Exception:
+        return None
+
+
+def main():
+    kind, cmd = pick_window_opener()
+    if CHECK:
+        info = {
+            "url": URL,
+            "backend_running": backend_running(),
+            "window_mode": kind,
+            "command": " ".join(cmd) if cmd else "pywebview",
+            "icon": ICON if os.path.exists(ICON) else "missing",
+        }
+        print(json.dumps(info, indent=2))
+        return 0
+
+    splash = splash_show()
+
+    if not backend_running():
+        start_backend()
+        deadline = time.time() + 25
+        while time.time() < deadline:
+            if backend_running():
+                break
+            time.sleep(0.5)
+
+    if splash is not None:
+        try:
+            splash.destroy()
+        except Exception:
+            pass
+
+    if kind == "webview":
+        try:
+            import webview
+            kw = {}
+            if os.path.exists(ICON):
+                kw["icon"] = ICON
+            webview.create_window("Montoring", URL, width=1440, height=920, **kw)
+            webview.start()
+            return 0
+        except Exception:
+            pass  # fall through to browser-based window
+
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"Could not open a window: {e}\nOpen {URL} in your browser.", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

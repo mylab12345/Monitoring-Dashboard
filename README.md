@@ -1,6 +1,6 @@
 # Montoring — Universal Linux System Dashboard
 
-Monitor, fix and manage any Linux machine from one beautiful glassmorphic dashboard — **CPU/RAM/disk metrics, health checks, one-click fixes, processes, systemd services, live logs, Docker containers, libvirt VMs and network inspection.**
+Monitor, fix and manage any Linux machine from one beautiful glassmorphic desktop app — **CPU/RAM/disk metrics, health checks, one-click fixes, processes, systemd services, live logs, Docker containers, libvirt VMs and network inspection.**
 
 Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rocky/Alma, openSUSE, Arch/Manjaro, Alpine.
 
@@ -8,7 +8,7 @@ Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rock
 
 ## 🚀 Install (global one-liner)
 
-The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **installs the app** to `/opt/montoring`, registers it as a **system service** and adds a **`montoring` CLI**:
+The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **installs the app** to `/opt/montoring`, registers it as a **system service**, installs the **desktop app** (menu shortcut + autostart) and adds a **`montoring` CLI**:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mylab12345/Montoring/main/install.sh | sudo bash
@@ -22,7 +22,22 @@ sudo bash install.sh
 
 Options: `--port N` (default 8050), `--home DIR` (default /opt/montoring), `--no-vm` (skip libvirt tooling), `--no-start`.
 
-When done, open **http://localhost:8050**.
+When done, open **http://localhost:8050** — or launch it like a normal app (next section).
+
+## 🖥️ Standalone Desktop App
+
+Montoring installs as a **real desktop application**:
+
+- **Application-menu shortcut** — look for *Montoring* in your menu (icon included), or run `montoring-app`
+- **Native window** — opens chromeless via pywebview / Chrome `--app` / Firefox kiosk (whatever is available)
+- **Starts with your system** — autostart entry in `/etc/xdg/autostart` opens the window at login; the backend service is already running via systemd
+- **Splash + auto-connect** — the launcher shows a splash, starts the backend if needed, then opens the window
+- Inside the app: **Help tab → 🚀 Launch App Window** re-opens the native window any time
+
+```bash
+montoring-app          # launch the desktop window
+montoring-app --check  # show how the window would be opened
+```
 
 ## 🔄 Update after code changes (one file)
 
@@ -68,16 +83,19 @@ montoring open      # open the dashboard in your browser
 ## 📦 Layout
 
 ```
-app.py               # Flask backend (all APIs)
-templates/index.html # Single-page tabbed UI
-static/dashboard.css # Glass theme + wallpaper
-install.sh           # Universal OS-detecting installer (the global link)
-update.sh            # One-file update/reinstall after code changes
-uninstall.sh         # Clean uninstaller (--purge for everything)
-montoring            # CLI control tool        -> /usr/local/bin/montoring
-montoring.service    # systemd unit template
-openrc/montoring     # OpenRC script (Alpine etc.)
-VERSION              # App version (shown in the dashboard)
+app.py                 # Flask backend (all APIs)
+templates/index.html   # Single-page UI (sidebar navigation, glass theme)
+static/dashboard.css   # Glass theme + wallpaper
+static/icon.png        # App icon (desktop + favicon)
+install.sh             # Universal OS-detecting installer (the global link)
+update.sh              # One-file update/reinstall after code changes
+uninstall.sh           # Clean uninstaller (--purge for everything)
+montoring              # CLI control tool          -> /usr/local/bin/montoring
+montoring-app          # Desktop app launcher      -> /usr/local/bin/montoring-app
+montoring-app.desktop  # Menu shortcut/autostart   -> /usr/share/applications + /etc/xdg/autostart
+montoring.service      # systemd unit template
+openrc/montoring       # OpenRC script (Alpine etc.)
+VERSION                # App version (shown in the dashboard)
 ```
 
 ## 🔐 Notes

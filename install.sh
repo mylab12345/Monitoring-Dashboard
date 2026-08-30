@@ -205,6 +205,18 @@ mkdir -p /usr/local/bin
 sed -e "s|__HOME__|${MONTORING_HOME}|g" "$SRC/montoring" > /usr/local/bin/montoring
 chmod 755 /usr/local/bin/montoring
 
+# --- Desktop app (standalone window, menu shortcut, autostart) -----------------------
+log "Installing desktop app: montoring-app + menu shortcut + autostart"
+install -m 755 "$SRC/montoring-app" /usr/local/bin/montoring-app 2>/dev/null \
+  || { cp -f "$SRC/montoring-app" /usr/local/bin/montoring-app && chmod 755 /usr/local/bin/montoring-app; }
+if [ -f "$SRC/static/icon.png" ]; then
+  mkdir -p /usr/share/pixmaps /usr/share/applications /etc/xdg/autostart
+  cp -f "$SRC/static/icon.png" /usr/share/pixmaps/montoring.png
+  cp -f "$SRC/montoring-app.desktop" /usr/share/applications/montoring.desktop
+  cp -f "$SRC/montoring-app.desktop" /etc/xdg/autostart/montoring.desktop
+  log "Menu shortcut installed (starts with your session)"
+fi
+
 # --- Firewall (best effort) -----------------------------------------------------------
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   log "Opening port $PORT/tcp in ufw"
