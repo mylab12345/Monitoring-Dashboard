@@ -17,7 +17,7 @@ UMask=0027
 Environment=PYTHONDONTWRITEBYTECODE=1
 LogsDirectory=monitoring
 StateDirectory=monitoring
-SupplementaryGroups=__SUPP_GROUPS__
+# Supplementary groups are granted via usermod during install, not here.
 # The service account uses passwordless sudo only for the whitelisted
 # helper commands installed in /usr/local/lib/monitoring. It does not get
 # root/ALL and is never permitted unrestricted filesystem write access.
