@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Montoring — Desktop App Launcher
---------------------------------
-Launches Montoring as a standalone desktop application:
+Monitoring — Desktop App Launcher
+----------------------------------
+Launches Monitoring as a standalone desktop application:
 
   1. Ensures the backend service is running (starts it if needed)
   2. Shows a small splash screen while connecting (tkinter, optional)
@@ -13,8 +13,8 @@ Launches Montoring as a standalone desktop application:
        - xdg-open (regular browser tab, fallback)
 
 Usage:
-    montoring-app             # launch the app
-    montoring-app --check     # print what would be used, then exit
+    monitoring-app             # launch the app
+    monitoring-app --check     # print what would be used, then exit
 """
 import os
 import sys
@@ -24,9 +24,9 @@ import shutil
 import subprocess
 import urllib.request
 
-HOME_DIR = os.environ.get("MONTORING_HOME", "/opt/montoring")
-PORT = os.environ.get("MONTORING_PORT", "8050")
-ENVFILE = "/etc/montoring.env"
+HOME_DIR = os.environ.get("MONITORING_HOME", "/opt/monitoring")
+PORT = os.environ.get("MONITORING_PORT", "8050")
+ENVFILE = "/etc/monitoring.env"
 URL = f"http://127.0.0.1:{PORT}"
 CHECK = "--check" in sys.argv
 
@@ -39,8 +39,8 @@ try:
                 os.environ.setdefault(k, v.strip('"'))
 except Exception:
     pass
-PORT = os.environ.get("MONTORING_PORT", PORT)
-HOME_DIR = os.environ.get("MONTORING_HOME", HOME_DIR)
+PORT = os.environ.get("MONITORING_PORT", PORT)
+HOME_DIR = os.environ.get("MONITORING_HOME", HOME_DIR)
 URL = f"http://127.0.0.1:{PORT}"
 ICON = os.path.join(HOME_DIR, "static", "icon.png")
 
@@ -58,12 +58,12 @@ def backend_running():
 
 
 def start_backend():
-    """Try to start the montoring service without user interaction."""
+    """Try to start the monitoring service without user interaction."""
     cmds = [
-        ["montoring", "start"],
-        ["/usr/local/bin/montoring", "start"],
-        ["sudo", "-n", "montoring", "start"],
-        ["pkexec", "/usr/local/bin/montoring", "start"],
+        ["monitoring", "start"],
+        ["/usr/local/bin/monitoring", "start"],
+        ["sudo", "-n", "monitoring", "start"],
+        ["pkexec", "/usr/local/bin/monitoring", "start"],
     ]
     for c in cmds:
         if shutil.which(c[0]) or os.path.exists(c[0]):
@@ -88,8 +88,8 @@ def pick_window_opener():
         exe = shutil.which(b)
         if exe:
             return ("chrome", [exe, f"--app={URL}", f"--window-size=1440,920",
-                               "--class=Montoring", "--user-data-dir="
-                               + os.path.expanduser("~/.config/montoring-app")])
+                               "--class=Monitoring", "--user-data-dir="
+                               + os.path.expanduser("~/.config/monitoring-app")])
     ff = shutil.which("firefox")
     if ff:
         return ("firefox", [ff, "--kiosk", URL])
@@ -115,7 +115,7 @@ def splash_show():
         root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2 - 60}")
         root.configure(bg="#0b0d12", highlightthickness=1,
                        highlightbackground="rgba(126,231,135,0.4)" if False else "#2a3f33")
-        tk.Label(root, text="Montoring", font=("Outfit", 20, "bold"),
+        tk.Label(root, text="Monitoring", font=("Outfit", 20, "bold"),
                  bg="#0b0d12", fg="#7ee787").pack(pady=(28, 2))
         status = tk.Label(root, text="Starting dashboard…", font=("Outfit", 10),
                           bg="#0b0d12", fg="#a1a1aa")
@@ -161,7 +161,7 @@ def main():
             kw = {}
             if os.path.exists(ICON):
                 kw["icon"] = ICON
-            webview.create_window("Montoring", URL, width=1440, height=920, **kw)
+            webview.create_window("Monitoring", URL, width=1440, height=920, **kw)
             webview.start()
             return 0
         except Exception:

@@ -1,4 +1,4 @@
-# Montoring — Universal Linux System Console
+# Monitoring — Universal Linux System Console
 
 Monitor, fix and manage any Linux machine from one enterprise-grade console — **live metrics with history charts, threshold alerting, health checks, one-click fixes, processes, systemd services, live logs, libvirt VMs and network inspection.** 100% local-first: **no accounts, no cloud, no telemetry** — pro tooling for your own machine.
 
@@ -8,10 +8,10 @@ Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rock
 
 ## 🚀 Install (global one-liner)
 
-The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **installs the app** to `/opt/montoring`, registers it as a **system service**, installs the **desktop app** (menu shortcut + autostart) and adds a **`montoring` CLI**:
+The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **installs the app** to `/opt/monitoring`, registers it as a **system service**, installs the **desktop app** (menu shortcut + autostart) and adds a **`monitoring` CLI**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mylab12345/Montoring/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/install.sh | sudo bash
 ```
 
 Or from a local checkout:
@@ -20,23 +20,23 @@ Or from a local checkout:
 sudo bash install.sh
 ```
 
-Options: `--port N` (default 8050), `--home DIR` (default /opt/montoring), `--no-vm` (skip libvirt tooling), `--no-start`.
+Options: `--port N` (default 8050), `--home DIR` (default /opt/monitoring), `--no-vm` (skip libvirt tooling), `--no-start`.
 
 When done, open **http://localhost:8050** — or launch it like a normal app (next section).
 
 ## 🖥️ Standalone Desktop App
 
-Montoring installs as a **real desktop application**:
+Monitoring installs as a **real desktop application**:
 
-- **Application-menu shortcut** — look for *Montoring* in your menu (icon included), or run `montoring-app`
+- **Application-menu shortcut** — look for *Monitoring* in your menu (icon included), or run `monitoring-app`
 - **Native window** — opens chromeless via pywebview / Chrome `--app` / Firefox kiosk (whatever is available)
 - **Starts with your system** — autostart entry in `/etc/xdg/autostart` opens the window at login; the backend service is already running via systemd
 - **Splash + auto-connect** — the launcher shows a splash, starts the backend if needed, then opens the window
 - Inside the app: **Help tab → 🚀 Launch App Window** re-opens the native window any time
 
 ```bash
-montoring-app          # launch the desktop window
-montoring-app --check  # show how the window would be opened
+monitoring-app          # launch the desktop window
+monitoring-app --check  # show how the window would be opened
 ```
 
 ## 🔄 Update after code changes (one file)
@@ -75,14 +75,14 @@ It automatically: finds the installed app → backs up the current version (last
 
 **Console UX** — dark/light/system theme (persisted), collapsible sidebar, command palette (Ctrl K), keyboard shortcuts (press `?`), configurable refresh interval and thresholds in **Settings**, consistent loading / empty / error states with retry across every tab — all local, no login required
 
-## 🛠 CLI (`montoring`)
+## 🛠 CLI (`monitoring`)
 
 ```bash
-montoring status    # service status + URL
-montoring logs      # tail service logs
-montoring restart   # restart the dashboard
-montoring update    # run the updater from the installed copy
-montoring open      # open the dashboard in your browser
+monitoring status    # service status + URL
+monitoring logs      # tail service logs
+monitoring restart   # restart the dashboard
+monitoring update    # run the updater from the installed copy
+monitoring open      # open the dashboard in your browser
 ```
 
 ## 📦 Layout
@@ -95,11 +95,11 @@ static/icon.png        # App icon (desktop + favicon)
 install.sh             # Universal OS-detecting installer (the global link)
 update.sh              # One-file update/reinstall after code changes
 uninstall.sh           # Clean uninstaller (--purge for everything)
-montoring              # CLI control tool          -> /usr/local/bin/montoring
-montoring-app          # Desktop app launcher      -> /usr/local/bin/montoring-app
-montoring-app.desktop  # Menu shortcut/autostart   -> /usr/share/applications + /etc/xdg/autostart
-montoring.service      # systemd unit template
-openrc/montoring       # OpenRC script (Alpine etc.)
+monitoring              # CLI control tool          -> /usr/local/bin/monitoring
+monitoring-app          # Desktop app launcher      -> /usr/local/bin/monitoring-app
+monitoring-app.desktop  # Menu shortcut/autostart   -> /usr/share/applications + /etc/xdg/autostart
+monitoring.service      # systemd unit template
+openrc/monitoring       # OpenRC script (Alpine etc.)
 VERSION                # App version (shown in the dashboard)
 ```
 
@@ -108,11 +108,11 @@ VERSION                # App version (shown in the dashboard)
 - The service runs as **root** so fixes, service control and VM actions work — it binds `0.0.0.0:8050`, so only expose it to networks you trust. There is **no login by design**: this is a single-user, standalone console — keep it on localhost or a trusted LAN.
 - All UI preferences (theme, thresholds, activity, alert history) live in your browser's localStorage; metrics history lives in the service's memory only.
 - For VM management as a regular user: `sudo usermod -aG libvirt $USER`, then re-login.
-- Change the port any time: edit `/etc/montoring.env` then `montoring restart`, or reinstall with `install.sh --port N`.
+- Change the port any time: edit `/etc/monitoring.env` then `monitoring restart`, or reinstall with `install.sh --port N`.
 
 ## 🧹 Uninstall
 
 ```bash
-sudo /opt/montoring/uninstall.sh          # keep backups/logs
-sudo /opt/montoring/uninstall.sh --purge  # remove everything
+sudo /opt/monitoring/uninstall.sh          # keep backups/logs
+sudo /opt/monitoring/uninstall.sh --purge  # remove everything
 ```

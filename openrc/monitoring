@@ -1,0 +1,27 @@
+#!/sbin/openrc-run
+# Monitoring — OpenRC service script (Alpine & other OpenRC flavours)
+# Path placeholders are substituted by install.sh
+
+name="monitoring"
+description="Monitoring — Linux System Dashboard"
+HOME_DIR="__HOME__"
+command="${HOME_DIR}/venv/bin/python"
+command_args="${HOME_DIR}/app.py"
+command_background="yes"
+pidfile="/run/monitoring.pid"
+directory="${HOME_DIR}"
+output_log="${HOME_DIR}/monitoring.log"
+error_log="${HOME_DIR}/monitoring.log"
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    if [ ! -x "$command" ]; then
+        command="$(command -v python3)"
+    fi
+    export MONITORING_PORT="${MONITORING_PORT:-8050}"
+    [ -f /etc/monitoring.env ] && . /etc/monitoring.env && export MONITORING_PORT
+}

@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Montoring
+Name=Monitoring
 GenericName=System Monitor
 Comment=Monitor and manage your Linux system — CPU, processes, services, VMs
-Exec=montoring-app
-Icon=montoring
+Exec=monitoring-app
+Icon=monitoring
 Terminal=false
 Categories=System;Monitor;Utility;
 Keywords=system;monitor;dashboard;processes;services;vm;network;logs;

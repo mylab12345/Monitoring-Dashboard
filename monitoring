@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  monitoring — CLI control tool for the Monitoring dashboard
+#  Installed to /usr/local/bin/monitoring by install.sh
+#
+#  Usage: monitoring {start|stop|restart|status|logs|update|open|version}
+# ============================================================================
+HOME_DIR="/opt/monitoring"
+PIDFILE="/run/monitoring.pid"
+ENVFILE="/etc/monitoring.env"
+PORT="8050"
+
+[ -f "$ENVFILE" ] && . "$ENVFILE"
+PORT="${MONITORING_PORT:-$PORT}"
+HOME_DIR="${MONITORING_HOME:-$HOME_DIR}"
+URL="http://localhost:${PORT}"
+
+c_green='\033[1;32m'; c_red='\033[1;31m'; c_yel='\033[1;33m'; c_off='\033[0m'
+say()  { printf "${c_green}[monitoring]${c_off} %s\n" "$*"; }
+err()  { printf "${c_red}[monitoring]${c_off} %s\n" "$*" >&2; }
+warn() { printf "${c_yel}[monitoring]${c_off} %s\n" "$*"; }
+
+have_systemd() { command -v systemctl >/dev/null 2>&1 && [ -f /etc/systemd/system/monitoring.service ] && ps -p 1 -o comm= 2>/dev/null | grep -q systemd; }
+have_openrc()  { command -v rc-service >/dev/null 2>&1 && [ -x /etc/init.d/monitoring ]; }
+
+pybin() {
+  if [ -n "${PYBIN:-}" ] && [ -x "$PYBIN" ]; then echo "$PYBIN";
+  elif [ -x "$HOME_DIR/venv/bin/python" ]; then echo "$HOME_DIR/venv/bin/python";
+  else command -v python3; fi
+}
+
+pid_running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; }
+
+start_proc() {
+  if pid_running; then warn "already running (pid $(cat "$PIDFILE"))"; return 0; fi
+  say "starting monitoring on port ${PORT}…"
+  cd "$HOME_DIR" || return 1
+  nohup env MONITORING_PORT="$PORT" MONITORING_HOME="$HOME_DIR" "$(pybin)" "$HOME_DIR/app.py" \
+    >> "$HOME_DIR/monitoring.log" 2>&1 &
+  echo $! > "$PIDFILE"
+  sleep 2
+  if curl -fsS "$URL/api/version" >/dev/null 2>&1; then say "started ✓  → $URL"; else err "did not respond — check: monitoring logs"; return 1; fi
+}
+
+stop_proc() {
+  if pid_running; then
+    say "stopping (pid $(cat "$PIDFILE"))…"
+    kill "$(cat "$PIDFILE")" 2>/dev/null
+    sleep 1
+    kill -9 "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+    say "stopped ✓"
+  else
+    warn "not running (no pidfile)"
+  fi
+}
+
+show_systemd_status() { local out; out="$(systemctl status monitoring --no-pager -l 2>/dev/null)" && [ -n "$out" ] && echo "$out" | head -12; }
+
+case "${1:-status}" in
+  start)
+    if have_systemd && systemctl start monitoring 2>/dev/null; then show_systemd_status || say "started (systemd) → $URL"
+    elif have_openrc && rc-service monitoring start 2>/dev/null; then rc-service monitoring status 2>/dev/null || true
+    else start_proc; fi ;;
+  stop)
+    if have_systemd && systemctl stop monitoring 2>/dev/null; then say "stopped (systemd)"
+    elif have_openrc && rc-service monitoring stop 2>/dev/null; then say "stopped (openrc)"
+    else stop_proc; fi ;;
+  restart)
+    if have_systemd && systemctl restart monitoring 2>/dev/null; then show_systemd_status || say "restarted (systemd) → $URL"
+    elif have_openrc && rc-service monitoring restart 2>/dev/null; then rc-service monitoring status 2>/dev/null || true
+    else stop_proc; sleep 1; start_proc; fi ;;
+  status)
+    if have_systemd && show_systemd_status; then :
+    elif have_openrc && rc-service monitoring status 2>/dev/null; then :
+    else
+      if pid_running; then say "running (pid $(cat "$PIDFILE")) → $URL"
+      elif curl -fsS "$URL/api/version" >/dev/null 2>&1; then say "responding at $URL (external process)"
+      else err "not running"; fi
+    fi ;;
+  logs)
+    if have_systemd && journalctl -u monitoring -n 100 --no-pager 2>/dev/null; then :
+    else tail -n 100 "$HOME_DIR/monitoring.log" 2>/dev/null || err "no log file found"; fi ;;
+  update)
+    if [ -x "$HOME_DIR/update.sh" ]; then shift; exec bash "$HOME_DIR/update.sh" "$@"
+    else err "No $HOME_DIR/update.sh — run the repo's update.sh instead."; fi ;;
+  open)
+    if command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1 &
+    else say "Open $URL in your browser."; fi ;;
+  version)
+    curl -fsS "$URL/api/version" 2>/dev/null || sed -n '1p' "$HOME_DIR/VERSION" 2>/dev/null || err "not running" ;;
+  *)
+    echo "Usage: monitoring {start|stop|restart|status|logs|update|open|version}"
+    [ "$1" != "" ] && err "unknown command: $1"
+    exit 1 ;;
+esac

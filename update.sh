@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  Montoring — One-file Updater / Reinstaller
+#  Monitoring — One-file Updater / Reinstaller
 # ----------------------------------------------------------------------------
 #  After ANY code change, just run this file: it re-installs the app with the
 #  new changes (files + dependencies) and restarts the service.
@@ -8,11 +8,11 @@
 #  Usage:
 #      sudo ./update.sh                # install changes from THIS checkout
 #      sudo ./update.sh --remote      # pull latest from GitHub and install
-#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Montoring/main/update.sh | sudo bash
+#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/update.sh | sudo bash
 #                                     # same as --remote
 #
 #  What it does:
-#    1. Finds the installed app   (default /opt/montoring, or $MONTORING_HOME)
+#    1. Finds the installed app   (default /opt/monitoring, or $MONITORING_HOME)
 #    2. Backs up the current version
 #    3. Copies the new app files  (app.py, templates, static, VERSION, …)
 #    4. Re-syncs Python dependencies (fast no-op when already satisfied)
@@ -21,7 +21,7 @@
 # ============================================================================
 set -euo pipefail
 
-REPO="${REPO:-mylab12345/Montoring}"
+REPO="${REPO:-mylab12345/Monitoring}"
 BRANCH="${BRANCH:-main}"
 MODE="local"
 FORCE=0
@@ -61,7 +61,7 @@ if [ -f "$0" ] && [ -s "$0" ]; then
   fi
 fi
 if [ "$MODE" = "remote" ] || [ -z "$SRC" ]; then
-  TMP="$(mktemp -d /tmp/montoring-update.XXXXXX)"
+  TMP="$(mktemp -d /tmp/monitoring-update.XXXXXX)"
   log "Downloading latest ${REPO}@${BRANCH}…"
   curl -fsSL "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz" | tar -xz -C "$TMP" \
     || die "Download failed. Check internet connectivity or run update.sh from a local checkout."
@@ -71,13 +71,13 @@ fi
 NEW_VERSION="$(cat "$SRC/VERSION" 2>/dev/null || echo '?')"
 
 # --- Locate installed app --------------------------------------------------------
-TARGET="${MONTORING_HOME:-}"
-if [ -z "$TARGET" ] && [ -f /etc/montoring.env ]; then
-  . /etc/montoring.env 2>/dev/null || true
-  TARGET="${MONTORING_HOME:-}"
+TARGET="${MONITORING_HOME:-}"
+if [ -z "$TARGET" ] && [ -f /etc/monitoring.env ]; then
+  . /etc/monitoring.env 2>/dev/null || true
+  TARGET="${MONITORING_HOME:-}"
 fi
-if [ -z "$TARGET" ] && [ -d /opt/montoring ] && [ -f /opt/montoring/app.py ]; then
-  TARGET="/opt/montoring"
+if [ -z "$TARGET" ] && [ -d /opt/monitoring ] && [ -f /opt/monitoring/app.py ]; then
+  TARGET="/opt/monitoring"
 fi
 if [ -z "$TARGET" ]; then
   warn "No existing installation found."
@@ -87,11 +87,11 @@ if [ -z "$TARGET" ]; then
 fi
 log "Installation found: $TARGET"
 
-# If sources ARE the installed copy (e.g. `montoring update`), there is nothing
+# If sources ARE the installed copy (e.g. `monitoring update`), there is nothing
 # local to sync — pull the latest from GitHub instead.
 if [ "$SRC" = "$TARGET" ]; then
   log "Running from the installed copy — pulling latest from GitHub…"
-  TMP="$(mktemp -d /tmp/montoring-update.XXXXXX)"
+  TMP="$(mktemp -d /tmp/monitoring-update.XXXXXX)"
   curl -fsSL "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz" | tar -xz -C "$TMP" \
     || die "Download failed. Check internet connectivity or run update.sh from a local checkout."
   SRC="$(find "$TMP" -maxdepth 2 -name app.py -printf '%h\n' | head -1)"
@@ -121,9 +121,9 @@ log "Backup saved: $BACKUP (keeping last 5)"
 
 # --- Stop service (if running via pidfile; systemd handles restart later) ------------
 SYSTEMD_ACTIVE=0; OPENRC_ACTIVE=0
-if command -v systemctl >/dev/null 2>&1 && ps -p 1 -o comm= 2>/dev/null | grep -q systemd && systemctl is-active montoring >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1 && ps -p 1 -o comm= 2>/dev/null | grep -q systemd && systemctl is-active monitoring >/dev/null 2>&1; then
   SYSTEMD_ACTIVE=1
-elif command -v rc-service >/dev/null 2>&1 && rc-service montoring status >/dev/null 2>&1; then
+elif command -v rc-service >/dev/null 2>&1 && rc-service monitoring status >/dev/null 2>&1; then
   OPENRC_ACTIVE=1
 fi
 
@@ -139,27 +139,27 @@ cp -f "$SRC/templates/"* "$TARGET/templates/" 2>/dev/null || true
 cp -f "$SRC/static/"* "$TARGET/static/" 2>/dev/null || true
 
 # Keep CLI + service definitions in sync (only if sources provide them)
-if [ -f /usr/local/bin/montoring ] && [ -f "$SRC/montoring" ]; then
-  sed -e "s|__HOME__|${TARGET}|g" "$SRC/montoring" > /usr/local/bin/montoring && chmod 755 /usr/local/bin/montoring
+if [ -f /usr/local/bin/monitoring ] && [ -f "$SRC/monitoring" ]; then
+  sed -e "s|__HOME__|${TARGET}|g" "$SRC/monitoring" > /usr/local/bin/monitoring && chmod 755 /usr/local/bin/monitoring
 fi
 # Desktop app pieces
-if [ -f "$SRC/montoring-app" ]; then
-  install -m 755 "$SRC/montoring-app" /usr/local/bin/montoring-app 2>/dev/null || true
-  if [ -f "$SRC/montoring-app.desktop" ]; then
+if [ -f "$SRC/monitoring-app" ]; then
+  install -m 755 "$SRC/monitoring-app" /usr/local/bin/monitoring-app 2>/dev/null || true
+  if [ -f "$SRC/monitoring-app.desktop" ]; then
     mkdir -p /usr/share/pixmaps /usr/share/applications /etc/xdg/autostart 2>/dev/null || true
-    cp -f "$SRC/static/icon.png" /usr/share/pixmaps/montoring.png 2>/dev/null || true
-    cp -f "$SRC/montoring-app.desktop" /usr/share/applications/montoring.desktop 2>/dev/null || true
-    cp -f "$SRC/montoring-app.desktop" /etc/xdg/autostart/montoring.desktop 2>/dev/null || true
+    cp -f "$SRC/static/icon.png" /usr/share/pixmaps/monitoring.png 2>/dev/null || true
+    cp -f "$SRC/monitoring-app.desktop" /usr/share/applications/monitoring.desktop 2>/dev/null || true
+    cp -f "$SRC/monitoring-app.desktop" /etc/xdg/autostart/monitoring.desktop 2>/dev/null || true
   fi
 fi
 PYBIN_CURRENT=""
-[ -f /etc/montoring.env ] && . /etc/montoring.env 2>/dev/null && PYBIN_CURRENT="${PYBIN:-}"
-if [ "$SYSTEMD_ACTIVE" -eq 1 ] || [ -f /etc/systemd/system/montoring.service ]; then
-  if [ -f "$SRC/montoring.service" ] && [ -f "$SRC/install.sh" ]; then
+[ -f /etc/monitoring.env ] && . /etc/monitoring.env 2>/dev/null && PYBIN_CURRENT="${PYBIN:-}"
+if [ "$SYSTEMD_ACTIVE" -eq 1 ] || [ -f /etc/systemd/system/monitoring.service ]; then
+  if [ -f "$SRC/monitoring.service" ] && [ -f "$SRC/install.sh" ]; then
     PY="${PYBIN_CURRENT:-$TARGET/venv/bin/python}"
     [ -x "$PY" ] || PY="$(command -v python3)"
-    sed -e "s|__HOME__|${TARGET}|g" -e "s|__PYBIN__|${PY}|g" -e "s|__ENVFILE__|/etc/montoring.env|g" \
-      "$SRC/montoring.service" > /etc/systemd/system/montoring.service
+    sed -e "s|__HOME__|${TARGET}|g" -e "s|__PYBIN__|${PY}|g" -e "s|__ENVFILE__|/etc/monitoring.env|g" \
+      "$SRC/monitoring.service" > /etc/systemd/system/monitoring.service
     systemctl daemon-reload
   fi
 fi
@@ -177,23 +177,23 @@ fi
 
 # --- Restart ------------------------------------------------------------------------------
 log "Restarting service…"
-if [ "$SYSTEMD_ACTIVE" -eq 1 ] || { command -v systemctl >/dev/null 2>&1 && ps -p 1 -o comm= 2>/dev/null | grep -q systemd && [ -f /etc/systemd/system/montoring.service ]; }; then
-  systemctl restart montoring
+if [ "$SYSTEMD_ACTIVE" -eq 1 ] || { command -v systemctl >/dev/null 2>&1 && ps -p 1 -o comm= 2>/dev/null | grep -q systemd && [ -f /etc/systemd/system/monitoring.service ]; }; then
+  systemctl restart monitoring
 elif [ "$OPENRC_ACTIVE" -eq 1 ]; then
-  rc-service montoring restart
-elif [ -x /usr/local/bin/montoring ]; then
-  /usr/local/bin/montoring restart
+  rc-service monitoring restart
+elif [ -x /usr/local/bin/monitoring ]; then
+  /usr/local/bin/monitoring restart
 else
   warn "Restart manually: python3 $TARGET/app.py"
 fi
 
 # --- Health check ---------------------------------------------------------------------------
-PORT="${MONTORING_PORT:-8050}"
+PORT="${MONITORING_PORT:-8050}"
 sleep 2
 if curl -fsS "http://127.0.0.1:${PORT}/api/version" >/dev/null 2>&1; then
   log "Health check passed ✓   Dashboard: http://localhost:${PORT}"
 else
-  warn "Health check did not respond yet. Try: montoring status / montoring logs"
+  warn "Health check did not respond yet. Try: monitoring status / monitoring logs"
   warn "To roll back: cp -a ${BACKUP}/* ${TARGET}/ and restart."
 fi
 log "Update complete: v${OLD_VERSION} → v${NEW_VERSION} 🎉"

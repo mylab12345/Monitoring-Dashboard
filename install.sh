@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  Montoring — Universal Linux Installer
+#  Monitoring — Universal Linux Installer
 # ----------------------------------------------------------------------------
 #  Works on ANY Linux flavour: Debian/Ubuntu/Mint, Fedora/RHEL/Rocky/Alma,
 #  openSUSE, Arch/Manjaro, Alpine, ...
@@ -13,7 +13,7 @@
 #
 #  Options:
 #      --port N        port to listen on            (default 8050)
-#      --home DIR      install location             (default /opt/montoring)
+#      --home DIR      install location             (default /opt/monitoring)
 #      --no-vm         skip libvirt/qemu tooling
 #      --no-start      install but do not start the service
 #      --repo R        GitHub repo for remote mode  (default mylab12345/Montoring)
@@ -24,12 +24,12 @@ set -euo pipefail
 # --- Defaults (overridable via flags / env) ---------------------------------
 REPO="${REPO:-mylab12345/Montoring}"
 BRANCH="${BRANCH:-main}"
-MONTORING_HOME="${MONTORING_HOME:-/opt/montoring}"
-PORT="${MONTORING_PORT:-8050}"
+MONITORING_HOME="${MONITORING_HOME:-/opt/monitoring}"
+PORT="${MONITORING_PORT:-8050}"
 WITH_VM=1
 START_SERVICE=1
 SELF_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/install.sh"
-APP_NAME="montoring"
+APP_NAME="monitoring"
 
 log()  { printf '\033[1;32m[install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
@@ -39,7 +39,7 @@ die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --port)     PORT="$2"; shift 2 ;;
-    --home)     MONTORING_HOME="$2"; shift 2 ;;
+    --home)     MONITORING_HOME="$2"; shift 2 ;;
     --no-vm)    WITH_VM=0; shift ;;
     --no-start) START_SERVICE=0; shift ;;
     --repo)     REPO="$2"; shift 2 ;;
@@ -57,7 +57,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exec sudo -E bash "$0" "$@"
   else
     log "Running from a pipe — re-fetching installer under sudo…"
-    exec sudo bash -c "curl -fsSL '${SELF_URL}' | bash $([ "${PORT:-}" != 8050 ] && echo "--port ${PORT}") $([ "${MONTORING_HOME:-}" != /opt/montoring ] && echo "--home ${MONTORING_HOME}")"
+    exec sudo bash -c "curl -fsSL '${SELF_URL}' | bash $([ "${PORT:-}" != 8050 ] && echo "--port ${PORT}") $([ "${MONITORING_HOME:-}" != /opt/monitoring ] && echo "--home ${MONITORING_HOME}")"
   fi
 fi
 
@@ -72,7 +72,7 @@ if [ -f "$0" ] && [ -s "$0" ]; then
   fi
 fi
 if [ -z "$SRC" ]; then
-  TMP="$(mktemp -d /tmp/montoring-install.XXXXXX)"
+  TMP="$(mktemp -d /tmp/monitoring-install.XXXXXX)"
   log "Source: downloading ${REPO}@${BRANCH} from GitHub…"
   curl -fsSL "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz" | tar -xz -C "$TMP" \
     || die "Could not download sources. Check your internet or clone the repo and run install.sh locally."
@@ -135,85 +135,85 @@ if [ "$WITH_VM" -eq 1 ]; then
 fi
 
 # --- Install application files ------------------------------------------------
-if [ ! -f "$SRC/VERSION" ] && [ -f "$MONTORING_HOME/VERSION" ]; then
-  warn "Downloaded sources have no VERSION file — they look OLDER than the installed $(cat "$MONTORING_HOME/VERSION"). Continuing anyway (use a newer branch for a real upgrade)."
+if [ ! -f "$SRC/VERSION" ] && [ -f "$MONITORING_HOME/VERSION" ]; then
+  warn "Downloaded sources have no VERSION file — they look OLDER than the installed $(cat "$MONITORING_HOME/VERSION"). Continuing anyway (use a newer branch for a real upgrade)."
 fi
-log "Installing application to $MONTORING_HOME…"
-mkdir -p "$MONTORING_HOME"
-cp -f "$SRC/app.py" "$MONTORING_HOME/app.py"
-cp -f "$SRC/requirements.txt" "$MONTORING_HOME/requirements.txt" 2>/dev/null || true
-cp -f "$SRC/VERSION" "$MONTORING_HOME/VERSION" 2>/dev/null || true
-cp -f "$SRC/update.sh" "$MONTORING_HOME/update.sh" 2>/dev/null || true
-cp -f "$SRC/uninstall.sh" "$MONTORING_HOME/uninstall.sh" 2>/dev/null || true
-mkdir -p "$MONTORING_HOME/templates" "$MONTORING_HOME/static"
-cp -f "$SRC/templates/"* "$MONTORING_HOME/templates/" 2>/dev/null || true
-cp -f "$SRC/static/"* "$MONTORING_HOME/static/" 2>/dev/null || true
+log "Installing application to $MONITORING_HOME…"
+mkdir -p "$MONITORING_HOME"
+cp -f "$SRC/app.py" "$MONITORING_HOME/app.py"
+cp -f "$SRC/requirements.txt" "$MONITORING_HOME/requirements.txt" 2>/dev/null || true
+cp -f "$SRC/VERSION" "$MONITORING_HOME/VERSION" 2>/dev/null || true
+cp -f "$SRC/update.sh" "$MONITORING_HOME/update.sh" 2>/dev/null || true
+cp -f "$SRC/uninstall.sh" "$MONITORING_HOME/uninstall.sh" 2>/dev/null || true
+mkdir -p "$MONITORING_HOME/templates" "$MONITORING_HOME/static"
+cp -f "$SRC/templates/"* "$MONITORING_HOME/templates/" 2>/dev/null || true
+cp -f "$SRC/static/"* "$MONITORING_HOME/static/" 2>/dev/null || true
 
 # --- Python environment (venv preferred, system pip fallback) ------------------
 PYBIN=""
-if python3 -m venv "$MONTORING_HOME/venv" >/dev/null 2>&1 && [ -x "$MONTORING_HOME/venv/bin/python" ]; then
-  PYBIN="$MONTORING_HOME/venv/bin/python"
-  log "Created virtualenv: $MONTORING_HOME/venv"
+if python3 -m venv "$MONITORING_HOME/venv" >/dev/null 2>&1 && [ -x "$MONITORING_HOME/venv/bin/python" ]; then
+  PYBIN="$MONITORING_HOME/venv/bin/python"
+  log "Created virtualenv: $MONITORING_HOME/venv"
   log "Installing Python packages (flask, psutil)…"
-  "$MONTORING_HOME/venv/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1 || true
-  "$MONTORING_HOME/venv/bin/pip" install --quiet -r "$MONTORING_HOME/requirements.txt" \
+  "$MONITORING_HOME/venv/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1 || true
+  "$MONITORING_HOME/venv/bin/pip" install --quiet -r "$MONITORING_HOME/requirements.txt" \
     || die "pip install failed inside venv"
 else
   warn "venv unavailable — falling back to system pip"
-  if python3 -m pip install --quiet -r "$MONTORING_HOME/requirements.txt" --break-system-packages >/dev/null 2>&1; then
+  if python3 -m pip install --quiet -r "$MONITORING_HOME/requirements.txt" --break-system-packages >/dev/null 2>&1; then
     :
   else
-    python3 -m pip install --quiet -r "$MONTORING_HOME/requirements.txt" >/dev/null 2>&1 \
+    python3 -m pip install --quiet -r "$MONITORING_HOME/requirements.txt" >/dev/null 2>&1 \
       || die "Could not install flask/psutil with system pip"
   fi
   PYBIN="$(command -v python3)"
 fi
 
 # --- Environment file -----------------------------------------------------------
-cat > /etc/montoring.env <<EOF
-# Montoring configuration (generated by install.sh)
-MONTORING_HOME="$MONTORING_HOME"
-MONTORING_PORT="$PORT"
+cat > /etc/monitoring.env <<EOF
+# Monitoring configuration (generated by install.sh)
+MONITORING_HOME="$MONITORING_HOME"
+MONITORING_PORT="$PORT"
 PYBIN="$PYBIN"
 EOF
-chmod 644 /etc/montoring.env
+chmod 644 /etc/monitoring.env
 
 # --- Service definition -----------------------------------------------------------
-SYSTEMD_UNIT="/etc/systemd/system/montoring.service"
-OPENRC_SCRIPT="/etc/init.d/montoring"
+SYSTEMD_UNIT="/etc/systemd/system/monitoring.service"
+OPENRC_SCRIPT="/etc/init.d/monitoring"
 USE_SYSTEMD=0; USE_OPENRC=0
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] && ps -p 1 -o comm= 2>/dev/null | grep -q systemd; then USE_SYSTEMD=1;
 elif command -v rc-service >/dev/null 2>&1; then USE_OPENRC=1; fi
 
 if [ "$USE_SYSTEMD" -eq 1 ]; then
   log "Installing systemd service…"
-  sed -e "s|__HOME__|${MONTORING_HOME}|g" -e "s|__PYBIN__|${PYBIN}|g" \
-      -e "s|__ENVFILE__|/etc/montoring.env|g" "$SRC/montoring.service" > "$SYSTEMD_UNIT"
+  sed -e "s|__HOME__|${MONITORING_HOME}|g" -e "s|__PYBIN__|${PYBIN}|g" \
+      -e "s|__ENVFILE__|/etc/monitoring.env|g" "$SRC/monitoring.service" > "$SYSTEMD_UNIT"
   systemctl daemon-reload
-  systemctl enable montoring >/dev/null 2>&1 || true
+  systemctl enable monitoring >/dev/null 2>&1 || true
 elif [ "$USE_OPENRC" -eq 1 ]; then
   log "Installing OpenRC service…"
-  sed -e "s|__HOME__|${MONTORING_HOME}|g" "$SRC/openrc/montoring" > "$OPENRC_SCRIPT"
+  sed -e "s|__HOME__|${MONITORING_HOME}|g" "$SRC/openrc/monitoring" > "$OPENRC_SCRIPT"
   chmod 755 "$OPENRC_SCRIPT"
 else
   warn "No systemd/OpenRC detected — the CLI wrapper will manage the process directly."
 fi
 
 # --- CLI wrapper --------------------------------------------------------------------
-log "Installing CLI: /usr/local/bin/montoring"
+log "Installing CLI: /usr/local/bin/monitoring"
 mkdir -p /usr/local/bin
-sed -e "s|__HOME__|${MONTORING_HOME}|g" "$SRC/montoring" > /usr/local/bin/montoring
-chmod 755 /usr/local/bin/montoring
+sed -e "s|__HOME__|${MONITORING_HOME}|g" "$SRC/monitoring" > /usr/local/bin/monitoring
+chmod 755 /usr/local/bin/monitoring
 
 # --- Desktop app (standalone window, menu shortcut, autostart) -----------------------
-log "Installing desktop app: montoring-app + menu shortcut + autostart"
-install -m 755 "$SRC/montoring-app" /usr/local/bin/montoring-app 2>/dev/null \
-  || { cp -f "$SRC/montoring-app" /usr/local/bin/montoring-app && chmod 755 /usr/local/bin/montoring-app; }
+log "Installing desktop app: monitoring-app + menu shortcut + autostart"
+install -m 755 "$SRC/monitoring-app" /usr/local/bin/monitoring-app 2>/dev/null \
+  || { cp -f "$SRC/monitoring-app" /usr/local/bin/monitoring-app && chmod 755 /usr/local/bin/monitoring-app; }
 if [ -f "$SRC/static/icon.png" ]; then
   mkdir -p /usr/share/pixmaps /usr/share/applications /etc/xdg/autostart
-  cp -f "$SRC/static/icon.png" /usr/share/pixmaps/montoring.png
-  cp -f "$SRC/montoring-app.desktop" /usr/share/applications/montoring.desktop
-  cp -f "$SRC/montoring-app.desktop" /etc/xdg/autostart/montoring.desktop
+  cp -f "$SRC/static/icon.png" /usr/share/pixmaps/monitoring.png
+  cp -f "$SRC/monitoring-app.desktop" /usr/share/applications/monitoring.desktop
+  cp -f "$SRC/monitoring-app.desktop" /etc/xdg/autostart/monitoring.desktop
   log "Menu shortcut installed (starts with your session)"
 fi
 
@@ -228,34 +228,34 @@ fi
 
 # --- Start & health check ---------------------------------------------------------------
 if [ "$START_SERVICE" -eq 1 ]; then
-  log "Starting montoring service…"
+  log "Starting monitoring service…"
   if [ "$USE_SYSTEMD" -eq 1 ]; then
-    systemctl restart montoring
+    systemctl restart monitoring
   elif [ "$USE_OPENRC" -eq 1 ]; then
-    rc-service montoring restart || rc-service montoring start
+    rc-service monitoring restart || rc-service monitoring start
   else
-    /usr/local/bin/montoring start
+    /usr/local/bin/monitoring start
   fi
   sleep 2
   if curl -fsS "http://127.0.0.1:${PORT}/api/version" >/dev/null 2>&1; then
     log "Health check passed ✓"
   else
     warn "Health check did not respond yet (may still be starting)."
-    warn "Check:  montoring status   |   montoring logs"
+    warn "Check:  monitoring status   |   monitoring logs"
   fi
 fi
 
-VER="$(cat "$MONTORING_HOME/VERSION" 2>/dev/null || echo '?')"
+VER="$(cat "$MONITORING_HOME/VERSION" 2>/dev/null || echo '?')"
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 log "════════════════════════════════════════════════════════════"
-log " Montoring v${VER} installed successfully!"
+log " Monitoring v${VER} installed successfully!"
 log "════════════════════════════════════════════════════════════"
 log " Dashboard : http://localhost:${PORT}   (binds 0.0.0.0)"
 [ -n "$IP" ] && log "             http://${IP}:${PORT}   (from other machines)"
-log " CLI       : montoring {start|stop|restart|status|logs|update|version}"
-log " Home      : ${MONTORING_HOME}"
+log " CLI       : monitoring {start|stop|restart|status|logs|update|version}"
+log " Home      : ${MONITORING_HOME}"
 log " Update    : curl -fsSL https://raw.githubusercontent.com/${REPO}/${BRANCH}/update.sh | sudo bash"
 log "             (or: sudo ./update.sh from a checkout with your changes)"
-log " Uninstall : ${MONTORING_HOME}/uninstall.sh"
+log " Uninstall : ${MONITORING_HOME}/uninstall.sh"
 echo

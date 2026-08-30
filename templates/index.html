@@ -4,14 +4,14 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#08090d" />
-<meta name="description" content="Montoring — enterprise-grade, local-first Linux system console: live metrics, health, processes, services, VMs, network and logs. No accounts, no cloud." />
+<meta name="description" content="Monitoring — enterprise-grade, local-first Linux system console: live metrics, health, processes, services, VMs, network and logs. No accounts, no cloud." />
 <meta name="color-scheme" content="dark light" />
-<title>Montoring — System Console</title>
+<title>Monitoring — System Console</title>
 <script>
 /* Apply saved theme before first paint (avoids flash) */
 (function(){
   try{
-    var t=localStorage.getItem('montoring:theme')||'system';
+    var t=localStorage.getItem('monitoring:theme')||'system';
     if(t==='system')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';
     document.documentElement.dataset.theme=t;
   }catch(e){document.documentElement.dataset.theme='dark';}
@@ -49,9 +49,9 @@
     </button>
 
     <div class="brand">
-      <img src="{{ url_for('static', filename='icon.png') }}" alt="Montoring logo" class="brand-icon">
+      <img src="{{ url_for('static', filename='icon.png') }}" alt="Monitoring logo" class="brand-icon">
       <div class="brand-text">
-        <h1>Montoring</h1>
+        <h1>Monitoring</h1>
         <span class="sub" id="brandVer">v--</span>
       </div>
       <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar" aria-label="Collapse sidebar">
@@ -336,7 +336,7 @@
             <p class="dim" style="font-size:.76rem">Safe, package-manager aware operations. Output is captured below.</p>
             <div class="fix-grid" id="fixGrid"></div>
             <div class="terminal" id="fixTerminal" hidden>
-              <div class="tbar"><i></i><i></i><i></i><span>montoring fix</span></div>
+              <div class="tbar"><i></i><i></i><i></i><span>monitoring fix</span></div>
               <pre id="fixResult"></pre>
             </div>
           </article>
@@ -558,7 +558,7 @@
             </div>
           </div>
           <div class="log-window">
-            <div class="log-tbar"><i></i><i></i><i></i><span class="t-title">journalctl — montoring</span><span class="t-tag" id="logCountTag" hidden></span></div>
+            <div class="log-tbar"><i></i><i></i><i></i><span class="t-title">journalctl — monitoring</span><span class="t-tag" id="logCountTag" hidden></span></div>
             <pre class="log-view" id="logView"><span class="ll">Loading logs…</span></pre>
           </div>
         </article>
@@ -813,7 +813,7 @@
             <div class="kv"><span>Telemetry</span><strong>zero — nothing leaves this host</strong></div>
             <div class="kv"><span>Storage</span><strong>preferences stay in this browser</strong></div>
             <div class="kv"><span>Backend</span><strong>local Flask service</strong></div>
-            <p class="dim" style="font-size:.72rem;margin-top:10px">Montoring is a single-user, standalone console with enterprise-grade tooling. Secure it by keeping it on localhost or a trusted LAN only.</p>
+            <p class="dim" style="font-size:.72rem;margin-top:10px">Monitoring is a single-user, standalone console with enterprise-grade tooling. Secure it by keeping it on localhost or a trusted LAN only.</p>
           </article>
         </div>
       </section>
@@ -831,7 +831,7 @@
             <div style="display:flex;gap:13px;align-items:center;margin-bottom:14px">
               <img src="{{ url_for('static', filename='icon.png') }}" alt="" class="about-icon">
               <div>
-                <strong style="font-size:1rem">Montoring</strong> <span class="mono dim" id="helpVersion">v--</span><br>
+                <strong style="font-size:1rem">Monitoring</strong> <span class="mono dim" id="helpVersion">v--</span><br>
                 <span class="dim" style="font-size:.76rem">Universal Linux System Console</span>
               </div>
             </div>
@@ -865,18 +865,18 @@
                 Desktop &amp; CLI
               </div>
             </div>
-            <p class="dim" style="font-size:.76rem">Montoring runs as a standalone desktop app — launch it from your application menu or with <span class="mono">montoring-app</span>.</p>
+            <p class="dim" style="font-size:.76rem">Monitoring runs as a standalone desktop app — launch it from your application menu or with <span class="mono">monitoring-app</span>.</p>
             <div class="btn-group" style="margin:12px 0 14px">
               <button class="btn btn-primary" onclick="openDesktopApp()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Launch App Window</button>
               <button class="btn" onclick="openInBrowser()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15.3 15.3 0 0 1 0 18 15.3 15.3 0 0 1 0-18z"/></svg>Open in Browser</button>
             </div>
             <div class="terminal">
-              <div class="tbar"><i></i><i></i><i></i><span>bash — montoring</span></div>
-              <pre>montoring status     # service status
-montoring logs       # tail app logs
-montoring restart    # restart dashboard
-montoring update     # self-update
-montoring open       # open in browser
+              <div class="tbar"><i></i><i></i><i></i><span>bash — monitoring</span></div>
+              <pre>monitoring status     # service status
+monitoring logs       # tail app logs
+monitoring restart    # restart dashboard
+monitoring update     # self-update
+monitoring open       # open in browser
 
 sudo ./update.sh     # reinstall code changes
 sudo ./update.sh --remote</pre>
@@ -888,7 +888,7 @@ sudo ./update.sh --remote</pre>
     </div>
 
     <footer class="footer">
-      Montoring <span id="footerVersion">v--</span><span class="sep">•</span>local-first · no accounts · no telemetry<span class="sep">•</span>enterprise tools for one machine
+      Monitoring <span id="footerVersion">v--</span><span class="sep">•</span>local-first · no accounts · no telemetry<span class="sep">•</span>enterprise tools for one machine
     </footer>
   </main>
 </div>
@@ -974,7 +974,7 @@ async function fetchJSON(url,opts){
     return data;
   }catch(e){
     lastApiError=e&&e.name==='AbortError'?'API request timed out':(e&&e.message)||'API request failed';
-    console.warn('Montoring API:',url,lastApiError);
+    console.warn('Monitoring API:',url,lastApiError);
     return null;
   }finally{clearTimeout(timeout);busy--;spinRefresh();}
 }
@@ -1018,11 +1018,11 @@ const DEFAULT_SETTINGS={
 let S=loadSettings();
 function loadSettings(){
   try{
-    const raw=JSON.parse(localStorage.getItem('montoring:settings')||'{}');
+    const raw=JSON.parse(localStorage.getItem('monitoring:settings')||'{}');
     return Object.assign({},DEFAULT_SETTINGS,raw,{th:Object.assign({},DEFAULT_SETTINGS.th,(raw||{}).th||{})});
   }catch(e){return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));}
 }
-function saveSettings(){try{localStorage.setItem('montoring:settings',JSON.stringify(S));}catch(e){}}
+function saveSettings(){try{localStorage.setItem('monitoring:settings',JSON.stringify(S));}catch(e){}}
 function setSetting(k,v){S[k]=v;saveSettings();if(k==='alerts')refreshAlertBadge();}
 
 // ================================================================
@@ -1152,12 +1152,12 @@ $$('.nav-btn').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab))
 // Sidebar rail (collapse) + mobile drawer
 // ================================================================
 const shell=$('#appShell');
-if(localStorage.getItem('montoring:rail')==='1')shell.classList.add('rail');
+if(localStorage.getItem('monitoring:rail')==='1')shell.classList.add('rail');
 $('#sidebarToggle').addEventListener('click',()=>{
-  shell.classList.add('rail');localStorage.setItem('montoring:rail','1');
+  shell.classList.add('rail');localStorage.setItem('monitoring:rail','1');
 });
 $('#railExpand').addEventListener('click',()=>{
-  shell.classList.remove('rail');localStorage.setItem('montoring:rail','0');
+  shell.classList.remove('rail');localStorage.setItem('monitoring:rail','0');
 });
 const menuToggle=$('#menuToggle'),sidebar=$('.sidebar');
 menuToggle.addEventListener('click',e=>{
@@ -1418,7 +1418,7 @@ async function updateStatus(){
       }else{
         conn.classList.add('off');
         $('#hostChip').textContent='API offline';
-        $('#hostChip').title=lastApiError||'Could not reach the Montoring API.';
+        $('#hostChip').title=lastApiError||'Could not reach the Monitoring API.';
       }
     }
     return;
@@ -1510,9 +1510,9 @@ async function loadSystemInfo(){
 // Alerting engine (local thresholds)
 // ================================================================
 let alertRecords=[];
-try{alertRecords=JSON.parse(localStorage.getItem('montoring:alerts')||'[]');}catch(e){alertRecords=[];}
+try{alertRecords=JSON.parse(localStorage.getItem('monitoring:alerts')||'[]');}catch(e){alertRecords=[];}
 const activeAlerts={}; // key -> level
-function persistAlerts(){try{localStorage.setItem('montoring:alerts',JSON.stringify(alertRecords.slice(0,200)));}catch(e){}}
+function persistAlerts(){try{localStorage.setItem('monitoring:alerts',JSON.stringify(alertRecords.slice(0,200)));}catch(e){}}
 function recordAlert(level,metric,msg,value){
   alertRecords.unshift({id:Date.now()+'-'+Math.random().toString(36).slice(2,7),t:Date.now(),level,metric,msg,value});
   alertRecords=alertRecords.slice(0,200);
@@ -1580,7 +1580,7 @@ function clearAlerts(){
 let diagData=null, diagFilter='all', diagCatFilter='all', diagExpanded={}, diagOpenAll=false, diagGroupOpen={};
 let diagFixOutcomes={}, diagVerifyState={};
 let diagHistory=[];
-try{diagHistory=JSON.parse(localStorage.getItem('montoring:diag-history')||'[]');}catch(e){diagHistory=[];}
+try{diagHistory=JSON.parse(localStorage.getItem('monitoring:diag-history')||'[]');}catch(e){diagHistory=[];}
 const DIAG_CATS=['cpu','memory','disk','services','network','packages','kernel'];
 const DIAG_CAT_ICON={cpu:'cpu',memory:'mem',disk:'disk',services:'gear',network:'network',packages:'package',kernel:'zap'};
 const DIAG_CAT_LABEL={cpu:'CPU & Processes',memory:'Memory & Swap',disk:'Disk & Storage',services:'Services & Daemons',network:'Network',packages:'Packages & Updates',kernel:'Kernel & Hardware'};
@@ -2053,7 +2053,7 @@ function refreshTroubleBadge(){
 }
 
 // ---- Troubleshooting history / timeline (localStorage) ----
-function saveDiagHistory(){try{localStorage.setItem('montoring:diag-history',JSON.stringify(diagHistory));}catch(e){}}
+function saveDiagHistory(){try{localStorage.setItem('monitoring:diag-history',JSON.stringify(diagHistory));}catch(e){}}
 function addDiagHistory(e){
   e.ts=e.ts||Date.now();
   diagHistory.unshift(e);
@@ -2089,11 +2089,11 @@ function renderDiagHistory(){
 
 // ---- Diagnostic report export ----
 function diagReportMarkdown(){
-  const d=diagData;if(!d)return '# Montoring Diagnostic Report\n\nNo scan has been run yet.';
+  const d=diagData;if(!d)return '# Monitoring Diagnostic Report\n\nNo scan has been run yet.';
   const g=diagGrade(d.health_score||0);
   const sy=d.system||{},caps=d.capabilities||{};
   const L=[];
-  L.push('# Montoring Diagnostic Report');L.push('');
+  L.push('# Monitoring Diagnostic Report');L.push('');
   L.push('- Generated: '+new Date().toISOString());
   L.push('- Host: '+(sy.hostname||'—'));
   L.push('- System: '+(sy.os||'—')+' · '+(sy.kernel||'—')+' · '+(sy.arch||'—'));
@@ -2134,7 +2134,7 @@ function diagReportMarkdown(){
     });
     L.push('');
   }
-  L.push('_Generated locally by Montoring — no data leaves this host._');
+  L.push('_Generated locally by Monitoring — no data leaves this host._');
   return L.join('\n');
 }
 async function copyDiagReport(){
@@ -2157,7 +2157,7 @@ function downloadDiagReport(){
   const blob=new Blob([md],{type:'text/markdown;charset=utf-8'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='montoring-diagnostic-'+new Date().toISOString().replace(/[:.]/g,'-')+'.md';
+  a.download='monitoring-diagnostic-'+new Date().toISOString().replace(/[:.]/g,'-')+'.md';
   a.click();
   URL.revokeObjectURL(a.href);
   toast('Diagnostic report downloaded','info');
@@ -2169,11 +2169,11 @@ function downloadDiagReport(){
 // Activity audit trail (local)
 // ================================================================
 let activity=[];
-try{activity=JSON.parse(localStorage.getItem('montoring:activity')||'[]');}catch(e){activity=[];}
+try{activity=JSON.parse(localStorage.getItem('monitoring:activity')||'[]');}catch(e){activity=[];}
 function logActivity(kind,title,ok){
   activity.unshift({t:Date.now(),kind,title,ok:ok!==false});
   activity=activity.slice(0,100);
-  try{localStorage.setItem('montoring:activity',JSON.stringify(activity));}catch(e){}
+  try{localStorage.setItem('monitoring:activity',JSON.stringify(activity));}catch(e){}
   renderActivity();
 }
 const ACTIVITY_ICONS={fix:'wrench',service:'gear',vm:'monitor',process:'cpu',system:'gear',theme:'sun',logs:'terminal'};
@@ -2196,7 +2196,7 @@ function renderActivity(){
     const b=$('#activityBadge2');if(b)b.textContent=activity.length+' events';
   }
 }
-function clearActivity(){activity=[];try{localStorage.setItem('montoring:activity','[]');}catch(e){}renderActivity();toast('Activity log cleared','info');}
+function clearActivity(){activity=[];try{localStorage.setItem('monitoring:activity','[]');}catch(e){}renderActivity();toast('Activity log cleared','info');}
 
 // ================================================================
 // Health checks
@@ -2253,12 +2253,12 @@ async function runFix(action,btn){
   const old=btn?btn.innerHTML:null;
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner">'+icon('refresh',15)+'</span><span>Running…</span>';}
   term.hidden=false;
-  out.innerHTML='<span class="dim">$ montoring fix '+esc(action)+' …</span>';
+  out.innerHTML='<span class="dim">$ monitoring fix '+esc(action)+' …</span>';
   logActivity('fix','Run fix: '+meta.label);
   const j=await postJSON('/api/fix',{action});
   if(btn){btn.disabled=false;btn.innerHTML=old;}
   const res=(j&&(j.result||j.error))||'Done';
-  out.innerHTML='<span class="dim">$ montoring fix '+esc(action)+'</span>\n'+esc(res.length>600?res.slice(0,600)+'…':res);
+  out.innerHTML='<span class="dim">$ monitoring fix '+esc(action)+'</span>\n'+esc(res.length>600?res.slice(0,600)+'…':res);
   if(j&&j.error){toast('Fix failed: '+j.error,'err');logActivity('fix','Fix failed: '+meta.label,false);}
   else{toast(meta.desc||('Completed: '+action));logActivity('fix','Fix completed: '+meta.label);}
   updateChecks();
@@ -2612,7 +2612,7 @@ function downloadLogs(){
   const blob=new Blob([logText],{type:'text/plain'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='montoring-journal-'+new Date().toISOString().replace(/[:.]/g,'-')+'.log';
+  a.download='monitoring-journal-'+new Date().toISOString().replace(/[:.]/g,'-')+'.log';
   a.click();URL.revokeObjectURL(a.href);
   toast('Log file downloaded','info');
 }
@@ -2816,7 +2816,7 @@ toggleLogWrap(); // apply wrap setting
 updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();
 loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
 restartTimers();
-setInterval(updateChecks,15000);
+setInterval(updateChecks,60000);
 setInterval(()=>{if(!document.hidden)loadDisks();},30000);
 setInterval(()=>{if(!document.hidden&&$('#procAuto').checked)loadProcesses();},5000);
 setInterval(()=>{if(!document.hidden&&$('#logAuto').checked&&$('#tab-logs').classList.contains('active'))loadLogs();},5000);

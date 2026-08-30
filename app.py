@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Montoring — Universal Linux System Dashboard
+Monitoring — Universal Linux System Dashboard
 Monitors system health, checks/fixes issues, manages processes, services,
 logs and libvirt VMs — on any Linux flavour.
 
-Run:  python3 app.py   (binds 0.0.0.0:$MONTORING_PORT, default 8050)
+Run:  python3 app.py   (binds 0.0.0.0:$MONITORING_PORT, default 8050)
 Requirements: flask, psutil  (see requirements.txt)
 Privileges:   fixes/service/vm actions use sudo automatically when
               not running as root (works best under the bundled systemd
@@ -22,8 +22,8 @@ from datetime import datetime
 
 from flask import Flask, render_template, jsonify, request
 
-APP_HOME = os.environ.get("MONTORING_HOME", os.path.dirname(os.path.abspath(__file__)))
-APP_PORT = int(os.environ.get("MONTORING_PORT", "8050"))
+APP_HOME = os.environ.get("MONITORING_HOME", os.path.dirname(os.path.abspath(__file__)))
+APP_PORT = int(os.environ.get("MONITORING_PORT", "8050"))
 
 # ------------------------------------------------------------------
 # Version
@@ -96,7 +96,7 @@ def api_health():
     """
     return jsonify({
         "status": "ok",
-        "service": "Montoring API",
+        "service": "Monitoring API",
         "version": APP_VERSION,
         "pid": os.getpid(),
         "time": datetime.now().isoformat(),
@@ -105,7 +105,7 @@ def api_health():
 @app.route("/api/version")
 def api_version():
     return jsonify({
-        "app": "Montoring",
+        "app": "Monitoring",
         "version": APP_VERSION,
         "python": os.sys.version.split()[0],
         "home": APP_HOME,
@@ -121,6 +121,7 @@ def api_version():
 # ------------------------------------------------------------------
 HISTORY_MAX = 1800  # 60 min @ 2s
 _HISTORY = {"samples": [], "lock": threading.Lock()}
+_last_cpu = {"value": 0.0}
 
 def _read_temp_c():
     """Best-effort CPU temperature in °C (float) or None."""
@@ -146,6 +147,7 @@ def _sampler_loop():
         try:
             now = time.time()
             cpu = psutil.cpu_percent(interval=None)
+            _last_cpu["value"] = cpu
             mem = psutil.virtual_memory()
             net = psutil.net_io_counters()
             sent_bps = recv_bps = 0
@@ -172,7 +174,7 @@ def _sampler_loop():
             pass
         time.sleep(2)
 
-threading.Thread(target=_sampler_loop, daemon=True, name="montoring-sampler").start()
+threading.Thread(target=_sampler_loop, daemon=True, name="monitoring-sampler").start()
 
 @app.route("/api/history")
 def api_history():
@@ -257,7 +259,7 @@ def _battery():
 def api_status():
     try:
         import psutil
-        cpu = psutil.cpu_percent(interval=0.4)
+        cpu = _last_cpu["value"] or psutil.cpu_percent(interval=None)
         mem = psutil.virtual_memory()
         swap = psutil.swap_memory()
         disk = psutil.disk_usage("/")
@@ -1311,7 +1313,14 @@ def api_fix():
 # ------------------------------------------------------------------
 # Upgradable packages (detailed)
 # ------------------------------------------------------------------
+_updatable_cache = {"data": None, "ts": 0}
+_UPDATABLE_TTL = 300  # 5 minutes
+
 def _updatable_packages():
+    import time as _time
+    now = _time.time()
+    if _updatable_cache["data"] is not None and (now - _updatable_cache["ts"]) < _UPDATABLE_TTL:
+        return _updatable_cache["data"]
     mgr = _pkg_manager()
     pkgs = []
     try:
@@ -1345,7 +1354,10 @@ def _updatable_packages():
                     pkgs.append({"name": parts[2], "version": parts[3] if len(parts) > 3 else ""})
     except Exception:
         pass
-    return {"manager": mgr, "count": len(pkgs), "packages": pkgs[:200]}
+    result = {"manager": mgr, "count": len(pkgs), "packages": pkgs[:200]}
+    _updatable_cache["data"] = result
+    _updatable_cache["ts"] = now
+    return result
 
 @app.route("/api/updates")
 def api_updates():
@@ -1585,13 +1597,13 @@ def api_network():
 # ------------------------------------------------------------------
 @app.route("/api/open_app", methods=["POST"])
 def api_open_app():
-    """Open the native desktop window (montoring-app) from the dashboard.
+    """Open the native desktop window (monitoring-app) from the dashboard.
     Only meaningful when browsing on the same machine."""
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        return jsonify({"error": "No graphical session on the server — run 'montoring-app' locally instead."}), 400
-    launcher = shutil.which("montoring-app") or "/usr/local/bin/montoring-app"
+        return jsonify({"error": "No graphical session on the server — run 'monitoring-app' locally instead."}), 400
+    launcher = shutil.which("monitoring-app") or "/usr/local/bin/monitoring-app"
     if not os.path.exists(launcher):
-        return jsonify({"error": "montoring-app launcher not installed"}), 404
+        return jsonify({"error": "monitoring-app launcher not installed"}), 404
     subprocess.Popen([launcher], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)
     return jsonify({"result": "Desktop window launched"})
