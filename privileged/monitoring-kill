@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""monitoring-kill - bounded process termination for the monitoring UI.
+
+Only a validated numeric PID may be killed (never PID 1). This helper is the
+sole kill privilege granted to the service account and it never invokes a
+shell.
+"""
+import os
+import shutil
+import signal
+import sys
+import time
+import subprocess
+
+
+def _pid_ok(pid):
+    return isinstance(pid, int) and 1 < pid <= 1000000
+
+
+def _process_exists(pid):
+    try:
+        kill = shutil.which("kill") or "/bin/kill"
+        return subprocess.run([kill, "-0", str(pid)],
+                              shell=False).returncode == 0
+    except Exception:
+        return False
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-kill: ok")
+        return 0
+
+    force = "--force" in argv
+    pid_args = [a for a in argv if a != "--force"]
+    if len(pid_args) != 1:
+        print("monitoring-kill: usage <pid> [--force]", file=sys.stderr)
+        return 2
+    try:
+        pid = int(pid_args[0])
+    except ValueError:
+        print("monitoring-kill: invalid pid", file=sys.stderr)
+        return 2
+    if not _pid_ok(pid):
+        print("monitoring-kill: invalid pid", file=sys.stderr)
+        return 2
+
+    try:
+        os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+    except ProcessLookupError:
+        return 0
+    except PermissionError:
+        print("monitoring-kill: permission denied", file=sys.stderr)
+        return 1
+
+    if not force:
+        for _ in range(6):
+            if not _process_exists(pid):
+                return 0
+            time.sleep(0.5)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

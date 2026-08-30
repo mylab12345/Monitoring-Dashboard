@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""monitoring-vm - validated libvirt/virsh control for the app.
+
+The service may act on VMs through this helper only. VM names and actions are
+validated strictly; the helper never invokes a shell.
+"""
+import re
+import shutil
+import subprocess
+import sys
+
+ACTIONS = {"start", "shutdown", "reboot", "reset", "destroy", "resume", "suspend"}
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-vm: ok")
+        return 0
+
+    if len(argv) != 2:
+        print("monitoring-vm: usage <action> <name>", file=sys.stderr)
+        return 2
+    action, name = argv
+    if action not in ACTIONS:
+        print(f"monitoring-vm: invalid action: {action}", file=sys.stderr)
+        return 2
+    if not isinstance(name, str) or not name or len(name) > 120 or name.startswith("-"):
+        print("monitoring-vm: invalid VM name", file=sys.stderr)
+        return 2
+    if NAME_RE.match(name) is None:
+        print("monitoring-vm: invalid VM name", file=sys.stderr)
+        return 2
+
+    virsh = shutil.which("virsh")
+    if not virsh:
+        print("monitoring-vm: virsh not found", file=sys.stderr)
+        return 127
+    return subprocess.run([virsh, action, name], shell=False).returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,23 @@
+# /etc/sudoers.d/monitoring
+#
+# Privileged operations granted to the Monitoring service account.
+# The service runs as the non-login system user "monitoring"; it does NOT
+# get root/ALL. The only thing it may escalate is the explicitly whitelisted
+# helper scripts below, each of which validates its own arguments and never
+# invokes a shell.
+#
+# Read-only system information (journalctl, virsh/list, ss, df, /proc, /sys,
+# /var/log) is handled with group access (systemd-journal/adm/libvirt/docker)
+# and does not require sudo.
+#
+# Validate after installing/changing:
+#   visudo -cf /etc/sudoers.d/monitoring
+
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-systemctl
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-package
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-journal-vacuum
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-clean-old-logs
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-qemu
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-kill
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-zombie-clean

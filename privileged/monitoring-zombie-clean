@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""monitoring-zombie-clean - bounded zombie reaping for the service account.
+
+Scans /proc for zombie entries, locates each zombie's parent, and sends
+SIGTERM only to parent processes that are not init/systemd/self. This keeps
+the privilege narrow and never uses a shell.
+"""
+import os
+import re
+import signal
+import sys
+
+PROC = "/proc"
+
+
+def _stat_fields(pid):
+    try:
+        with open(f"{PROC}/{pid}/stat", "rb") as f:
+            data = f.read().decode("ascii", "ignore")
+        # comm can contain spaces and parens; split on the last ')'
+        match = re.match(r"^(\d+)\s+\((.*)\)\s+(.*)$", data)
+        if not match:
+            return None
+        rest = match.group(3).split()
+        # state field is rest[0], ppid is rest[1] (the 4th field overall)
+        return {"state": rest[0], "ppid": int(rest[1])}
+    except Exception:
+        return None
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-zombie-clean: ok")
+        return 0
+    if argv:
+        print("monitoring-zombie-clean: no arguments accepted", file=sys.stderr)
+        return 2
+
+    killed = []
+    try:
+        entries = os.listdir(PROC)
+    except OSError:
+        print("monitoring-zombie-clean: cannot list /proc", file=sys.stderr)
+        return 1
+
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid <= 1:
+            continue
+        info = _stat_fields(pid)
+        if not info or info.get("state") != "Z":
+            continue
+        ppid = info.get("ppid", 0)
+        # Never signal init/systemd or this helper itself.
+        if ppid <= 1 or ppid == os.getpid():
+            continue
+        try:
+            os.kill(ppid, signal.SIGTERM)
+            killed.append(ppid)
+        except Exception:
+            pass
+    print(f"monitoring-zombie-clean: reaped parents {len(killed)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
