@@ -3,13 +3,26 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#07090d" />
 <title>Montoring — System Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 <link rel="icon" href="{{ url_for('static', filename='icon.png') }}">
 </head>
 <body>
 
 <div class="bg-layer" aria-hidden="true"></div>
+
+<!-- Shared SVG gradient defs (rings) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="g-cpu"  x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#60a5fa"/></linearGradient>
+    <linearGradient id="g-mem"  x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#818cf8"/></linearGradient>
+    <linearGradient id="g-disk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#2dd4bf"/></linearGradient>
+    <linearGradient id="g-up"   x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
+  </defs>
+</svg>
 
 <div class="app-shell">
 
@@ -19,122 +32,263 @@
       <img src="{{ url_for('static', filename='icon.png') }}" alt="Montoring logo" class="brand-icon">
       <div class="brand-text">
         <h1>Montoring</h1>
-        <span class="mono dim" id="brandVer">v--</span>
+        <span class="sub" id="brandVer">v--</span>
       </div>
     </div>
 
-    <nav class="nav" id="nav">
-      <button class="nav-btn active" data-tab="overview" data-title="Overview">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-        <span>Overview</span><em class="dot" id="dotOverview" hidden></em>
-      </button>
-      <button class="nav-btn" data-tab="processes" data-title="Processes">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
-        <span>Processes</span>
-      </button>
-      <button class="nav-btn" data-tab="services" data-title="Services">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        <span>Services</span>
-      </button>
-      <button class="nav-btn" data-tab="docker" data-title="Docker">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></svg>
-        <span>Docker</span><em class="dot" id="dotDocker" hidden></em>
-      </button>
-      <button class="nav-btn" data-tab="vms" data-title="Virtual Machines">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M10 8l4 2.5L10 13z"/></svg>
-        <span>VMs</span>
-      </button>
-      <button class="nav-btn" data-tab="network" data-title="Network">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        <span>Network</span>
-      </button>
-      <button class="nav-btn" data-tab="logs" data-title="Logs">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
-        <span>Logs</span>
-      </button>
-    </nav>
+    <div class="nav-scroll">
+      <div class="nav-group">
+        <div class="nav-label">Monitor</div>
+        <nav class="nav">
+          <button class="nav-btn active" data-tab="overview" data-sub="Live system metrics">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+            <span>Overview</span><em class="dot" id="dotOverview" hidden></em>
+          </button>
+          <button class="nav-btn" data-tab="processes" data-sub="Running tasks &amp; resource usage">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+            <span>Processes</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">Manage</div>
+        <nav class="nav">
+          <button class="nav-btn" data-tab="services" data-sub="systemd units">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Services</span>
+          </button>
+          <button class="nav-btn" data-tab="docker" data-sub="Containers">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></svg>
+            <span>Docker</span><em class="dot ok" id="dotDocker" hidden></em>
+          </button>
+          <button class="nav-btn" data-tab="vms" data-sub="libvirt / QEMU guests">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M10 8l4 2.5L10 13z"/></svg>
+            <span>VMs</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">Inspect</div>
+        <nav class="nav">
+          <button class="nav-btn" data-tab="network" data-sub="Interfaces &amp; listening ports">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            <span>Network</span>
+          </button>
+          <button class="nav-btn" data-tab="logs" data-sub="System journal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+            <span>Logs</span>
+          </button>
+          <button class="nav-btn" data-tab="help" data-sub="Shortcuts, CLI &amp; desktop app">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
+            <span>Help</span>
+          </button>
+        </nav>
+      </div>
+    </div>
 
     <div class="sidebar-foot">
-      <button class="nav-btn" data-tab="help" data-title="Help &amp; About">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
-        <span>Help</span>
+      <button class="palette-trigger" onclick="openPalette()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+        <span>Search &amp; commands</span><span class="kbd" id="palKbd">Ctrl K</span>
       </button>
-      <div class="host-chip mono" id="hostChip">--</div>
+      <div class="host-chip" title="Connection status">
+        <span class="status-dot" id="connDot"></span>
+        <span class="hostname" id="hostChip">connecting…</span>
+      </div>
     </div>
   </aside>
 
   <!-- ===================== MAIN ===================== -->
   <main class="main">
     <header class="topbar">
-      <h2 id="pageTitle">Overview</h2>
-      <div class="chips mono" id="headerMeta"><span>Loading…</span></div>
+      <div class="topbar-left">
+        <h2 id="pageTitle">Overview</h2>
+        <span class="sub" id="pageSub">Live system metrics</span>
+      </div>
+      <div class="topbar-right">
+        <span class="live-chip" id="liveChip"><span class="pulse"></span><span id="clock">--:--:--</span></span>
+        <button class="icon-btn" id="refreshBtn" title="Refresh (R)" onclick="refreshCurrent()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+        </button>
+        <button class="kbd-btn" onclick="openPalette()" title="Command palette">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+          <span id="palKbd2">Ctrl K</span>
+        </button>
+      </div>
     </header>
 
     <div class="content">
 
       <!-- ============ OVERVIEW ============ -->
-      <section class="tab-panel active" id="tab-overview" aria-label="Live Metrics">
-        <div class="grid-4">
-          <article class="card" aria-label="CPU">
-            <div class="label">CPU Usage</div>
-            <div class="metric"><span class="val" id="cpuVal">--</span><span class="unit">%</span><span class="trend" id="cpuTrend">●</span></div>
-            <div class="progress-track"><div class="progress-fill" id="cpuBar" style="width:0%"></div></div>
-            <canvas class="sparkline" id="cpuSpark" height="38"></canvas>
-            <div class="mini">Cores: <strong id="cpuCores">--</strong> · <span id="cpuFreq">--</span> · Load: <strong id="load1">--</strong></div>
-          </article>
-          <article class="card" aria-label="Memory">
-            <div class="label">Memory</div>
-            <div class="metric"><span class="val" id="ramVal">--</span><span class="unit">%</span></div>
-            <div class="progress-track"><div class="progress-fill" id="ramBar" style="width:0%"></div></div>
-            <canvas class="sparkline" id="ramSpark" height="38"></canvas>
-            <div class="mini"><span id="ramUsed">--</span> / <span id="ramTotal">--</span> GB · Swap <span id="swapInfo">--</span></div>
-          </article>
-          <article class="card" aria-label="Disk">
-            <div class="label">Disk /</div>
-            <div class="metric"><span class="val" id="diskVal">--</span><span class="unit">%</span></div>
-            <div class="progress-track"><div class="progress-fill" id="diskBar" style="width:0%"></div></div>
-            <div class="mini"><span id="diskUsed">--</span> / <span id="diskTotal">--</span> GB</div>
-          </article>
-          <article class="card" aria-label="Uptime">
-            <div class="label">Uptime</div>
-            <div class="metric"><span class="val" id="uptimeVal">--</span><span class="unit">h</span></div>
-            <div class="mini">Temp: <strong id="tempVal">--</strong></div>
-            <div class="mini" id="batteryRow" style="display:none">🔋 Battery: <strong id="batteryVal">--</strong></div>
-          </article>
-        </div>
+      <section class="tab-panel active" id="tab-overview" aria-label="Live metrics">
+        <div class="grid g4">
 
-        <div class="grid-3" style="margin-top:1.5rem">
-          <article class="card" style="grid-column:span 2">
-            <h2>System Health Checks</h2>
-            <div id="checksList">Loading checks…</div>
-          </article>
-          <article class="card">
-            <h2>Quick Fixes</h2>
-            <p class="dim small">Safe maintenance actions for your system.</p>
-            <div class="btn-group">
-              <button class="btn" onclick="runFix('update', this)">Update Lists</button>
-              <button class="btn" onclick="runFix('upgrade', this)">Upgrade</button>
-              <button class="btn" onclick="runFix('autoremove', this)">Autoremove</button>
-              <button class="btn" onclick="runFix('clean', this)">Clean Cache</button>
-              <button class="btn" onclick="runFix('fix-broken', this)">Fix Broken</button>
-              <button class="btn" onclick="runFix('clear-logs', this)">Clear Logs</button>
-              <button class="btn" onclick="runFix('docker-prune', this)">Docker Prune</button>
+          <article class="card metric-card hoverable" style="--mc:#22d3ee;--mc-bg:rgba(34,211,238,.12);--mc-line:rgba(34,211,238,.28)">
+            <div class="metric-top">
+              <div class="m-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg></div>
+              <div>
+                <div class="m-label">CPU</div>
+                <div class="m-sub" id="cpuSub">-- cores</div>
+              </div>
+              <span class="delta" id="cpuDelta" hidden></span>
             </div>
-            <div id="fixResult" class="mini mono" style="color:#c8e6c9;min-height:1.2rem;margin-top:.75rem;white-space:pre-wrap"></div>
+            <div class="metric-body">
+              <div class="hero">
+                <span class="val" id="cpuVal">--</span><span class="unit">%</span>
+                <div class="note" id="cpuNote">freq · load</div>
+              </div>
+              <div class="ring-wrap">
+                <svg width="76" height="76" viewBox="0 0 76 76">
+                  <circle cx="38" cy="38" r="30" class="track"/>
+                  <circle cx="38" cy="38" r="30" class="bar" id="cpuRing" stroke="url(#g-cpu)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+                </svg>
+                <div class="pct" id="cpuPct">--%</div>
+              </div>
+            </div>
+            <canvas class="sparkline" id="cpuSpark" height="44"></canvas>
+          </article>
+
+          <article class="card metric-card hoverable" style="--mc:#a78bfa;--mc-bg:rgba(167,139,250,.12);--mc-line:rgba(167,139,250,.28)">
+            <div class="metric-top">
+              <div class="m-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10v4M10 10v4M14 10v4M18 10v4"/></svg></div>
+              <div>
+                <div class="m-label">Memory</div>
+                <div class="m-sub" id="memSub">-- / -- GB</div>
+              </div>
+              <span class="delta" id="ramDelta" hidden></span>
+            </div>
+            <div class="metric-body">
+              <div class="hero">
+                <span class="val" id="ramVal">--</span><span class="unit">%</span>
+                <div class="note" id="ramNote">swap off</div>
+              </div>
+              <div class="ring-wrap">
+                <svg width="76" height="76" viewBox="0 0 76 76">
+                  <circle cx="38" cy="38" r="30" class="track"/>
+                  <circle cx="38" cy="38" r="30" class="bar" id="ramRing" stroke="url(#g-mem)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+                </svg>
+                <div class="pct" id="ramPct">--%</div>
+              </div>
+            </div>
+            <canvas class="sparkline" id="ramSpark" height="44"></canvas>
+          </article>
+
+          <article class="card metric-card hoverable" style="--mc:#34d399;--mc-bg:rgba(52,211,153,.12);--mc-line:rgba(52,211,153,.28)">
+            <div class="metric-top">
+              <div class="m-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg></div>
+              <div>
+                <div class="m-label">Disk /</div>
+                <div class="m-sub" id="diskSub">-- / -- GB</div>
+              </div>
+              <span class="delta" id="diskDelta" hidden></span>
+            </div>
+            <div class="metric-body">
+              <div class="hero">
+                <span class="val" id="diskVal">--</span><span class="unit">%</span>
+                <div class="note" id="diskNote">root filesystem</div>
+              </div>
+              <div class="ring-wrap">
+                <svg width="76" height="76" viewBox="0 0 76 76">
+                  <circle cx="38" cy="38" r="30" class="track"/>
+                  <circle cx="38" cy="38" r="30" class="bar" id="diskRing" stroke="url(#g-disk)" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+                </svg>
+                <div class="pct" id="diskPct">--%</div>
+              </div>
+            </div>
+            <canvas class="sparkline" id="diskSpark" height="44"></canvas>
+          </article>
+
+          <article class="card metric-card hoverable" style="--mc:#2dd4bf;--mc-bg:rgba(45,212,191,.12);--mc-line:rgba(45,212,191,.28)">
+            <div class="metric-top">
+              <div class="m-chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
+              <div>
+                <div class="m-label">Uptime</div>
+                <div class="m-sub" id="bootTime">booted --:--</div>
+              </div>
+              <span class="delta" id="tempDelta" hidden></span>
+            </div>
+            <div class="metric-body">
+              <div class="hero">
+                <span class="val" id="uptimeVal">--</span><span class="unit">up</span>
+                <div class="note" id="uptimeNote">temp · battery</div>
+              </div>
+              <div class="load-bars">
+                <div class="load-bar"><span class="lb-label">1m</span><span class="lb-track"><i class="lb-fill" id="lb1" style="width:0%"></i></span><span class="lb-val" id="lbv1">--</span></div>
+                <div class="load-bar"><span class="lb-label">5m</span><span class="lb-track"><i class="lb-fill" id="lb5" style="width:0%"></i></span><span class="lb-val" id="lbv5">--</span></div>
+                <div class="load-bar"><span class="lb-label">15m</span><span class="lb-track"><i class="lb-fill" id="lb15" style="width:0%"></i></span><span class="lb-val" id="lbv15">--</span></div>
+              </div>
+            </div>
           </article>
         </div>
 
-        <div class="grid-3" style="margin-top:1.5rem">
-          <article class="card">
-            <h2>Mounted Disks <button class="btn btn-sm" style="float:right" onclick="loadDisks()">↻</button></h2>
-            <div id="disksList" class="small dim">Loading…</div>
+        <div class="grid g2-1" style="margin-top:16px">
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M8.5 12l2.5 2.5 4.5-4.5"/></svg>
+                System Health
+                <span class="badge" id="checksBadge">checking…</span>
+              </div>
+              <button class="icon-btn" onclick="updateChecks()" title="Refresh checks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            </div>
+            <div id="checksList"><div class="skel" style="height:200px"></div></div>
           </article>
-          <article class="card">
-            <h2>Listening Ports <button class="btn btn-sm" style="float:right" onclick="loadPorts()">↻</button></h2>
-            <div id="portsList" class="small dim">Loading…</div>
+
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.8 5.1.4-4 3.3 1.2 5-4.2-2.9L7.8 16.5 9 11.5 5 8.2l5.1-.4z"/></svg>
+                Quick Fixes
+              </div>
+            </div>
+            <p class="dim" style="font-size:.76rem">Safe maintenance actions, package-manager aware.</p>
+            <div class="fix-grid">
+              <button class="fix-btn" onclick="runFix('update',this)">refresh icon<span>Update Lists<span class="fdesc">Refresh repositories</span></span></button>
+              <button class="fix-btn" onclick="runFix('upgrade',this)">arrowup icon<span>Upgrade<span class="fdesc">Install updates</span></span></button>
+              <button class="fix-btn" onclick="runFix('autoremove',this)">trash<span>Autoremove<span class="fdesc">Unused packages</span></span></button>
+              <button class="fix-btn" onclick="runFix('clean',this)">sparkles<span>Clean Cache<span class="fdesc">Package caches</span></span></button>
+              <button class="fix-btn" onclick="runFix('fix-broken',this)">wrench<span>Fix Broken<span class="fdesc">Repair packages</span></span></button>
+              <button class="fix-btn" onclick="runFix('clear-logs',this)">terminal<span>Clear Logs<span class="fdesc">Vacuum journal</span></span></button>
+              <button class="fix-btn" onclick="runFix('docker-prune',this)">box<span>Docker Prune<span class="fdesc">Unused data</span></span></button>
+            </div>
+            <div class="terminal" id="fixTerminal" hidden>
+              <div class="tbar"><i></i><i></i><i></i><span>montoring fix</span></div>
+              <pre id="fixResult"></pre>
+            </div>
           </article>
-          <article class="card">
-            <h2>System</h2>
+        </div>
+
+        <div class="grid g3" style="margin-top:16px">
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+                Mounted Disks
+              </div>
+              <button class="icon-btn" onclick="loadDisks()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            </div>
+            <div id="disksList"><div class="skel" style="height:120px"></div></div>
+          </article>
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9h-9z"/><circle cx="12" cy="12" r="4"/></svg>
+                Listening Ports
+                <span class="badge" id="portsCount"></span>
+              </div>
+              <button class="icon-btn" onclick="loadPorts()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            </div>
+            <div id="portsList"><div class="skel" style="height:120px"></div></div>
+          </article>
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                System
+              </div>
+            </div>
             <div class="kv"><span>OS</span><strong id="osInfo">--</strong></div>
             <div class="kv"><span>Hostname</span><strong id="hostnameInfo">--</strong></div>
             <div class="kv"><span>Kernel</span><strong id="kernelInfo">--</strong></div>
@@ -147,19 +301,39 @@
 
       <!-- ============ PROCESSES ============ -->
       <section class="tab-panel" id="tab-processes" aria-label="Processes">
-        <article class="card">
-          <div class="toolbar">
-            <h2 style="margin:0">Top Processes <span class="dim small" id="procTotal"></span></h2>
+        <article class="card hoverable">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>
+              Process Explorer
+              <span class="badge" id="procTotal">--</span>
+            </div>
             <div class="toolbar-right">
-              <input type="search" id="procSearch" class="search" placeholder="Filter…" oninput="renderProcesses()">
-              <label class="toggle"><input type="checkbox" id="procAuto" checked> Auto 5s</label>
-              <button class="btn" onclick="loadProcesses()">↻ Refresh</button>
+              <div class="field">
+                <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+                <input type="search" id="procSearch" class="with-icon" placeholder="Filter by name, PID, user…" oninput="renderProcesses()">
+              </div>
+              <label class="switch" title="Refresh every 5 seconds">Auto<input type="checkbox" id="procAuto" checked><span class="track"></span></label>
+              <button class="icon-btn" onclick="loadProcesses()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
           </div>
           <div class="table-wrap">
             <table class="table" id="procTable">
-              <thead><tr><th>PID</th><th>Name</th><th>User</th><th>CPU %</th><th>MEM %</th><th>State</th><th></th></tr></thead>
-              <tbody id="procRows"><tr><td colspan="7" class="dim">Loading…</td></tr></tbody>
+              <thead><tr>
+                <th class="sortable" data-key="pid">PID <span class="arrow"></span></th>
+                <th class="sortable" data-key="name">Process <span class="arrow"></span></th>
+                <th>User</th>
+                <th class="sortable" data-key="cpu">CPU <span class="arrow"></span></th>
+                <th class="sortable" data-key="mem">Memory <span class="arrow"></span></th>
+                <th>State</th>
+                <th style="text-align:right">Actions</th>
+              </tr></thead>
+              <tbody id="procRows">
+                <tr><td colspan="7"><div class="skel" style="height:16px"></div></td></tr>
+                <tr><td colspan="7"><div class="skel" style="height:16px"></div></td></tr>
+                <tr><td colspan="7"><div class="skel" style="height:16px"></div></td></tr>
+                <tr><td colspan="7"><div class="skel" style="height:16px"></div></td></tr>
+              </tbody>
             </table>
           </div>
         </article>
@@ -167,19 +341,36 @@
 
       <!-- ============ SERVICES ============ -->
       <section class="tab-panel" id="tab-services" aria-label="Services">
-        <article class="card">
-          <div class="toolbar">
-            <h2 style="margin:0">systemd Services</h2>
+        <article class="card hoverable">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              Services
+              <span class="badge" id="svcTotal">--</span>
+            </div>
             <div class="toolbar-right">
-              <input type="search" id="svcSearch" class="search" placeholder="Filter units…" oninput="renderServices()">
-              <label class="toggle"><input type="checkbox" id="svcActiveOnly" checked onchange="renderServices()"> Active only</label>
-              <button class="btn" onclick="loadServices()">↻ Refresh</button>
+              <div class="segmented" id="svcFilter">
+                <button class="seg-btn active" data-f="all">All</button>
+                <button class="seg-btn" data-f="active">Active</button>
+                <button class="seg-btn" data-f="failed">Failed</button>
+                <button class="seg-btn" data-f="other">Other</button>
+              </div>
+              <div class="field">
+                <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+                <input type="search" id="svcSearch" class="with-icon" placeholder="Filter units…" oninput="renderServices()">
+              </div>
+              <button class="icon-btn" onclick="loadServices()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
           </div>
           <div class="table-wrap">
             <table class="table">
-              <thead><tr><th>Unit</th><th>Description</th><th>Active</th><th>Sub</th><th>Actions</th></tr></thead>
-              <tbody id="svcRows"><tr><td colspan="5" class="dim">Loading…</td></tr></tbody>
+              <thead><tr><th>Unit</th><th>Description</th><th>State</th><th>Sub</th><th style="text-align:right">Actions</th></tr></thead>
+              <tbody id="svcRows">
+                <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
+                <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
+                <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
+                <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
+              </tbody>
             </table>
           </div>
         </article>
@@ -187,44 +378,61 @@
 
       <!-- ============ DOCKER ============ -->
       <section class="tab-panel" id="tab-docker" aria-label="Docker">
-        <article class="card">
-          <div class="toolbar">
-            <h2 style="margin:0">Docker Containers</h2>
+        <article class="card hoverable">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/></svg>
+              Docker Containers
+              <span class="badge" id="dockerCount" hidden></span>
+            </div>
             <div class="toolbar-right">
-              <button class="btn" onclick="loadDocker()">↻ Refresh</button>
-              <button class="btn btn-danger" onclick="dockerPrune()">🧹 Prune unused</button>
+              <button class="icon-btn" onclick="loadDocker()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <button class="btn btn-danger btn-sm" onclick="dockerPrune()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Prune unused</button>
             </div>
           </div>
-          <div id="dockerBody" class="small dim">Loading…</div>
+          <div id="dockerBody"><div class="skel" style="height:120px"></div></div>
         </article>
       </section>
 
       <!-- ============ VMs ============ -->
-      <section class="tab-panel" id="tab-vms" aria-label="VM Manager">
-        <article class="card">
-          <div class="toolbar">
-            <h2 style="margin:0">Virtual Machines <span class="dim small">(libvirt / qemu)</span></h2>
-            <div class="toolbar-right">
-              <button class="btn btn-primary" onclick="loadVMs()">↻ Refresh VMs</button>
+      <section class="tab-panel" id="tab-vms" aria-label="Virtual machines">
+        <article class="card hoverable">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M10 8l4 2.5L10 13z"/></svg>
+              Virtual Machines
+              <span class="badge">libvirt / qemu</span>
             </div>
+            <button class="btn btn-primary btn-sm" onclick="loadVMs()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>Refresh VMs</button>
           </div>
-          <p class="dim small">Access via libvirt group / root. Start, stop and resize disks safely.</p>
-          <div id="vmList"></div>
+          <div id="vmList"><div class="skel" style="height:90px"></div></div>
         </article>
       </section>
 
       <!-- ============ NETWORK ============ -->
       <section class="tab-panel" id="tab-network" aria-label="Network">
-        <article class="card">
-          <h2>Interfaces <button class="btn btn-sm" style="float:right" onclick="loadNetwork()">↻</button></h2>
-          <div id="nicList" class="small dim">Loading…</div>
+        <article class="card hoverable">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
+              Interfaces
+            </div>
+            <button class="icon-btn" onclick="loadNetwork()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+          </div>
+          <div id="nicList"><div class="skel" style="height:120px"></div></div>
         </article>
-        <article class="card" style="margin-top:1.5rem">
-          <h2>Listening Ports</h2>
+        <article class="card hoverable" style="margin-top:16px">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9h-9z"/><circle cx="12" cy="12" r="4"/></svg>
+              Listening Ports
+            </div>
+            <button class="icon-btn" onclick="loadPorts()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+          </div>
           <div class="table-wrap">
             <table class="table">
               <thead><tr><th>Proto</th><th>Address</th><th>Port</th><th>Process</th></tr></thead>
-              <tbody id="portsRows"><tr><td colspan="4" class="dim">Loading…</td></tr></tbody>
+              <tbody id="portsRows"><tr><td colspan="4"><div class="skel" style="height:16px"></div></td></tr></tbody>
             </table>
           </div>
         </article>
@@ -232,38 +440,54 @@
 
       <!-- ============ LOGS ============ -->
       <section class="tab-panel" id="tab-logs" aria-label="Logs">
-        <article class="card">
-          <div class="toolbar">
-            <h2 style="margin:0">System Logs <span class="dim small">(journal)</span></h2>
-            <div class="toolbar-right">
-              <select id="logPrio" class="search" onchange="loadLogs()">
+        <article class="card hoverable">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+              System Logs
+              <span class="badge">journal</span>
+            </div>
+            <div class="log-tools">
+              <select id="logPrio" onchange="loadLogs()" title="Minimum priority">
                 <option value="0">All priorities</option>
                 <option value="3">Errors (err+)</option>
                 <option value="4">Warnings (warning+)</option>
                 <option value="6">Info+</option>
               </select>
-              <select id="logLines" class="search" onchange="loadLogs()">
+              <select id="logLines" onchange="loadLogs()" title="Line count">
                 <option>50</option><option selected>100</option><option>200</option><option>500</option>
               </select>
-              <input type="search" id="logGrep" class="search" placeholder="Filter text…" onkeydown="if(event.key==='Enter')loadLogs()">
-              <label class="toggle"><input type="checkbox" id="logAuto"> Auto 5s</label>
-              <button class="btn" onclick="loadLogs()">↻ Refresh</button>
+              <div class="field">
+                <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+                <input type="search" id="logGrep" class="with-icon" placeholder="Filter text…" onkeydown="if(event.key==='Enter')loadLogs()">
+              </div>
+              <label class="switch" title="Refresh every 5 seconds">Follow<input type="checkbox" id="logAuto" checked><span class="track"></span></label>
+              <button class="icon-btn" onclick="copyLogs()" title="Copy to clipboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <button class="icon-btn" onclick="loadLogs()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
           </div>
-          <pre class="log-view" id="logView">Loading logs…</pre>
+          <div class="log-window">
+            <div class="log-tbar"><i></i><i></i><i></i><span class="t-title">journalctl — montoring</span></div>
+            <pre class="log-view" id="logView"><span class="ll">Loading logs…</span></pre>
+          </div>
         </article>
       </section>
 
-      <!-- ============ HELP / ABOUT ============ -->
+      <!-- ============ HELP ============ -->
       <section class="tab-panel" id="tab-help" aria-label="Help">
-        <div class="grid-3">
-          <article class="card">
-            <h2>About</h2>
-            <div style="display:flex;gap:1rem;align-items:center;margin-bottom:1rem">
-              <img src="{{ url_for('static', filename='icon.png') }}" alt="" style="width:56px;height:56px;border-radius:14px">
+        <div class="grid g3">
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
+                About
+              </div>
+            </div>
+            <div style="display:flex;gap:13px;align-items:center;margin-bottom:14px">
+              <img src="{{ url_for('static', filename='icon.png') }}" alt="" class="about-icon">
               <div>
-                <strong>Montoring</strong> <span class="mono dim" id="helpVersion">v--</span><br>
-                <span class="dim small">Universal Linux System Monitor</span>
+                <strong style="font-size:1rem">Montoring</strong> <span class="mono dim" id="helpVersion">v--</span><br>
+                <span class="dim" style="font-size:.76rem">Universal Linux System Monitor</span>
               </div>
             </div>
             <div class="kv"><span>Installed at</span><strong id="helpHome">--</strong></div>
@@ -271,512 +495,898 @@
             <div class="kv"><span>Running as</span><strong id="helpUser">--</strong></div>
             <div class="kv"><span>Dashboard</span><strong id="helpUrl">--</strong></div>
           </article>
-          <article class="card">
-            <h2>Desktop App</h2>
-            <p class="dim small">Montoring runs as a standalone desktop app — launch it from your application menu, or with <span class="mono">montoring-app</span>. It opens in its own window and starts with your system.</p>
-            <div class="btn-group">
-              <button class="btn btn-primary" onclick="openDesktopApp()">🚀 Launch App Window</button>
-              <button class="btn" onclick="openInBrowser()">🌐 Open in Browser</button>
-            </div>
-            <p class="dim small" style="margin-top:.9rem">Menu shortcut: <span class="mono">/usr/share/applications/montoring.desktop</span><br>
-            Autostart: <span class="mono">/etc/xdg/autostart/montoring.desktop</span></p>
-          </article>
-          <article class="card">
-            <h2>CLI Cheatsheet</h2>
-            <pre class="log-view" style="max-height:230px">montoring status      # service status
-montoring logs        # tail app logs
-montoring restart     # restart dashboard
-montoring update      # self-update from GitHub
-montoring open        # open in browser
 
-sudo ./update.sh      # reinstall after code changes
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/></svg>
+                Keyboard Shortcuts
+              </div>
+            </div>
+            <div class="shortcut-row"><span>Command palette</span><span class="keys"><span class="kbd" id="kCtrlK">Ctrl</span><span class="kbd">K</span></span></div>
+            <div class="shortcut-row"><span>Jump to tab</span><span class="keys"><span class="kbd" id="kCtrlN">Ctrl</span><span class="kbd">1–8</span></span></div>
+            <div class="shortcut-row"><span>Focus search box</span><span class="keys"><span class="kbd">/</span></span></div>
+            <div class="shortcut-row"><span>Refresh current view</span><span class="keys"><span class="kbd">R</span></span></div>
+            <div class="shortcut-row"><span>Close dialog</span><span class="keys"><span class="kbd">Esc</span></span></div>
+          </article>
+
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                Desktop &amp; CLI
+              </div>
+            </div>
+            <p class="dim" style="font-size:.76rem">Montoring runs as a standalone desktop app — launch it from your application menu or with <span class="mono">montoring-app</span>.</p>
+            <div class="btn-group" style="margin:12px 0 14px">
+              <button class="btn btn-primary" onclick="openDesktopApp()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Launch App Window</button>
+              <button class="btn" onclick="openInBrowser()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>Open in Browser</button>
+            </div>
+            <div class="terminal">
+              <div class="tbar"><i></i><i></i><i></i><span>bash — montoring</span></div>
+              <pre>montoring status     # service status
+montoring logs       # tail app logs
+montoring restart    # restart dashboard
+montoring update     # self-update
+montoring open       # open in browser
+
+sudo ./update.sh     # reinstall code changes
 sudo ./update.sh --remote</pre>
+            </div>
           </article>
         </div>
       </section>
 
     </div>
 
-    <footer class="footer" role="contentinfo">
-      Montoring <span id="footerVersion">v--</span> — Universal Linux Dashboard • Minimal • Beautiful • Local
+    <footer class="footer">
+      Montoring <span id="footerVersion">v--</span><span class="sep">•</span>Universal Linux Dashboard<span class="sep">•</span>local-first &amp; beautiful
     </footer>
   </main>
 </div>
 
-<!-- Toast container -->
+<!-- Toasts -->
 <div id="toasts" aria-live="polite"></div>
 
-<!-- Confirm modal -->
-<div class="modal-backdrop" id="modalBackdrop" style="display:none">
-  <div class="modal card">
-    <h2 id="modalTitle">Confirm</h2>
-    <p class="dim" id="modalText" style="margin:.5rem 0 1.25rem"></p>
-    <div class="btn-group" style="justify-content:flex-end">
-      <button class="btn" id="modalCancel">Cancel</button>
-      <button class="btn btn-danger" id="modalOk">Confirm</button>
-    </div>
-  </div>
-</div>
-
 <script>
-// ---------------------------------------------------------------
+'use strict';
+// ================================================================
 // Helpers
-// ---------------------------------------------------------------
-async function fetchJSON(url, opts){
-  try{const r=await fetch(url,opts);const j=await r.json();return j;}catch(e){return null;}
+// ================================================================
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const IS_MAC=/Mac|iP(hone|ad|od)/.test(navigator.platform||navigator.userAgent||'');
+const MOD=IS_MAC?'⌘':'Ctrl';
+const REDUCED=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const ICON_PATHS={
+  refresh:'<path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>',
+  x:'<path d="M18 6L6 18M6 6l12 12"/>',
+  play:'<path d="M7 5v14l11-7z"/>',
+  stop:'<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  restart:'<path d="M3 12a9 9 0 1 1 2.64 6.36L3 21v-6M3 15h6"/>',
+  power:'<path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.8 0"/>',
+  trash:'<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+  resize:'<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/>',
+  box:'<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/>',
+  monitor:'<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  terminal:'<path d="M4 17l6-6-6-6M12 19h8"/>',
+  gauge:'<path d="M12 14l4-4M20.5 14.5A8.5 8.5 0 0 1 3.5 14.5"/><circle cx="12" cy="14" r="8.5"/>',
+  disk:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/>',
+  package:'<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7l8.7 5 8.7-5M12 22V12"/>',
+  alert:'<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/>',
+  zap:'<path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/>',
+  pulse:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  check:'<path d="M20 6L9 17l-5-5"/>',
+  checkCircle:'<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-4.5"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
+  shield:'<path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/>',
+  cpu:'<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/>',
+  mem:'<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10v4M10 10v4M14 10v4M18 10v4"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  wrench:'<path d="M14.7 6.3a4.5 4.5 0 0 0 5.6 5.6L17 15l-3-3 3.3-3.3a4.5 4.5 0 0 0-5.6-5.6L8.5 6.3A4.5 4.5 0 0 0 3 13l3 3-4 4 2 2 4-4 3 3a4.5 4.5 0 0 0 6.7-5.5z"/>',
+  sparkles:'<path d="M12 3l1.9 4.8 5.1.4-4 3.3 1.2 5-4.2-2.9L7.8 16.5 9 11.5 5 8.2l5.1-.4z"/><path d="M19 3v4M17 5h4"/>',
+  up:'<path d="M12 19V5M5 12l7-7 7 7"/>',
+  keyboard:'<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 16h10"/>',
+  thermo:'<path d="M14 14.76V5a2 2 0 1 0-4 0v9.76a4 4 0 1 0 4 0z"/>',
+  battery:'<rect x="2" y="7" width="16" height="10" rx="2"/><path d="M22 11v2"/>',
+  gear:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  network:'<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>'
+};
+const icon=(n,s=15)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[n]||''}</svg>`;
+
+let busy=0;
+function spinRefresh(){const b=$('#refreshBtn');if(b)b.classList.toggle('spinning',busy>0);}
+async function fetchJSON(url,opts){
+  busy++;spinRefresh();
+  try{const r=await fetch(url,opts);return await r.json();}
+  catch(e){return null;}
+  finally{busy--;spinRefresh();}
 }
-async function postJSON(url, body){
-  try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const j=await r.json();return j;}catch(e){return {error:'request failed'};}
+async function postJSON(url,body){
+  busy++;spinRefresh();
+  try{
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    return await r.json();
+  }catch(e){return {error:'request failed'};}
+  finally{busy--;spinRefresh();}
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function fmtTime(sec){
+function jsq(s){return esc(s).replace(/'/g,"\\'");}
+function isTyping(e){const t=e.target;return t&&(t.tagName==='INPUT'||t.tagName==='SELECT'||t.tagName==='TEXTAREA'||t.isContentEditable);}
+function fmtDur(sec){
   const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60);
-  if(d>0)return `${d}d ${h}h ${m}m`;
-  return `${h}h ${m}m`;
+  if(d>0)return `${d}d ${h}h`;
+  if(h>0)return `${h}h ${m}m`;
+  return `${m}m`;
 }
-function barColor(v){ if(v>=85)return 'danger'; if(v>=60)return 'warn'; return ''; }
-function toast(msg, kind){
+function statusClass(v){return v>=85?'hot':v>=60?'warm':'';}
+
+// ================================================================
+// Toasts
+// ================================================================
+function toast(msg,kind){
   const t=document.createElement('div');
-  t.className='toast '+(kind||'');
-  t.textContent=msg;
-  document.getElementById('toasts').appendChild(t);
-  setTimeout(()=>{t.classList.add('out');setTimeout(()=>t.remove(),400);},3500);
+  t.className='toast '+(kind||'ok');
+  t.innerHTML=`<span class="t-icon">${icon(kind==='err'?'alert':kind==='info'?'info':'checkCircle',14)}</span>
+    <span class="t-msg"></span>
+    <button class="t-close" title="Dismiss">${icon('x',12)}</button>
+    <span class="t-bar"></span>`;
+  t.querySelector('.t-msg').textContent=msg;
+  t.querySelector('.t-close').onclick=()=>killToast(t);
+  $('#toasts').appendChild(t);
+  requestAnimationFrame(()=>t.querySelector('.t-bar').style.animation='shrink 4.2s linear forwards');
+  setTimeout(()=>killToast(t),4300);
 }
-function confirmDlg(title,text){
-  return new Promise(res=>{
-    const bd=document.getElementById('modalBackdrop');
-    document.getElementById('modalTitle').textContent=title;
-    document.getElementById('modalText').textContent=text;
-    bd.style.display='flex';
-    const done=v=>{bd.style.display='none';document.getElementById('modalOk').onclick=null;document.getElementById('modalCancel').onclick=null;res(v);};
-    document.getElementById('modalOk').onclick=()=>done(true);
-    document.getElementById('modalCancel').onclick=()=>done(false);
-  });
+function killToast(t){
+  t.classList.add('out');setTimeout(()=>t.remove(),320);
 }
 
-// ---------------------------------------------------------------
-// Sidebar navigation (buttons)
-// ---------------------------------------------------------------
-const TAB_LOADERS={overview:null,processes:loadProcesses,services:loadServices,docker:loadDocker,vms:loadVMs,network:()=>{loadNetwork();loadPorts();},logs:loadLogs,help:null};
+// ================================================================
+// Modal (confirmation + forms)
+// ================================================================
+function openModal({title,text='',fields=[],confirmText='Confirm',cancelText='Cancel',danger=false,icon:ic='help',note=''}){
+  return new Promise(res=>{
+    let settled=false;
+    const bd=document.createElement('div');
+    bd.className='modal-backdrop';
+    const fieldsHtml=fields.map(f=>`
+      <label for="mf-${f.key}">${esc(f.label)}</label>
+      <input id="mf-${f.key}" data-field="${f.key}" type="${esc(f.type||'text')}" value="${esc(f.value||'')}"
+        placeholder="${esc(f.placeholder||'')}" ${f.type==='number'?'inputmode="decimal"':''} autocomplete="off">`).join('');
+    bd.innerHTML=`<div class="modal ${danger?'danger':''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+      <div class="m-icon">${icon(ic,18)}</div>
+      <h3>${esc(title)}</h3>
+      ${text?`<p class="m-text">${esc(text)}</p>`:''}
+      ${fieldsHtml?`<div class="m-body">${fieldsHtml}</div>`:''}
+      ${note?`<p class="m-note">${esc(note)}</p>`:''}
+      <div class="m-actions">
+        <button class="btn" data-act="cancel">${esc(cancelText)}</button>
+        <button class="btn ${danger?'btn-danger':'btn-primary'}" data-act="ok">${esc(confirmText)}</button>
+      </div></div>`;
+    document.body.appendChild(bd);
+    const done=v=>{if(settled)return;settled=true;bd.remove();document.removeEventListener('keydown',escH);res(v);};
+    const escH=e=>{if(e.key==='Escape'){e.stopPropagation();done(null);}};
+    document.addEventListener('keydown',escH);
+    bd.querySelector('[data-act=cancel]').onclick=()=>done(null);
+    bd.querySelector('[data-act=ok]').onclick=()=>{
+      const values={};
+      bd.querySelectorAll('[data-field]').forEach(i=>values[i.dataset.field]=i.value.trim());
+      done({values});
+    };
+    bd.addEventListener('mousedown',e=>{if(e.target===bd)done(null);});
+    const first=bd.querySelector('input');
+    if(first){first.focus();first.select&&first.select();}
+    else bd.querySelector('[data-act=ok]').focus();
+    bd.addEventListener('keydown',e=>{
+      if(e.key==='Enter'&&!bd.querySelector('input'))bd.querySelector('[data-act=ok]').click();
+    });
+  });
+}
+const confirmDlg=(title,text,danger)=>openModal({title,text,confirmText:'Confirm',danger,icon:danger?'alert':'help'});
+
+// ================================================================
+// Tabs
+// ================================================================
+const TAB_NAMES=['overview','processes','services','docker','vms','network','logs','help'];
+const TAB_LOADERS={
+  overview:null,
+  processes:loadProcesses,
+  services:loadServices,
+  docker:loadDocker,
+  vms:loadVMs,
+  network:()=>{loadNetwork();loadPorts();},
+  logs:loadLogs,
+  help:fillHelp
+};
+let currentTab='overview';
 function showTab(name){
-  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
-  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
-  const panel=document.getElementById('tab-'+name);
-  if(panel)panel.classList.add('active');
-  const btn=document.querySelector(`.nav-btn[data-tab="${name}"]`);
-  if(btn)document.getElementById('pageTitle').textContent=btn.dataset.title||name;
-  if(window.location.hash!=='#'+name)history.replaceState(null,'','#'+name);
+  currentTab=name;
+  $$('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
+  $$('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
+  const btn=$(`.nav-btn[data-tab="${name}"]`);
+  $('#pageTitle').textContent=btn?btn.querySelector('span').textContent:name;
+  $('#pageSub').textContent=btn?(btn.dataset.sub||''):'';
+  if(location.hash!=='#'+name)history.replaceState(null,'','#'+name);
+  // retrigger enter animation
+  const panel=$('#tab-'+name);
+  if(panel&&!REDUCED){panel.style.animation='none';void panel.offsetWidth;panel.style.animation='';}
   const fn=TAB_LOADERS[name];
   if(fn)fn();
-  if(name==='help')fillHelp();
+  drawSparks();
 }
-document.querySelectorAll('.nav-btn').forEach(btn=>{
-  btn.addEventListener('click',()=>showTab(btn.dataset.tab));
-});
+$$('.nav-btn').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
 
-// ---------------------------------------------------------------
-// Sparklines
-// ---------------------------------------------------------------
-const cpuHist=[], ramHist=[];
-function drawSpark(cv, data, color){
+// ================================================================
+// Sparklines (smooth, gradient area)
+// ================================================================
+const H=44;
+const cpuHist=[],ramHist=[],diskHist=[];
+function smoothPath(ctx,pts,w,h){
+  ctx.beginPath();
+  pts.forEach((p,i)=>{
+    if(!i){ctx.moveTo(p[0],p[1]);return;}
+    const px=(pts[i-1][0]+p[0])/2,py=(pts[i-1][1]+p[1])/2;
+    ctx.quadraticCurveTo(pts[i-1][0],pts[i-1][1],px,py);
+  });
+  const last=pts[pts.length-1];
+  ctx.lineTo(last[0],last[1]);
+}
+function drawSpark(cv,data,color){
   if(!cv)return;
-  const cw=cv.clientWidth;
-  if(!cw||cw<10)return; // hidden tab — skip
+  const w=cv.clientWidth;
+  if(!w||w<10)return;
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  cv.width=w*dpr;cv.height=H*dpr;
   const ctx=cv.getContext('2d');
-  const w=cv.width=cw;
-  const h=cv.height;
-  ctx.clearRect(0,0,w,h);
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,w,H);
   if(data.length<2)return;
   const max=Math.max(20,...data);
-  ctx.beginPath();
-  data.forEach((v,i)=>{
-    const x=i/(data.length-1)*(w-2)+1;
-    const y=h-2-(v/max)*(h-6);
-    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-  });
-  ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();
-  ctx.lineTo(w-1,h);ctx.lineTo(1,h);ctx.closePath();
-  const g=ctx.createLinearGradient(0,0,0,h);
-  g.addColorStop(0,color+'55');g.addColorStop(1,color+'00');
+  const pts=data.map((v,i)=>[1+(i/(data.length-1))*(w-2), H-4-(v/max)*(H-10)]);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,color+'3d');g.addColorStop(1,color+'00');
+  smoothPath(ctx,pts,w,H);
+  ctx.strokeStyle=color;ctx.lineWidth=1.6;ctx.lineJoin='round';ctx.stroke();
+  ctx.lineTo(w-1,H);ctx.lineTo(1,H);ctx.closePath();
   ctx.fillStyle=g;ctx.fill();
+  const lastP=pts[pts.length-1];
+  ctx.beginPath();ctx.arc(lastP[0],lastP[1],2.4,0,7);ctx.fillStyle=color;ctx.fill();
+}
+function drawSparks(){
+  drawSpark($('#cpuSpark'),cpuHist,'#22d3ee');
+  drawSpark($('#ramSpark'),ramHist,'#a78bfa');
+  drawSpark($('#diskSpark'),diskHist,'#34d399');
+}
+const RING_C=188.5;
+function setRing(id,pct){
+  const el=$('#'+id),txt=$('#'+id.replace('Ring','Pct'));
+  if(!el)return;
+  el.style.strokeDashoffset=String(RING_C*(1-Math.min(100,Math.max(0,pct))/100));
+  el.style.stroke=(pct>=85?'#f87171':pct>=60?'#fbbf24':'');
+  if(txt)txt.textContent=Math.round(pct)+'%';
+}
+function animNum(el,to,dec=0){
+  const from=parseFloat(el.dataset.v||0)||0;
+  if(REDUCED||Math.abs(to-from)<0.05){el.textContent=to.toFixed(dec);el.dataset.v=to;return;}
+  const t0=performance.now(),dur=650;
+  (function step(t){
+    const k=Math.min(1,(t-t0)/dur),e=1-Math.pow(1-k,3);
+    el.textContent=(from+(to-from)*e).toFixed(dec);
+    if(k<1)requestAnimationFrame(step);else el.dataset.v=to;
+  })(t0);
+  el.dataset.v=to;
 }
 
-// ---------------------------------------------------------------
-// Status update
-// ---------------------------------------------------------------
+// ================================================================
+// Live status
+// ================================================================
+let prevStatus=null;
+function deltaFor(el,cur,prev){
+  if(!el)return;
+  if(prev==null){el.hidden=true;return;}
+  const d=+(cur-prev).toFixed(1);
+  el.hidden=false;
+  if(Math.abs(d)<0.05){el.textContent='— 0.0';el.className='delta';return;}
+  el.textContent=(d>0?'▲ +':'▼ ')+Math.abs(d).toFixed(1);
+  el.className='delta '+(d>0?'up':'down');
+}
 async function updateStatus(){
   const d=await fetchJSON('/api/status');
-  if(!d||d.error)return;
-  document.getElementById('headerMeta').innerHTML=`
-    <span>${esc(d.os)}</span><span>${esc(d.time)}</span><span class="chip-ok">● live</span>`;
-  document.getElementById('hostChip').textContent=d.hostname||'--';
-  document.getElementById('cpuVal').textContent=Math.round(d.cpu_percent);
-  document.getElementById('cpuBar').style.width=d.cpu_percent+'%';
-  document.getElementById('cpuBar').className='progress-fill '+barColor(d.cpu_percent);
-  document.getElementById('cpuTrend').textContent=d.cpu_percent>70?'▲':'●';
-  document.getElementById('load1').textContent=d.load_1;
-  document.getElementById('cpuCores').textContent=d.cpu_count||'--';
-  document.getElementById('cpuFreq').textContent=d.cpu_freq_mhz?d.cpu_freq_mhz+' MHz':'';
-
-  cpuHist.push(d.cpu_percent); if(cpuHist.length>60)cpuHist.shift();
-  drawSpark(document.getElementById('cpuSpark'), cpuHist, '#7ee787');
-
-  document.getElementById('ramVal').textContent=Math.round(d.ram_percent);
-  document.getElementById('ramBar').style.width=d.ram_percent+'%';
-  document.getElementById('ramBar').className='progress-fill '+barColor(d.ram_percent);
-  document.getElementById('ramUsed').textContent=d.ram_used_gb+' GB';
-  document.getElementById('ramTotal').textContent=d.ram_total_gb+' GB';
-  document.getElementById('swapInfo').textContent=d.swap_total_gb>0?`${d.swap_used_gb}/${d.swap_total_gb} GB (${Math.round(d.swap_percent)}%)`:'off';
-
-  ramHist.push(d.ram_percent); if(ramHist.length>60)ramHist.shift();
-  drawSpark(document.getElementById('ramSpark'), ramHist, '#7ee7f5');
-
-  document.getElementById('diskVal').textContent=Math.round(d.disk_percent);
-  document.getElementById('diskBar').style.width=d.disk_percent+'%';
-  document.getElementById('diskBar').className='progress-fill '+barColor(d.disk_percent);
-  document.getElementById('diskUsed').textContent=d.disk_used_gb+' GB';
-  document.getElementById('diskTotal').textContent=d.disk_total_gb+' GB';
-
-  document.getElementById('uptimeVal').textContent=Math.round(d.uptime_sec/3600);
-  document.getElementById('tempVal').textContent=d.temp;
-  document.getElementById('netVal').textContent=d.net_sent+' / '+d.net_recv;
-  document.getElementById('osInfo').textContent=d.os;
-  document.getElementById('hostnameInfo').textContent=d.hostname;
-  document.getElementById('kernelInfo').textContent=d.kernel;
-  document.getElementById('procsCount').textContent=d.processes;
-  document.getElementById('usersVal').textContent=d.users||'0';
-  const bat=d.battery;
-  if(bat){
-    document.getElementById('batteryRow').style.display='block';
-    document.getElementById('batteryVal').textContent=bat.percent+'%'+(bat.plugged?' ⚡':'');
+  const chip=$('#liveChip'),conn=$('#connDot');
+  if(!d||d.error){
+    chip.classList.add('off');conn.classList.add('off');
+    if(prevStatus===null)$('#hostChip').textContent='offline';
+    return;
   }
+  chip.classList.remove('off');conn.classList.remove('off');
+  const p=prevStatus;
+  // CPU
+  animNum($('#cpuVal'),d.cpu_percent);
+  $('#cpuPct').textContent=Math.round(d.cpu_percent)+'%';
+  setRing('cpuRing',d.cpu_percent);
+  $('#cpuVal').className='val '+statusClass(d.cpu_percent);
+  $('#cpuSub').textContent=(d.cpu_count||1)+' cores';
+  $('#cpuNote').innerHTML=(d.cpu_freq_mhz?`<b>${d.cpu_freq_mhz}</b> MHz · `:'')+`load <b>${esc(String(d.load_1))}</b>`;
+  deltaFor($('#cpuDelta'),d.cpu_percent,p&&p.cpu_percent);
+  cpuHist.push(d.cpu_percent);if(cpuHist.length>60)cpuHist.shift();
+  // RAM
+  animNum($('#ramVal'),d.ram_percent);
+  setRing('ramRing',d.ram_percent);
+  $('#ramVal').className='val '+statusClass(d.ram_percent);
+  $('#memSub').textContent=`${d.ram_used_gb} / ${d.ram_total_gb} GB`;
+  $('#ramNote').innerHTML=`swap <b>${d.swap_total_gb>0?`${d.swap_used_gb}/${d.swap_total_gb} GB (${Math.round(d.swap_percent)}%)`:'off'}</b>`;
+  deltaFor($('#ramDelta'),d.ram_percent,p&&p.ram_percent);
+  ramHist.push(d.ram_percent);if(ramHist.length>60)ramHist.shift();
+  // Disk
+  animNum($('#diskVal'),d.disk_percent);
+  setRing('diskRing',d.disk_percent);
+  $('#diskVal').className='val '+statusClass(d.disk_percent);
+  $('#diskSub').textContent=`${d.disk_used_gb} / ${d.disk_total_gb} GB`;
+  deltaFor($('#diskDelta'),d.disk_percent,p&&p.disk_percent);
+  diskHist.push(d.disk_percent);if(diskHist.length>60)diskHist.shift();
+  // Uptime / load / temp / battery
+  $('#uptimeVal').textContent=fmtDur(d.uptime_sec);
+  const boot=new Date(Date.now()-d.uptime_sec*1000);
+  $('#bootTime').textContent='booted '+String(boot.getHours()).padStart(2,'0')+':'+String(boot.getMinutes()).padStart(2,'0');
+  const nc=Math.max(1,d.cpu_count||1);
+  [['lb1','lbv1',d.load_1],['lb5','lbv5',d.load_5],['lb15','lbv15',d.load_15]].forEach(([b,v,val])=>{
+    $('#'+b).style.width=Math.min(100,val/nc*100)+'%';
+    $('#'+v).textContent=val;
+  });
+  let note='';
+  if(d.temp&&d.temp!=='N/A')note+=`${icon('thermo',11)} <b>${esc(String(d.temp))}</b>  `;
+  if(d.battery)note+=`${icon('battery',12)} <b>${d.battery.percent}%</b>${d.battery.plugged?' ⚡':''}`;
+  $('#uptimeNote').innerHTML=note||'load 1m · 5m · 15m';
+  const tdel=$('#tempDelta');
+  if(d.temp&&d.temp!=='N/A'){tdel.hidden=false;tdel.textContent=d.temp;}
+  else tdel.hidden=true;
+  // System card
+  $('#osInfo').textContent=d.os;
+  $('#hostnameInfo').textContent=d.hostname;
+  $('#kernelInfo').textContent=d.kernel;
+  $('#procsCount').textContent=d.processes;
+  $('#netVal').textContent=`↓ ${d.net_recv} · ↑ ${d.net_sent}`;
+  $('#usersVal').textContent=d.users||'0';
+  $('#hostChip').textContent=d.hostname||'--';
+  prevStatus=d;
+  drawSparks();
 }
 
-// ---------------------------------------------------------------
-// Health checks / fixes
-// ---------------------------------------------------------------
+// ================================================================
+// Health checks
+// ================================================================
+const CHECK_META={
+  'disk':'disk','update':'package','broken':'alert','service':'gear','kernel':'zap','zombie':'pulse'
+};
+function checkIcon(name){
+  const n=name.toLowerCase();
+  for(const k in CHECK_META)if(n.includes(k))return CHECK_META[k];
+  return 'check';
+}
 async function updateChecks(){
-  const list=document.getElementById('checksList');
+  const list=$('#checksList');
   const data=await fetchJSON('/api/checks');
-  if(!data){list.innerHTML='<div class="check-row">Unable to load checks.</div>';return;}
-  list.innerHTML=data.map(c=>`
-    <div class="check-row">
-      <div><strong>${esc(c.name)}</strong> <span class="mono dim small">${esc(c.detail)}</span></div>
-      <span class="status-badge status-${c.status}">${c.status}</span>
-    </div>`).join('');
+  if(!data||data.error||!Array.isArray(data)){list.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('alert',22)+'</div><strong>Checks unavailable</strong></div>';return;}
   const warns=data.filter(c=>c.status==='warn'||c.status==='fail').length;
-  const dot=document.getElementById('dotOverview');
+  const badge=$('#checksBadge');
+  badge.textContent=warns?`${warns} need${warns>1?'':''} attention`:'all clear';
+  badge.className='badge '+(warns?'warn':'ok');
+  badge.textContent=warns?`${warns} ${warns===1?'issue':'issues'}`:'all clear';
+  list.innerHTML=data.map(c=>`
+    <div class="check-row ${c.status}">
+      <div class="check-icon">${icon(checkIcon(c.name),15)}</div>
+      <div class="check-info">
+        <div class="name">${esc(c.name)}</div>
+        <div class="detail" title="${esc(c.detail)}">${esc(c.detail)}</div>
+      </div>
+      <span class="pill ${c.status==='ok'?'ok':c.status==='fail'?'fail':'warn'}">${c.status}</span>
+    </div>`).join('');
+  const dot=$('#dotOverview');
   if(dot){dot.hidden=warns===0;dot.textContent=warns;}
 }
-async function runFix(action, btn){
-  const out=document.getElementById('fixResult');
-  const old=btn?btn.textContent:null;
-  if(btn){btn.disabled=true;btn.textContent='Running…';}
-  out.textContent='Running…';
+
+// ================================================================
+// Quick fixes
+// ================================================================
+const FIX_META={
+  update:{icon:'refresh',desc:'Refresh repositories'},
+  upgrade:{icon:'up',desc:'Install available updates'},
+  autoremove:{icon:'trash',desc:'Remove unused packages'},
+  clean:{icon:'sparkles',desc:'Clear package caches'},
+  'fix-broken':{icon:'wrench',desc:'Repair broken packages'},
+  'clear-logs':{icon:'terminal',desc:'Vacuum the journal'},
+  'docker-prune':{icon:'box',desc:'Remove unused docker data'}
+};
+async function runFix(action,btn){
+  const term=$('#fixTerminal'),out=$('#fixResult');
+  const meta=FIX_META[action]||{icon:'wrench'};
+  const old=btn?btn.innerHTML:null;
+  if(btn){btn.disabled=true;btn.innerHTML=`<span class="spinner">${icon('refresh',15)}</span><span>Running…</span>`;}
+  term.hidden=false;
+  out.innerHTML='<span class="dim">$ montoring fix '+esc(action)+' …</span>';
   const j=await postJSON('/api/fix',{action});
-  if(btn){btn.disabled=false;btn.textContent=old;}
-  const res=j.result||j.error||'Done';
-  out.textContent=res.length>400?res.slice(0,400)+'…':res;
-  if(j.error)toast('Fix failed: '+j.error,'err'); else toast('Fix completed');
+  if(btn){btn.disabled=false;btn.innerHTML=old;}
+  const res=(j&&(j.result||j.error))||'Done';
+  out.innerHTML='<span class="dim">$ montoring fix '+esc(action)+'</span>\n'+esc(res.length>600?res.slice(0,600)+'…':res);
+  if(j&&j.error)toast('Fix failed: '+j.error,'err');
+  else toast(meta.desc||('Completed: '+action));
   updateChecks();
 }
 
-// ---------------------------------------------------------------
+// ================================================================
 // Disks / ports / network
-// ---------------------------------------------------------------
+// ================================================================
 async function loadDisks(){
   const d=await fetchJSON('/api/disks');
-  const el=document.getElementById('disksList');
-  if(!d||!d.disks){el.innerHTML='<span class="dim">Unavailable</span>';return;}
+  const el=$('#disksList');
+  if(!d||!d.disks){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('disk',22)+'</div><strong>Unavailable</strong></div>';return;}
+  if(!d.disks.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('disk',22)+'</div><strong>No mounted filesystems</strong></div>';return;}
   el.innerHTML=d.disks.map(k=>`
     <div class="disk-row">
-      <div class="disk-head"><strong class="mono">${esc(k.mount)}</strong>
-        <span class="dim small mono">${esc(k.device)} · ${esc(k.fstype)}</span>
-        <span class="small">${k.used_gb}/${k.total_gb} GB</span>
-        <span class="status-badge ${k.percent>=85?'status-fail':k.percent>=60?'status-warn':'status-ok'}">${k.percent}%</span></div>
-      <div class="progress-track" style="height:6px"><div class="progress-fill ${barColor(k.percent)}" style="width:${k.percent}%"></div></div>
+      <div class="disk-head">
+        <span class="mount">${esc(k.mount)}</span>
+        <span class="meta">${esc(k.device)} · ${esc(k.fstype)}</span>
+        <span class="size">${k.used_gb} / ${k.total_gb} GB</span>
+        <span class="pill ${k.percent>=85?'fail':k.percent>=60?'warn':'ok'}">${k.percent}%</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill ${statusClass(k.percent)}" style="width:${Math.min(100,k.percent)}%"></div></div>
     </div>`).join('');
 }
 let portsData=[];
 async function loadPorts(){
   const d=await fetchJSON('/api/ports');
   portsData=(d&&d.ports)||[];
+  const count=$('#portsCount');
+  if(count)count.textContent=portsData.length?portsData.length+' open':'';
   renderPortsOverview();
   renderPortsTable();
 }
+function protoLabel(p){return p&&p.endsWith('6')?p.slice(0,-1).toUpperCase()+'/6':(p||'').toUpperCase();}
+function cleanProc(s){return (s||'').replace(/users:\(\(\"/,'').replace(/\"\)\)/,'').replace(/\"/g,'');}
 function renderPortsOverview(){
-  const el=document.getElementById('portsList');
+  const el=$('#portsList');
   if(!el)return;
-  if(!portsData.length){el.innerHTML='<span class="dim">No listening ports found</span>';return;}
-  el.innerHTML=portsData.slice(0,8).map(p=>`
-    <div class="check-row"><span class="mono small">${esc(p.addr)}:<strong>${esc(p.port)}</strong></span>
-    <span class="mono dim small">${esc(protoLabel(p.proto))}</span></div>`).join('')
-    +`<div class="dim small" style="margin-top:.4rem">${portsData.length} total — see Network</div>`;
+  if(!portsData.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('globe',22)+'</div><strong>No listening ports</strong><span class="dim">Nothing accepting connections right now.</span></div>';return;}
+  el.innerHTML=portsData.slice(0,7).map(p=>`
+    <div class="check-row">
+      <span class="pill neutral" style="width:52px;justify-content:center">${esc(protoLabel(p.proto))}</span>
+      <span class="mono" style="font-size:.72rem">${esc(p.addr)}:<b style="color:var(--text)">${esc(p.port)}</b></span>
+      <span class="mono dim" style="font-size:.62rem;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%">${esc(cleanProc(p.process))}</span>
+    </div>`).join('')
+    +(portsData.length>7?`<div class="dim" style="font-size:.68rem;margin-top:8px">+${portsData.length-7} more — see Network</div>`:'');
 }
 function renderPortsTable(){
-  const tb=document.getElementById('portsRows');
+  const tb=$('#portsRows');
   if(!tb)return;
   if(!portsData.length){tb.innerHTML='<tr><td colspan="4" class="dim">No listening ports</td></tr>';return;}
   tb.innerHTML=portsData.map(p=>`<tr>
-    <td class="mono">${esc(protoLabel(p.proto))}</td><td class="mono">${esc(p.addr)}</td>
-    <td class="mono"><strong>${esc(p.port)}</strong></td><td class="mono dim small">${esc(cleanProc(p.process))}</td></tr>`).join('');
+    <td><span class="pill neutral" style="min-width:56px;justify-content:center">${esc(protoLabel(p.proto))}</span></td>
+    <td class="mono dim">${esc(p.addr)}</td>
+    <td class="mono"><b>${esc(p.port)}</b></td>
+    <td class="mono dim" style="font-size:.68rem">${esc(cleanProc(p.process))||'—'}</td></tr>`).join('');
 }
-function protoLabel(p){return p&&p.endsWith('6')?p.slice(0,-1)+'/6':(p||'');}
-function cleanProc(s){return (s||'').replace('users:((','').replace('))','').replace(/"/g,'');}
-
 async function loadNetwork(){
   const d=await fetchJSON('/api/network');
-  const el=document.getElementById('nicList');
-  if(!d||!d.nics){el.innerHTML='<span class="dim">Unavailable</span>';return;}
-  el.innerHTML='<div class="grid-3">'+d.nics.map(n=>`
+  const el=$('#nicList');
+  if(!d||!d.nics){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('network',22)+'</div><strong>Unavailable</strong></div>';return;}
+  const maxTx=Math.max(1,...d.nics.map(n=>Math.max(n.sent_mb,n.recv_mb)));
+  el.innerHTML='<div class="grid g3">'+d.nics.map(n=>`
     <div class="nic-card ${n.up?'up':''}">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <strong class="mono">${esc(n.name)}</strong>
-        <span class="status-badge ${n.up?'status-ok':'status-fail'}">${n.up?'up':'down'}</span>
+      <div class="nic-head">
+        <span class="nic-name">${icon('network',14)} ${esc(n.name)}</span>
+        <span class="pill ${n.up?'ok':'fail'}">${n.up?'up':'down'}</span>
       </div>
-      <div class="mono dim small" style="margin-top:.4rem;line-height:1.7">
-        IPv4: ${esc(n.ipv4)||'—'}<br>IPv6: ${esc(n.ipv6)||'—'}<br>MAC: ${esc(n.mac)||'—'}<br>
-        ↓ ${n.recv_mb} MB · ↑ ${n.sent_mb} MB ${n.speed?`· ${n.speed} Mb/s`:''}
+      <div class="nic-lines">
+        IPv4: <b>${esc(n.ipv4)||'—'}</b><br>
+        IPv6: <b>${esc(n.ipv6)||'—'}</b><br>
+        MAC: <b>${esc(n.mac)||'—'}</b>${n.speed?` · <b>${n.speed} Mb/s</b>`:''}
+      </div>
+      <div class="nic-traffic">
+        <span class="dir down" title="${n.recv_mb} MB received"><span>↓</span><span class="bar"><i style="width:${Math.max(4,n.recv_mb/maxTx*100)}%"></i></span></span>
+        <span class="dir up" title="${n.sent_mb} MB sent"><span>↑</span><span class="bar"><i style="width:${Math.max(4,n.sent_mb/maxTx*100)}%"></i></span></span>
       </div>
     </div>`).join('')+'</div>';
 }
 
-// ---------------------------------------------------------------
+// ================================================================
 // Processes
-// ---------------------------------------------------------------
-let procData=[];
+// ================================================================
+let procData=[],procSort={key:'cpu',dir:-1};
 async function loadProcesses(){
   const d=await fetchJSON('/api/processes');
   if(!d||!d.processes)return;
   procData=d.processes||[];
-  document.getElementById('procTotal').textContent=`(${d.total} total)`;
+  $('#procTotal').textContent=d.total+' total';
   renderProcesses();
 }
 function renderProcesses(){
-  const tb=document.getElementById('procRows');
-  const q=(document.getElementById('procSearch').value||'').toLowerCase();
-  const rows=procData.filter(p=>!q||p.name.toLowerCase().includes(q)||String(p.pid).includes(q)||(p.user||'').toLowerCase().includes(q));
-  if(!rows.length){tb.innerHTML='<tr><td colspan="7" class="dim">No processes match</td></tr>';return;}
+  const tb=$('#procRows');
+  const q=($('#procSearch').value||'').toLowerCase();
+  let rows=procData.filter(p=>!q||p.name.toLowerCase().includes(q)||String(p.pid).includes(q)||(p.user||'').toLowerCase().includes(q));
+  rows.sort((a,b)=>{
+    const {key,dir}=procSort;
+    let x=a[key],y=b[key];
+    if(key==='name'){x=x.toLowerCase();y=y.toLowerCase();return x<y?-dir:x>y?dir:0;}
+    return (x-y)*dir;
+  });
+  $$('#procTable th.sortable').forEach(th=>{
+    const k=th.dataset.key;
+    th.querySelector('.arrow').textContent=procSort.key===k?(procSort.dir>0?'▲':'▼'):'';
+  });
+  if(!rows.length){tb.innerHTML='<tr><td colspan="7" class="dim" style="text-align:center;padding:22px">No processes match your filter</td></tr>';return;}
   tb.innerHTML=rows.map(p=>`<tr>
-    <td class="mono">${p.pid}</td><td class="mono"><strong>${esc(p.name)}</strong></td>
-    <td class="mono dim">${esc(p.user)}</td>
-    <td><span class="mono ${p.cpu>=50?'txt-danger':''}">${p.cpu}</span></td>
-    <td><span class="mono ${p.mem>=50?'txt-danger':''}">${p.mem}</span></td>
-    <td class="dim small">${esc(p.status)}</td>
-    <td><button class="btn btn-sm btn-danger" onclick="killProcess(${p.pid},'${esc(p.name).replace(/'/g,"\\'")}')">Kill</button></td>
+    <td class="mono dim">${p.pid}</td>
+    <td class="mono strong">${esc(p.name)}</td>
+    <td class="mono dim" style="font-size:.72rem">${esc(p.user)}</td>
+    <td><span class="cell-bars ${p.cpu>=50?'hot':p.cpu>=20?'warm':''}"><span class="num">${p.cpu}</span><span class="mini"><i style="width:${Math.min(100,p.cpu)}%"></i></span></span></td>
+    <td><span class="cell-bars ${p.mem>=60?'hot':p.mem>=30?'warm':''}"><span class="num">${p.mem}</span><span class="mini"><i style="width:${Math.min(100,p.mem)}%"></i></span></span></td>
+    <td><span class="pill ${p.status==='running'?'ok':p.status==='zombie'?'fail':'neutral'}">${esc(p.status)}</span></td>
+    <td><span class="row-actions"><button class="icon-btn" title="Kill PID ${p.pid}" onclick="killProcess(${p.pid},'${jsq(p.name)}')" style="color:#fca5a5;border-color:rgba(248,113,113,.35)">${icon('x',13)}</button></span></td>
   </tr>`).join('');
 }
+$$('#procTable th.sortable').forEach(th=>th.addEventListener('click',()=>{
+  const k=th.dataset.key;
+  if(procSort.key===k)procSort.dir*=-1;
+  else procSort={key:k,dir:k==='name'||k==='pid'?1:-1};
+  renderProcesses();
+}));
 async function killProcess(pid,name){
-  if(!await confirmDlg('Kill process',`Terminate "${name}" (PID ${pid})? It will be force-killed if it ignores TERM.`))return;
+  const ok=await confirmDlg('Kill process',`Terminate “${name}” (PID ${pid})? It will be force-killed if it ignores SIGTERM.`,true);
+  if(!ok)return;
   const j=await postJSON('/api/process/kill',{pid});
   if(j.error)toast('Kill failed: '+j.error,'err');
-  else{toast(j.result||'Process killed');loadProcesses();}
+  else{toast(j.result||'Process terminated');loadProcesses();}
 }
 
-// ---------------------------------------------------------------
+// ================================================================
 // Services
-// ---------------------------------------------------------------
-let svcData=[],svcAvailable=true;
+// ================================================================
+let svcData=[],svcAvailable=true,svcFilter='all';
+$$('#svcFilter .seg-btn').forEach(b=>b.addEventListener('click',()=>{
+  $$('#svcFilter .seg-btn').forEach(x=>x.classList.toggle('active',x===b));
+  svcFilter=b.dataset.f;
+  renderServices();
+}));
 async function loadServices(){
   const d=await fetchJSON('/api/services');
-  if(!d){return;}
+  if(!d)return;
   svcAvailable=!!d.available;
   svcData=d.services||[];
+  $('#svcTotal').textContent=svcAvailable?svcData.length+' units':'';
   renderServices();
 }
+const svcIconBtn=(a,act,ic,t,danger)=>`<button class="icon-btn ${danger?'':''}" title="${t}" onclick="svcAction('${a}','${act}')"${danger?' style="color:#fca5a5;border-color:rgba(248,113,113,.35)"':''}>${icon(ic,12)}</button>`;
 function renderServices(){
-  const tb=document.getElementById('svcRows');
-  if(!svcAvailable){tb.innerHTML='<tr><td colspan="5" class="dim">systemctl not available on this system.</td></tr>';return;}
-  const q=(document.getElementById('svcSearch').value||'').toLowerCase();
-  const activeOnly=document.getElementById('svcActiveOnly').checked;
-  let rows=svcData.filter(s=>!q||s.unit.toLowerCase().includes(q)||s.description.toLowerCase().includes(q));
-  if(activeOnly)rows=rows.filter(s=>s.active==='active');
-  if(!rows.length){tb.innerHTML='<tr><td colspan="5" class="dim">No services match</td></tr>';return;}
+  const tb=$('#svcRows');
+  if(!svcAvailable){tb.innerHTML='<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">'+icon('gear',22)+'</div><strong>systemctl not available</strong><span class="dim">This system does not use systemd.</span></div></td></tr>';return;}
+  const q=($('#svcSearch').value||'').toLowerCase();
+  let rows=svcData.filter(s=>!q||s.unit.toLowerCase().includes(q)||(s.description||'').toLowerCase().includes(q));
+  if(svcFilter==='active')rows=rows.filter(s=>s.active==='active');
+  else if(svcFilter==='failed')rows=rows.filter(s=>s.active==='failed');
+  else if(svcFilter==='other')rows=rows.filter(s=>s.active!=='active'&&s.active!=='failed');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="5" class="dim" style="text-align:center;padding:22px">No services match</td></tr>';return;}
   tb.innerHTML=rows.map(s=>{
-    const a=esc(s.unit).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const a=jsq(s.unit);
+    const pill=s.active==='active'?(s.sub==='running'?'ok':'info'):s.active==='failed'?'fail':'neutral';
     return `<tr>
-      <td class="mono"><strong>${esc(s.unit)}</strong></td>
-      <td class="dim small">${esc(s.description)}</td>
-      <td><span class="status-badge ${s.active==='active'?'status-ok':'status-warn'}">${esc(s.active)}</span></td>
-      <td class="mono dim small">${esc(s.sub)}</td>
-      <td class="actions">
-        <button class="btn btn-sm" onclick="svcAction('${a}','start')">Start</button>
-        <button class="btn btn-sm" onclick="svcAction('${a}','stop')">Stop</button>
-        <button class="btn btn-sm" onclick="svcAction('${a}','restart')">↻</button>
-        <button class="btn btn-sm" onclick="svcAction('${a}','enable')">Enable</button>
-        <button class="btn btn-sm" onclick="svcAction('${a}','disable')">Disable</button>
-      </td></tr>`;}).join('');
+      <td class="mono strong">${esc(s.unit)}</td>
+      <td class="dim" style="font-size:.72rem;max-width:340px;overflow:hidden;text-overflow:ellipsis">${esc(s.description)}</td>
+      <td><span class="pill ${pill}">${esc(s.active)}</span></td>
+      <td class="mono dim" style="font-size:.7rem">${esc(s.sub)}</td>
+      <td><span class="row-actions">
+        ${svcIconBtn(a,'start','play','Start')}
+        ${svcIconBtn(a,'stop','stop','Stop')}
+        ${svcIconBtn(a,'restart','restart','Restart')}
+        ${svcIconBtn(a,'enable','up','Enable')}
+        ${svcIconBtn(a,'disable','x','Disable',true)}
+      </span></td></tr>`;
+  }).join('');
 }
 async function svcAction(name,action){
   if(action==='stop'||action==='disable'){
-    if(!await confirmDlg(`${action} service`,`Are you sure you want to ${action} ${name}?`))return;
+    if(!await confirmDlg(action+' service',`Are you sure you want to ${action} “${name}”?`,action==='stop'))return;
   }
   const j=await postJSON('/api/service/action',{name,action});
   if(j.error)toast(`${action} failed: ${j.error}`,'err');
   else{toast(j.result||'OK');loadServices();}
 }
 
-// ---------------------------------------------------------------
+// ================================================================
 // Docker
-// ---------------------------------------------------------------
+// ================================================================
 let dockerAvailable=true;
 async function loadDocker(){
-  const el=document.getElementById('dockerBody');
+  const el=$('#dockerBody');
   const d=await fetchJSON('/api/docker');
   if(!d)return;
   dockerAvailable=!!d.available;
-  const dot=document.getElementById('dotDocker');
-  if(dot)dot.hidden=true;
+  const dot=$('#dotDocker'),count=$('#dockerCount');
+  dot.hidden=true;count.hidden=true;
   if(!dockerAvailable){
-    el.innerHTML=`<div class="empty-state">
-      <div class="empty-icon">📦</div>
-      <strong>Docker is not available on this machine</strong>
-      <span class="dim">${esc(d.info||'Install Docker to manage containers here.')}</span></div>`;
+    el.innerHTML=`<div class="empty-state"><div class="empty-icon">${icon('box',22)}</div><strong>Docker is not available</strong><span class="dim">${esc(d.info||'Install Docker to manage containers here.')}</span></div>`;
     return;
   }
   const cs=d.containers||[];
-  if(cs.length&&dot){dot.hidden=false;dot.textContent=cs.length;}
-  if(!cs.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">📦</div><strong>No containers found</strong><span class="dim">Running containers will appear here.</span></div>';return;}
+  const up=cs.filter(c=>c.status.toLowerCase().startsWith('up')).length;
+  if(cs.length){dot.hidden=false;dot.textContent=up;count.hidden=false;count.textContent=`${up} up · ${cs.length} total`;}
+  if(!cs.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('box',22)+'</div><strong>No containers found</strong><span class="dim">Create or pull an image and containers will appear here.</span></div>';
+    return;
+  }
   el.innerHTML=`<div class="table-wrap"><table class="table">
-    <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>Ports</th><th style="text-align:right">Actions</th></tr></thead>
     <tbody>${cs.map(c=>{
-      const up=c.status.toLowerCase().startsWith('up');
-      const n=esc(c.name).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+      const running=c.status.toLowerCase().startsWith('up');
+      const n=jsq(c.name);
+      const pill=c.status.toLowerCase().includes('exit')||c.status.toLowerCase().includes('dead')?'fail':running?'ok':'warn';
       return `<tr>
-        <td class="mono"><strong>${esc(c.name)}</strong></td>
-        <td class="mono dim small">${esc(c.image)}</td>
-        <td><span class="status-badge ${up?'status-ok':'status-warn'}">${esc(c.status)}</span></td>
-        <td class="mono dim small">${esc(c.ports)}</td>
-        <td class="actions">
-          ${up
-            ?`<button class="btn btn-sm" onclick="dockerAction('${n}','stop')">Stop</button>
-              <button class="btn btn-sm" onclick="dockerAction('${n}','restart')">↻</button>`
-            :`<button class="btn btn-sm" onclick="dockerAction('${n}','start')">Start</button>`}
-          <button class="btn btn-sm btn-danger" onclick="dockerAction('${n}','remove')">Remove</button>
-        </td></tr>`;}).join('')}</tbody></table></div>`;
+        <td class="mono strong">${esc(c.name)}</td>
+        <td class="mono dim" style="font-size:.7rem">${esc(c.image)}</td>
+        <td><span class="pill ${pill}">${esc(c.status)}</span></td>
+        <td class="mono dim" style="font-size:.68rem">${esc(c.ports)||'—'}</td>
+        <td><span class="row-actions">
+          ${running
+            ?`<button class="icon-btn" title="Stop" onclick="dockerAction('${n}','stop')">${icon('stop',12)}</button>
+              <button class="icon-btn" title="Restart" onclick="dockerAction('${n}','restart')">${icon('restart',12)}</button>`
+            :`<button class="icon-btn" title="Start" onclick="dockerAction('${n}','start')">${icon('play',12)}</button>`}
+          <button class="icon-btn" title="Remove" style="color:#fca5a5;border-color:rgba(248,113,113,.35)" onclick="dockerAction('${n}','remove')">${icon('trash',12)}</button>
+        </span></td></tr>`;
+    }).join('')}</tbody></table></div>`;
 }
 async function dockerAction(name,action){
-  if(action==='remove'&&!await confirmDlg('Remove container',`Remove container "${name}"? This deletes it.`))return;
+  if(action==='remove'&&!await confirmDlg('Remove container',`Remove container “${name}”? This permanently deletes it.`,true))return;
   const j=await postJSON('/api/docker/action',{name,action});
   if(j.error)toast(`${action} failed: ${j.error}`,'err');
   else{toast(j.result||'OK');loadDocker();}
 }
 async function dockerPrune(){
   if(!dockerAvailable){toast('Docker not available','err');return;}
-  if(!await confirmDlg('Prune Docker','Remove all stopped containers, dangling images and unused data?'))return;
+  if(!await confirmDlg('Prune Docker','Remove all stopped containers, dangling images and unused networks?',true))return;
   const j=await postJSON('/api/docker/prune',{});
   if(j.error)toast('Prune failed: '+j.error,'err');
   else{toast('Docker pruned');loadDocker();}
 }
 
-// ---------------------------------------------------------------
+// ================================================================
 // VMs
-// ---------------------------------------------------------------
+// ================================================================
+const VM_STATE_PILL={running:'ok',paused:'warn',shutoff:'neutral'};
 async function loadVMs(){
-  const container=document.getElementById('vmList');
+  const container=$('#vmList');
   const vms=await fetchJSON('/api/vms');
-  if(!vms || vms.length===0){
-    container.innerHTML='<div class="empty-state"><div class="empty-icon">🖥️</div><strong>No VMs found or libvirt not accessible</strong><span class="dim">Ensure you are in the <strong>libvirt</strong> group (or run as root) and the socket is available.</span></div>';
+  if(!vms||vms.length===0){
+    container.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('monitor',22)+'</div><strong>No VMs found</strong><span class="dim">Make sure libvirt is running and you can access it (libvirt group or root).</span></div>';
     return;
   }
-  container.innerHTML=vms.map(vm=>{
-    const cls=vm.state==='running'?'running':vm.state==='paused'?'paused':'shutoff';
+  container.innerHTML='<div class="grid g2">'+vms.map(vm=>{
     const up=vm.state==='running'||vm.state==='paused';
-    const n=esc(vm.name).replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const n=jsq(vm.name);
     return `
-    <div class="card vm-card ${cls}" style="margin-top:.75rem">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
-        <div>
-          <h3 style="font-size:1rem;margin-bottom:.15rem">${esc(vm.name)}</h3>
-          <div class="mono dim small">
-            State: <strong style="color:#fff">${esc(vm.state)}</strong> · Memory: ${esc(vm.mem)} · vCPUs: ${esc(vm.vcpus)}
+    <div class="card hoverable" style="padding:16px 18px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div class="m-chip" style="--mc:${up?'#34d399':'#9aa3b2'};--mc-bg:${up?'rgba(52,211,153,.12)':'rgba(255,255,255,.06)'};--mc-line:${up?'rgba(52,211,153,.28)':'rgba(255,255,255,.12)'};width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center">${icon('monitor',17)}</div>
+        <div style="min-width:0;flex:1">
+          <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+            <strong style="font-size:.95rem;letter-spacing:-.01em">${esc(vm.name)}</strong>
+            <span class="pill ${VM_STATE_PILL[vm.state]||'neutral'}">${esc(vm.state)}</span>
+          </div>
+          <div class="mono dim" style="font-size:.66rem;margin-top:3px">
+            Memory <b style="color:var(--text-2)">${esc(vm.mem)}</b> · vCPUs <b style="color:var(--text-2)">${esc(vm.vcpus)}</b>
           </div>
         </div>
         <div class="btn-group" style="margin:0">
           ${up
-            ?`<button class="btn btn-sm" onclick="vmAction('${n}','reboot')">Reboot</button>
-              <button class="btn btn-sm" onclick="vmAction('${n}','shutdown')">Shutdown</button>
-              <button class="btn btn-sm btn-danger" onclick="vmAction('${n}','destroy')">Force Off</button>`
-            :`<button class="btn btn-sm btn-primary" onclick="vmAction('${n}','start')">Start</button>`}
-          <button class="btn btn-sm" onclick="openResizeModal('${n}')">Resize Disk</button>
+            ?`<button class="btn btn-sm" onclick="vmAction('${n}','reboot')">${icon('restart',12)}Reboot</button>
+              <button class="btn btn-sm" onclick="vmAction('${n}','shutdown')">${icon('power',12)}Shutdown</button>
+              <button class="btn btn-sm btn-danger" onclick="vmAction('${n}','destroy')">${icon('stop',12)}Force Off</button>`
+            :`<button class="btn btn-sm btn-primary" onclick="vmAction('${n}','start')">${icon('play',12)}Start</button>`}
+          <button class="btn btn-sm" onclick="openResizeModal('${n}')">${icon('resize',12)}Resize Disk</button>
         </div>
       </div>
     </div>`;
-  }).join('');
+  }).join('')+'</div>';
 }
 async function vmAction(name,action){
-  if(action==='destroy'&&!await confirmDlg('Force off VM',`Force power-off "${name}"? Unsaved data in the guest will be lost.`))return;
+  if(action==='destroy'&&!await confirmDlg('Force off VM',`Force power-off “${name}”? Unsaved data in the guest will be lost.`,true))return;
   const j=await postJSON('/api/vm/action',{name,action});
   if(j.error)toast(`${action} failed: ${j.error}`,'err');
   else{toast(j.result||'OK');loadVMs();}
 }
 async function openResizeModal(name){
-  const diskPath=prompt(`Disk path for ${name} (e.g. /var/lib/libvirt/images/${name}.qcow2):`);
-  if(!diskPath) return;
-  const size=prompt('New size in GB (e.g. 40):');
-  if(!size) return;
-  const j=await postJSON('/api/vm_resize',{name,disk_path:diskPath,new_size_gb:parseInt(size)});
+  let hint=`/var/lib/libvirt/images/${name}.qcow2`;
+  try{
+    const info=await fetchJSON('/api/vm_info/'+encodeURIComponent(name));
+    const blob=[info&&info.disks,info&&info.virsh].filter(Boolean).join('\n');
+    const m=blob.match(/\/\S+\.(qcow2|qcow|img|raw)/);
+    if(m)hint=m[0];
+  }catch(e){}
+  const r=await openModal({
+    title:'Resize virtual disk',
+    text:`Grow the disk image for “${name}”. Existing data is preserved; the guest filesystem may still need extending afterwards.`,
+    icon:'resize',
+    confirmText:'Resize',
+    fields:[
+      {key:'disk_path',label:'Disk path',value:hint,placeholder:'/var/lib/libvirt/images/vm.qcow2'},
+      {key:'size',label:'New size (GB)',type:'number',placeholder:'40'}
+    ]
+  });
+  if(!r)return;
+  const size=parseInt(r.values.size,10);
+  if(!size||size<1){toast('Enter a valid size in GB','err');return;}
+  const j=await postJSON('/api/vm_resize',{name,disk_path:r.values.disk_path,new_size_gb:size});
   if(j.error)toast('Resize failed: '+j.error,'err');
-  else toast('Resize result: '+(j.result||'unknown'));
+  else toast(j.result||'Resize queued');
 }
 
-// ---------------------------------------------------------------
+// ================================================================
 // Logs
-// ---------------------------------------------------------------
+// ================================================================
+let logText='';
 async function loadLogs(){
-  const view=document.getElementById('logView');
-  const lines=document.getElementById('logLines').value;
-  const prio=document.getElementById('logPrio').value;
-  const grep=document.getElementById('logGrep').value;
+  const view=$('#logView');
+  const lines=$('#logLines').value;
+  const prio=$('#logPrio').value;
+  const grep=$('#logGrep').value;
   const d=await fetchJSON(`/api/logs?lines=${lines}&prio=${prio}&grep=${encodeURIComponent(grep)}`);
-  view.textContent=d&&d.logs?d.logs:'No log output.';
-  view.scrollTop=view.scrollHeight;
+  logText=(d&&d.logs)||'No log output.';
+  view.innerHTML=(logText==='No log output.'?'<span class="ll">No log output.</span>':logText.split('\n').map(l=>{
+    const cls=/\b(error|fail|fatal|critical|panic|segfault|emerg|alert|crit)\b/i.test(l)?'err'
+      :/\bwarn/i.test(l)?'warn'
+      :/\bnotice\b/i.test(l)?'notice'
+      :/\binfo\b/i.test(l)?'info':'';
+    return `<span class="ll ${cls}">${esc(l)}</span>`;
+  }).join(''));
+  if($('#logAuto').checked)view.scrollTop=view.scrollHeight;
+}
+async function copyLogs(){
+  try{await navigator.clipboard.writeText(logText);toast('Logs copied to clipboard');}
+  catch(e){toast('Copy failed','err');}
 }
 
-// ---------------------------------------------------------------
-// Help / About + desktop app actions
-// ---------------------------------------------------------------
+// ================================================================
+// Help / desktop
+// ================================================================
 async function fillHelp(){
   const v=await fetchJSON('/api/version');
   if(!v)return;
-  document.getElementById('helpVersion').textContent='v'+(v.version||'--');
-  document.getElementById('helpHome').textContent=v.home||'--';
-  document.getElementById('helpPython').textContent='Python '+(v.python||'--');
-  document.getElementById('helpUser').textContent=v.root?'root (full control)':'user'+(v.sudo?' (passwordless sudo)':'');
-  document.getElementById('helpUrl').textContent=location.origin;
+  $('#helpVersion').textContent='v'+(v.version||'--');
+  $('#helpHome').textContent=v.home||'--';
+  $('#helpPython').textContent='Python '+(v.python||'--');
+  $('#helpUser').textContent=v.root?'root (full control)':'user'+(v.sudo?' (passwordless sudo)':'');
+  $('#helpUrl').textContent=location.origin;
 }
 function openDesktopApp(){
-  toast('Launching desktop window…');
+  toast('Launching desktop window…','info');
   fetch('/api/open_app',{method:'POST'}).then(r=>r.json()).then(j=>{
     if(j.error)toast(j.error,'err');
   }).catch(()=>{});
 }
-function openInBrowser(){
-  window.open(location.origin,'_blank');
+function openInBrowser(){window.open(location.origin,'_blank');}
+
+// ================================================================
+// Command palette
+// ================================================================
+let paletteOpen=false;
+function openPalette(){
+  if(paletteOpen)return;
+  paletteOpen=true;
+  let filter='',sel=0;
+  const items=[
+    {g:'Go to',label:'Overview',icon:'gauge',hint:'⌘1',run:()=>showTab('overview')},
+    {g:'Go to',label:'Processes',icon:'cpu',hint:'⌘2',run:()=>showTab('processes')},
+    {g:'Go to',label:'Services',icon:'gear',hint:'⌘3',run:()=>showTab('services')},
+    {g:'Go to',label:'Docker',icon:'box',hint:'⌘4',run:()=>showTab('docker')},
+    {g:'Go to',label:'Virtual Machines',icon:'monitor',hint:'⌘5',run:()=>showTab('vms')},
+    {g:'Go to',label:'Network',icon:'network',hint:'⌘6',run:()=>showTab('network')},
+    {g:'Go to',label:'Logs',icon:'terminal',hint:'⌘7',run:()=>showTab('logs')},
+    {g:'Go to',label:'Help & About',icon:'help',hint:'⌘8',run:()=>showTab('help')},
+    {g:'Actions',label:'Refresh current view',icon:'refresh',hint:'R',run:refreshCurrent},
+    {g:'Actions',label:'Refresh everything',icon:'refresh',run:refreshAll},
+    {g:'Actions',label:'Launch desktop window',icon:'monitor',run:openDesktopApp},
+    {g:'Actions',label:'Open in browser',icon:'globe',run:openInBrowser}
+  ];
+  const bd=document.createElement('div');
+  bd.className='palette-backdrop';
+  bd.innerHTML=`<div class="palette" role="dialog" aria-label="Command palette">
+    <div class="p-input">${icon('search',16)}<input id="palInput" placeholder="Search tabs and actions…" autocomplete="off" spellcheck="false"></div>
+    <div class="p-list" id="palList"></div></div>`;
+  document.body.appendChild(bd);
+  const input=$('#palInput'),list=$('#palList');
+  const filtered=()=>{const q=filter.trim().toLowerCase();return q?items.filter(i=>i.label.toLowerCase().includes(q)):items;};
+  function render(){
+    const its=filtered();
+    sel=Math.max(0,Math.min(sel,its.length-1));
+    if(!its.length){list.innerHTML=`<div class="p-empty">No results for “${esc(filter)}”</div>`;return;}
+    let html='',lastG=null;
+    its.forEach((it,i)=>{
+      if(it.g!==lastG){html+=`<div class="p-group">${esc(it.g)}</div>`;lastG=it.g;}
+      html+=`<button class="p-item ${i===sel?'sel':''}" data-i="${i}">
+        ${icon(it.icon,15)}<span>${esc(it.label)}</span>
+        ${it.hint?`<span class="hint">${esc(it.hint)}</span>`:''}</button>`;
+    });
+    list.innerHTML=html;
+    const selEl=list.querySelector('.p-item.sel');
+    if(selEl&&selEl.scrollIntoView)selEl.scrollIntoView({block:'nearest'});
+    list.querySelectorAll('.p-item').forEach(b=>b.addEventListener('click',()=>{
+      const it=filtered()[+b.dataset.i];
+      close();it.run();
+    }));
+  }
+  function close(){paletteOpen=false;bd.remove();}
+  function pick(){const its=filtered();if(its[sel]){const it=its[sel];close();it.run();}}
+  input.addEventListener('input',()=>{filter=input.value;sel=0;render();});
+  input.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){e.stopPropagation();close();}
+    else if(e.key==='ArrowDown'){e.preventDefault();sel=Math.min(filtered().length-1,sel+1);render();}
+    else if(e.key==='ArrowUp'){e.preventDefault();sel=Math.max(0,sel-1);render();}
+    else if(e.key==='Enter'){e.preventDefault();pick();}
+  });
+  bd.addEventListener('mousedown',e=>{if(e.target===bd)close();});
+  render();
+  input.focus();
 }
 
-// ---------------------------------------------------------------
-// Version + init
-// ---------------------------------------------------------------
+// ================================================================
+// Keyboard shortcuts + clock
+// ================================================================
+function refreshCurrent(){
+  const fn=TAB_LOADERS[currentTab];
+  if(fn)fn();
+  if(currentTab==='overview'||!fn){updateStatus();updateChecks();}
+}
+function refreshAll(){
+  updateStatus();updateChecks();loadDisks();loadPorts();
+  loadProcesses();loadServices();loadDocker();loadVMs();loadNetwork();loadLogs();
+}
+function focusSearch(){
+  const panel=$('#tab-'+currentTab);
+  if(panel){const inp=panel.querySelector('input[type=search]');if(inp){inp.focus();inp.select();}}
+}
+document.addEventListener('keydown',e=>{
+  const mod=e.metaKey||e.ctrlKey;
+  if(mod&&e.key.toLowerCase()==='k'){e.preventDefault();openPalette();return;}
+  if(mod&&/^[1-8]$/.test(e.key)){e.preventDefault();showTab(TAB_NAMES[+e.key-1]);return;}
+  if(isTyping(e)||mod)return;
+  if(e.key==='/'&&document.activeElement===document.body){e.preventDefault();focusSearch();return;}
+  if(e.key.toLowerCase()==='r'){refreshCurrent();}
+});
+function tickClock(){
+  const t=new Date();
+  $('#clock').textContent=[t.getHours(),t.getMinutes(),t.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
+}
+
+// ================================================================
+// Init
+// ================================================================
 (async()=>{
+  $('#palKbd').textContent=MOD+' K';
+  $('#palKbd2').textContent=MOD+' K';
+  $('#kCtrlK').textContent=IS_MAC?'⌘':MOD;
+  $('#kCtrlN').textContent=IS_MAC?'⌘':MOD;
   const v=await fetchJSON('/api/version');
   if(v){
     const vs='v'+(v.version||'');
-    document.getElementById('footerVersion').textContent=vs;
-    document.getElementById('brandVer').textContent=vs;
+    $('#footerVersion').textContent=vs;
+    $('#brandVer').textContent=vs;
   }
+  tickClock();
 })();
 
 updateStatus();updateChecks();loadDisks();loadPorts();
 loadProcesses();loadServices();loadDocker();loadVMs();loadNetwork();loadLogs();
 setInterval(updateStatus,3000);
 setInterval(updateChecks,8000);
-setInterval(()=>{loadDisks();},20000);
-setInterval(()=>{if(document.getElementById('procAuto').checked)loadProcesses();},5000);
-setInterval(()=>{if(document.getElementById('logAuto').checked&&document.getElementById('tab-logs').classList.contains('active'))loadLogs();},5000);
+setInterval(()=>{if(!document.hidden)loadDisks();},20000);
+setInterval(()=>{if(!document.hidden&&$('#procAuto').checked)loadProcesses();},5000);
+setInterval(()=>{if(!document.hidden&&$('#logAuto').checked&&$('#tab-logs').classList.contains('active'))loadLogs();},5000);
+setInterval(tickClock,1000);
+window.addEventListener('resize',drawSparks);
 
-// Open tab from URL hash (deep-linking)
+// Deep link
 const initial=location.hash.replace('#','');
 if(initial&&document.getElementById('tab-'+initial))showTab(initial);
 </script>
