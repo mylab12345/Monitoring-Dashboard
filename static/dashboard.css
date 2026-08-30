@@ -253,6 +253,7 @@ img{max-width:100%}
 .host-chip .hostname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px rgba(52,211,153,.8);flex-shrink:0}
 .status-dot.off{background:var(--red);box-shadow:0 0 8px rgba(248,113,113,.8)}
+.status-dot.degraded{background:var(--amber);box-shadow:0 0 8px rgba(251,191,36,.8)}
 
 /* ---------------- rail (collapsed) mode ---------------- */
 .app-shell.rail .sidebar{width:var(--sidebar-rail);padding:14px 8px 12px}
