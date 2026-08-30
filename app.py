@@ -87,6 +87,21 @@ def safe_name(name):
 def index():
     return render_template("index.html")
 
+@app.route("/api/health")
+def api_health():
+    """Cheap liveness/readiness probe used by the UI and service monitors.
+
+    Keep this endpoint independent of psutil and external commands so a
+    partially degraded host can still report that the Flask API is alive.
+    """
+    return jsonify({
+        "status": "ok",
+        "service": "Montoring API",
+        "version": APP_VERSION,
+        "pid": os.getpid(),
+        "time": datetime.now().isoformat(),
+    })
+
 @app.route("/api/version")
 def api_version():
     return jsonify({
@@ -1141,13 +1156,13 @@ def api_troubleshooting_fix_all():
     data = request.json or {}
     fixes_to_run = data.get("fixes", [])
     
-    # Get current issues to determine what to fix
-    _, issues_json, _ = run(f"curl -s http://localhost:{APP_PORT}/api/troubleshooting")
+    # Scan in-process. A localhost curl could fail behind a proxy, with a
+    # non-default port, or during startup even though this API request worked.
     try:
-        issues_data = json.loads(issues_json) if issues_json else {"issues": {"critical": [], "warnings": [], "info": []}}
-    except:
-        issues_data = {"issues": {"critical": [], "warnings": [], "info": []}}
-    
+        issues_data = _diag_scan()
+    except Exception as exc:
+        return jsonify({"fixed": [], "failed": [{"fix": "scan", "output": str(exc)[:300]}], "skipped": []}), 500
+
     all_issues = issues_data.get("issues", {}).get("critical", []) + \
                  issues_data.get("issues", {}).get("warnings", []) + \
                  issues_data.get("issues", {}).get("info", [])
@@ -1155,23 +1170,34 @@ def api_troubleshooting_fix_all():
     # Determine which fixes to run
     fixes_needed = set()
     for issue in all_issues:
-        if "fix" in issue:
-            fixes_needed.add(issue["fix"])
+        # Manual-guidance issues have fix=None; never send that sentinel to
+        # the executor as an "Unknown fix" action.
+        fix_id = issue.get("fix")
+        if fix_id:
+            fixes_needed.add(str(fix_id)[:80])
     
     # If specific fixes requested, filter
     if fixes_to_run:
         fixes_needed = fixes_needed.intersection(set(fixes_to_run))
     
+    def record_fix(fix_result, code=0):
+        """Do not report a shell command as fixed when it actually failed."""
+        if code == 0:
+            results["fixed"].append(fix_result)
+        else:
+            results["failed"].append(fix_result)
+
     # Execute fixes
     for fix in fixes_needed:
         fix_result = {"fix": fix, "output": ""}
+        code = 0
         try:
             if fix == "fix-broken-packages" and mgr:
                 cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("broken_packages", "")
                 if cmd:
                     code, out, err = run(cmd, timeout=300, sudo=True)
-                    fix_result["output"] = (out or err or "Done").strip()[-500:]
-                    results["fixed"].append(fix_result)
+                    fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                    record_fix(fix_result, code)
                 else:
                     fix_result["output"] = f"No fix available for {mgr}"
                     results["skipped"].append(fix_result)
@@ -1181,32 +1207,34 @@ def api_troubleshooting_fix_all():
                     "journalctl --vacuum-time=7d --vacuum-size=100M >/dev/null 2>&1; "
                     "find /var/log -type f -name '*.gz' -delete 2>/dev/null; echo 'Logs cleared'",
                     timeout=60, sudo=True)
-                fix_result["output"] = (out or "Logs cleared").strip()[-500:]
-                results["fixed"].append(fix_result)
+                fix_result["output"] = (out or err or "Logs cleared").strip()[-500:]
+                record_fix(fix_result, code)
             
             elif fix == "clear-old-logs":
                 code, out, err = run("find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null; echo 'Old logs cleared'", timeout=60, sudo=True)
-                fix_result["output"] = (out or "Done").strip()[-500:]
-                results["fixed"].append(fix_result)
+                fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                record_fix(fix_result, code)
             
             elif fix == "vacuum-journal":
                 code, out, err = run("journalctl --vacuum-time=7d --vacuum-size=100M 2>/dev/null; echo 'Journal vacuumed'", timeout=60, sudo=True)
-                fix_result["output"] = (out or "Done").strip()[-500:]
-                results["fixed"].append(fix_result)
+                fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                record_fix(fix_result, code)
             
             elif fix == "update-packages" and mgr:
-                cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("autoremove", "")
+                # Updating package metadata is not the same as removing
+                # packages. Use the manager's update command here.
+                cmd = FIX_COMMANDS.get(mgr, {}).get("update", "")
                 if cmd:
                     code, out, err = run(cmd, timeout=300, sudo=True)
-                    fix_result["output"] = (out or err or "Done").strip()[-500:]
-                    results["fixed"].append(fix_result)
+                    fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                    record_fix(fix_result, code)
 
             elif fix == "upgrade-packages" and mgr:
                 cmd = FIX_COMMANDS.get(mgr, {}).get("upgrade", "")
                 if cmd:
                     code, out, err = run(cmd, timeout=600, sudo=True)
                     fix_result["output"] = (out or err or "Upgrade complete").strip()[-500:]
-                    results["fixed"].append(fix_result)
+                    record_fix(fix_result, code)
                 else:
                     fix_result["output"] = f"No upgrade command available for {mgr}"
                     results["skipped"].append(fix_result)
@@ -1216,13 +1244,13 @@ def api_troubleshooting_fix_all():
                     code, out, err = run(SYSTEMD_FIXES["reset_failed"], timeout=30, sudo=True)
                     code2, out2, err2 = run(SYSTEMD_FIXES["restart_failed"], timeout=60, sudo=True)
                     fix_result["output"] = ((out or "") + (out2 or "")).strip()[-500:] or "Reset complete"
-                    results["fixed"].append(fix_result)
+                    record_fix(fix_result, code)
             
             elif fix == "docker-prune":
                 if which("docker"):
                     code, out, err = run("docker system prune -f", timeout=120, sudo=True)
-                    fix_result["output"] = (out or err or "Done").strip()[-500:]
-                    results["fixed"].append(fix_result)
+                    fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
+                    record_fix(fix_result, code)
                 else:
                     fix_result["output"] = "Docker not installed"
                     results["skipped"].append(fix_result)
@@ -1241,7 +1269,7 @@ def api_troubleshooting_fix_all():
                         except:
                             pass
                     fix_result["output"] = f"Attempted to clean {killed} zombie processes"
-                    results["fixed"].append(fix_result)
+                    record_fix(fix_result, code)
                 except Exception as e:
                     fix_result["output"] = str(e)
                     results["failed"].append(fix_result)

@@ -1004,12 +1004,25 @@ const ICON_PATHS={
 const icon=(n,s=15)=>'<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(ICON_PATHS[n]||'')+'</svg>';
 
 let busy=0;
+let lastApiError='';
 function spinRefresh(){const b=$('#refreshBtn');if(b)b.classList.toggle('spinning',busy>0);}
 async function fetchJSON(url,opts){
   busy++;spinRefresh();
-  try{const r=await fetch(url,opts);return await r.json();}
-  catch(e){return null;}
-  finally{busy--;spinRefresh();}
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),15000);
+  try{
+    const r=await fetch(url,Object.assign({},opts||{},{signal:controller.signal,headers:Object.assign({},(opts&&opts.headers)||{}, {'Accept':'application/json'})}));
+    const text=await r.text();
+    let data=null;
+    try{data=text?JSON.parse(text):null;}catch(e){throw new Error('API returned invalid JSON (HTTP '+r.status+')');}
+    if(!r.ok)throw new Error((data&&data.error)||('API request failed (HTTP '+r.status+')'));
+    lastApiError='';
+    return data;
+  }catch(e){
+    lastApiError=e&&e.name==='AbortError'?'API request timed out':(e&&e.message)||'API request failed';
+    console.warn('Montoring API:',url,lastApiError);
+    return null;
+  }finally{clearTimeout(timeout);busy--;spinRefresh();}
 }
 async function postJSON(url,body){
   busy++;spinRefresh();
@@ -1440,11 +1453,24 @@ async function updateStatus(){
   const d=await fetchJSON('/api/status');
   const chip=$('#liveChip'),conn=$('#connDot');
   if(!d||d.error){
-    chip.classList.add('off');conn.classList.add('off');
-    if(prevStatus===null)$('#hostChip').textContent='offline';
+    // /api/status is a metrics/readiness endpoint. Keep API connectivity
+    // separate: a slow or unavailable host metric must not be shown as the
+    // whole dashboard being offline.
+    chip.classList.add('off');conn.classList.remove('off');conn.classList.add('degraded');
+    if(prevStatus===null){
+      const probe=await fetchJSON('/api/health');
+      if(probe&&probe.status==='ok'){
+        $('#hostChip').textContent='API online · metrics unavailable';
+        $('#hostChip').title=lastApiError||'The Flask API is reachable, but live status failed.';
+      }else{
+        conn.classList.add('off');
+        $('#hostChip').textContent='API offline';
+        $('#hostChip').title=lastApiError||'Could not reach the Montoring API.';
+      }
+    }
     return;
   }
-  chip.classList.remove('off');conn.classList.remove('off');
+  chip.classList.remove('off');conn.classList.remove('off','degraded');
   const p=prevStatus;
   // CPU
   animNum($('#cpuVal'),d.cpu_percent);
