@@ -2,11 +2,11 @@
 """
 Montoring — Universal Linux System Dashboard
 Monitors system health, checks/fixes issues, manages processes, services,
-logs, Docker containers and libvirt VMs — on any Linux flavour.
+logs and libvirt VMs — on any Linux flavour.
 
 Run:  python3 app.py   (binds 0.0.0.0:$MONTORING_PORT, default 8050)
 Requirements: flask, psutil  (see requirements.txt)
-Privileges:   fixes/service/vm/docker actions use sudo automatically when
+Privileges:   fixes/service/vm actions use sudo automatically when
               not running as root (works best under the bundled systemd
               service which runs as root).
 """
@@ -352,11 +352,16 @@ def api_checks():
         failed = out.strip() if out else "0"
         results.append({"name": "Failed Services", "status": "warn" if _int_or(failed) > 0 else "ok",
                         "detail": f"{failed} failed"})
-    # Kernel errors
-    code, out, err = run("dmesg 2>/dev/null | grep -iE 'error|fail|warn' | wc -l")
-    dmsg = out.strip() if out else "0"
-    results.append({"name": "Kernel Errors", "status": "warn" if _int_or(dmsg) > 5 else "ok",
-                    "detail": f"{dmsg} error lines"})
+    # Current-boot kernel errors. Use journal priority instead of matching words
+    # such as "error" in otherwise harmless device names/messages.
+    if which("journalctl"):
+        kernel_cmd = "journalctl -k -b -p err..alert --no-pager -q 2>/dev/null"
+    else:
+        kernel_cmd = "dmesg --level=err,crit,alert,emerg 2>/dev/null"
+    code, out, err = run(f"{kernel_cmd} | wc -l")
+    dmsg = out.strip() if code == 0 and out else "0"
+    results.append({"name": "Kernel Errors", "status": "warn" if _int_or(dmsg) > 0 else "ok",
+                    "detail": f"{dmsg} current-boot error lines"})
     # Zombie processes
     try:
         import psutil
@@ -413,12 +418,6 @@ LOG_FIXES = {
     "clear_old_logs": "find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null",
 }
 
-DOCKER_FIXES = {
-    "prune_system": "docker system prune -f",
-    "prune_volumes": "docker volume prune -f",
-    "prune_images": "docker image prune -af",
-}
-
 # ------------------------------------------------------------------
 # Troubleshooting Hub — guided diagnostics, fix & verification
 # ------------------------------------------------------------------
@@ -430,9 +429,8 @@ TROUBLESHOOT_CATEGORIES = {
     "network":  {"label": "Network",            "icon": "network"},
     "packages": {"label": "Packages & Updates", "icon": "package"},
     "kernel":   {"label": "Kernel & Hardware",  "icon": "zap"},
-    "docker":   {"label": "Docker & Containers","icon": "box"},
 }
-CATEGORY_ORDER = ["cpu", "memory", "disk", "services", "network", "packages", "kernel", "docker"]
+CATEGORY_ORDER = ["cpu", "memory", "disk", "services", "network", "packages", "kernel"]
 
 def _top_processes(count=6, order="cpu"):
     """Small, fast process snapshot for deep-diagnostics tables."""
@@ -575,9 +573,12 @@ def _diag_scan():
         mem_fix = {
             "id": None,
             "label": "Free memory / tune workload",
-            "description": "No automatic fix is applied for memory pressure. Close or restart memory-heavy applications, or investigate the top consumers below.",
+            "description": "Use the Processes dashboard to inspect and stop a confirmed runaway process, or run the read-only commands below. No process is killed automatically.",
             "risk": "medium",
-            "commands": [],   # guidance only — never auto-kill
+            "commands": [
+                "ps -eo pid,user,%mem,rss,comm --sort=-rss | head -20",
+                "systemd-cgtop --iterations=1 --depth=2",
+            ],
         }
         mem_verify = [_diag_ev("Re-check memory usage", "below 85%", "free -h")]
         deep_mem = {"kind": "procs", "title": "Top memory consumers", "columns": ["PID", "Process", "CPU %", "MEM %", "RSS"],
@@ -608,8 +609,11 @@ def _diag_scan():
                 impact="Disk-backed paging causes high latency for every process; heavy swapping also wears SSDs.",
                 recommended_fix={
                     "id": None, "label": "Reduce memory pressure",
-                    "description": "Free RAM by closing large applications or adding RAM; check the top consumers in the deep diagnostics.",
-                    "risk": "medium", "commands": [],
+                    "description": "Use the Processes dashboard to stop only a confirmed runaway process. These read-only commands identify memory and swap consumers before you act.",
+                    "risk": "medium", "commands": [
+                        "ps -eo pid,user,%mem,rss,comm --sort=-rss | head -20",
+                        "vmstat 1 5",
+                    ],
                 },
                 verify=[_diag_ev("Re-check swap usage", "below 40%", "free -h")]))
     except Exception:
@@ -712,7 +716,7 @@ def _diag_scan():
                     "label": "Reset and restart failed services",
                     "description": "Clears failed state and restarts each failed unit; services that fail again stay visible.",
                     "risk": "medium",
-                    "commands": ["systemctl reset-failed", "systemctl restart <unit>"],
+                    "commands": ["systemctl reset-failed"] + [f"systemctl restart {shlex.quote(unit)}" for unit in failed_services[:8]],
                 },
                 verify=[_diag_ev("Re-check failed services", "0 failed", "systemctl --failed")],
                 deep={"kind": "services", "title": "Failed units", "rows": svc_rows}))
@@ -756,7 +760,7 @@ def _diag_scan():
                 recommended_fix={
                     "id": None, "label": "Bring the interface up",
                     "description": "Use nmcli/ip to bring the link up, or check physical cabling and network-manager state.",
-                    "risk": "medium", "commands": ["ip -br addr", "ip link set <iface> up"],
+                    "risk": "medium", "commands": ["ip -br addr"] + [f"ip link set {shlex.quote(iface)} up" for iface in down],
                 },
                 verify=[_diag_ev("Re-check interface state", "up", "ip -br addr")]))
     except Exception:
@@ -781,14 +785,32 @@ def _diag_scan():
             },
             verify=[_diag_ev("Re-run dpkg audit", "no errors", "dpkg --audit")]))
     updates = _updatable_packages()
-    upd_ev = [_diag_ev("Packages upgradable", f"{updates['count']} ({updates['manager'] or 'n/a'})", "apt list --upgradable" if updates["manager"] == "apt" else "check-update")]
+    check_commands = {
+        "apt": "apt list --upgradable",
+        "dnf": "dnf check-update",
+        "yum": "yum check-update",
+        "zypper": "zypper list-updates",
+        "pacman": "pacman -Qu",
+        "apk": "apk version -l '<'",
+    }
+    check_command = check_commands.get(updates["manager"], "")
+    upd_ev = [_diag_ev("Packages upgradable", f"{updates['count']} ({updates['manager'] or 'n/a'})", check_command)]
+    upgrade_commands = {
+        "apt": "apt update && apt upgrade -y",
+        "dnf": "dnf upgrade -y",
+        "yum": "yum upgrade -y",
+        "zypper": "zypper update -y",
+        "pacman": "pacman -Syu --noconfirm",
+        "apk": "apk update && apk upgrade",
+    }
     upd_fix = {
-        "id": "update-packages",
+        "id": "upgrade-packages",
         "label": "Install available updates",
         "description": f"Runs the package-manager upgrade for {updates['manager'] or 'your system'}.",
-        "risk": "medium", "commands": [],
+        "risk": "medium",
+        "commands": [upgrade_commands[updates["manager"]]] if updates["manager"] in upgrade_commands else [],
     }
-    upd_verify = [_diag_ev("Re-check pending updates", "0 packages", "check-update")]
+    upd_verify = [_diag_ev("Re-check pending updates", "0 packages", check_command)]
     if updates["count"] > 50:
         put("warnings", _diag_issue(
             "many_updates", "Many Pending Updates",
@@ -805,90 +827,50 @@ def _diag_scan():
             recommended_fix=upd_fix, verify=upd_verify))
 
     # -------------------------------------------------- 7. Kernel
-    code, out, err = run("dmesg 2>/dev/null | grep -iE 'error|fail|critical' | tail -20")
+    # Restrict the scan to real err..alert priority records from this boot.
+    # Text matching produced false warnings for harmless lines containing words
+    # such as "failed" or "error".
+    kernel_log_cmd = "journalctl -k -b -p err..alert --no-pager -q"
+    code, out, err = run(f"{kernel_log_cmd} -n 20 2>/dev/null")
+    if code != 0:
+        kernel_log_cmd = "dmesg --level=err,crit,alert,emerg"
+        code, out, err = run(f"{kernel_log_cmd} 2>/dev/null | tail -20")
     error_lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
     if error_lines:
-        if len(error_lines) > 10:
-            put("warnings", _diag_issue(
-                "kernel_errors", "Kernel Errors Detected",
-                f"{len(error_lines)} recent kernel error/fail lines found in dmesg.",
-                "kernel", "warning", "zap", evidence=[
-                    _diag_ev("Error lines (last 20)", f"{len(error_lines)}", "dmesg --level=err"),
-                    _diag_ev("Sample", error_lines[0][:180] if error_lines else "", "dmesg | tail"),
-                ],
-                sample=error_lines[:3],
-                impact="Kernel errors can indicate failing hardware, driver bugs or filesystem corruption — often the root cause of other symptoms.",
-                recommended_fix={
-                    "id": None, "label": "Collect and diagnose kernel logs",
-                    "description": "Check the samples for driver/hardware matches, then act accordingly (update firmware/driver, reseat hardware, check fsck).",
-                    "risk": "low", "commands": ["journalctl -k -b --no-pager | tail -80"],
-                },
-                verify=[_diag_ev("Re-check dmesg", "fewer error lines", "dmesg --level=err | wc -l")],
-                deep={"kind": "logs", "title": "Recent kernel error lines", "lines": error_lines[:6]}))
-        else:
-            put("info", _diag_issue(
-                "kernel_notes", "Kernel Log Notes",
-                f"{len(error_lines)} minor kernel error line(s) found.",
-                "kernel", "info", "zap",
-                evidence=[_diag_ev("Error lines", f"{len(error_lines)}", "dmesg --level=err")],
-                impact="Usually benign, but worth correlating with other symptoms.",
-                recommended_fix={
-                    "id": None, "label": "Watch dmesg",
-                    "description": "No action needed now; monitor if issues persist.",
-                    "risk": "low", "commands": ["dmesg --level=err | tail -20"],
-                },
-                verify=[_diag_ev("Re-check dmesg", "count stable or lower", "dmesg --level=err | wc -l")],
-                sample=error_lines[:2]))
-
-    # -------------------------------------------------- 8. Docker
-    if which("docker"):
-        code, out, err = run("docker info 2>&1", timeout=15)
-        if code != 0:
-            put("warnings", _diag_issue(
-                "docker_daemon_down", "Docker Daemon Unavailable",
-                "Docker CLI is installed but the daemon is not reachable. " + (err or out or "").strip()[:160],
-                "docker", "warning", "box",
-                evidence=[_diag_ev("Docker status", "daemon unreachable", "docker info")],
-                impact="All containers stop being managed: no restarts on boot, no builds, no log or resource control.",
-                recommended_fix={
-                    "id": None,
-                    "label": "Start the Docker daemon",
-                    "description": "Start/enable the docker service; check its journal if it fails to come up.",
-                    "risk": "low", "commands": ["systemctl start docker", "journalctl -u docker --no-pager -n 50"],
-                },
-                verify=[_diag_ev("Re-check Docker", "daemon OK", "docker info")]))
-        else:
-            warn_out, warn_err = run("docker info 2>&1 | grep -i 'warning\\|error' | head -5", timeout=15)
-            if warn_out and warn_out.strip():
-                put("warnings", _diag_issue(
-                    "docker_warnings", "Docker Warnings",
-                    "Docker daemon reports warnings: " + warn_out.strip(),
-                    "docker", "warning", "box", fix="docker-prune",
-                    evidence=[_diag_ev("Daemon warnings", warn_out.strip().splitlines()[0][:160], "docker info")],
-                    impact="Warnings often precede storage exhaustion or degraded container networking.",
-                    recommended_fix={
-                        "id": "docker-prune",
-                        "label": "Prune unused Docker data",
-                        "description": "Removes unused containers, networks and dangling images. Images and volumes in use are kept.",
-                        "risk": "medium", "commands": ["docker system prune -f"],
-                    },
-                    verify=[_diag_ev("Re-check Docker warnings", "no warnings", "docker info")]))
-            code, out, err = run("docker images -f 'dangling=true' -q 2>/dev/null | wc -l", timeout=15)
-            dangling = _int_or((out or "").strip()) if out else 0
-            if dangling > 5:
-                put("info", _diag_issue(
-                    "dangling_images", "Dangling Docker Images",
-                    f"{dangling} dangling images can be removed (they consume disk but serve no runnable tag).",
-                    "docker", "info", "box", fix="docker-prune",
-                    evidence=[_diag_ev("Dangling images", f"{dangling}", "docker images -f dangling=true -q | wc -l")],
-                    impact="Repeated builds leak disk space; cleanup keeps storage predictable.",
-                    recommended_fix={
-                        "id": "docker-prune",
-                        "label": "Remove dangling images",
-                        "description": "Prunes unused Docker data including dangling images.",
-                        "risk": "medium", "commands": ["docker image prune -f"],
-                    },
-                    verify=[_diag_ev("Re-check dangling images", "5 or fewer", "docker images -f dangling=true -q | wc -l")]))
+        text = "\n".join(error_lines).lower()
+        commands = [kernel_log_cmd + " | tail -80"]
+        guidance = "Review the exact component in the log before changing the system; kernel faults do not have a safe universal automatic fix."
+        if any(k in text for k in ("i/o error", "blk_update", "buffer i/o", "nvme", "ata1:", "ata2:", "ata error")):
+            guidance = "A storage fault is indicated. Back up important data first, identify the affected disk, then inspect its health."
+            commands += [
+                "lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS,MODEL,SERIAL",
+                "for d in $(lsblk -dn -o NAME,TYPE | awk '$2==\"disk\" {print \"/dev/\"$1}'); do smartctl -H \"$d\"; done",
+            ]
+        elif any(k in text for k in ("ext4-fs error", "xfs", "btrfs error", "filesystem error")):
+            guidance = "A filesystem fault is indicated. Back up data and schedule an offline filesystem check; never run fsck on a mounted filesystem."
+            commands += ["findmnt -no SOURCE,FSTYPE,OPTIONS /", "systemctl --failed --no-pager"]
+        elif any(k in text for k in ("out of memory", "oom-killer", "killed process")):
+            guidance = "The kernel ran out of memory. Identify the largest consumers in the Processes dashboard before restarting or stopping one."
+            commands += ["ps -eo pid,user,%mem,rss,comm --sort=-rss | head -20", "journalctl -k -b -g 'oom|killed process' --no-pager"]
+        elif any(k in text for k in ("firmware", "microcode", "acpi", "bios")):
+            guidance = "Firmware or platform code is implicated. Check vendor firmware updates and current microcode before changing drivers."
+            commands += ["fwupdmgr get-updates", "journalctl -k -b -g 'firmware|microcode|acpi|bios' --no-pager"]
+        put("warnings", _diag_issue(
+            "kernel_errors", "Kernel Errors Detected",
+            f"{len(error_lines)} current-boot kernel error line(s) found.",
+            "kernel", "warning", "zap", evidence=[
+                _diag_ev("Error lines (last 20)", f"{len(error_lines)}", kernel_log_cmd),
+                _diag_ev("Sample", error_lines[0][:180], kernel_log_cmd + " | tail"),
+            ],
+            sample=error_lines[:3],
+            impact="Kernel errors can indicate failing hardware, driver bugs, memory pressure or filesystem corruption.",
+            recommended_fix={
+                "id": None, "label": "Resolve the reported kernel component",
+                "description": guidance,
+                "risk": "medium", "commands": commands,
+            },
+            verify=[_diag_ev("Re-check current-boot kernel errors", "no new errors after remediation/reboot", kernel_log_cmd)],
+            deep={"kind": "logs", "title": "Current-boot kernel errors", "lines": error_lines[:8]}))
 
     # -------------------------------------------------- 9. Log hygiene (disk)
     code, out, err = run("find /var/log -type f -name '*.gz' -mtime +30 2>/dev/null | wc -l")
@@ -993,7 +975,6 @@ def _diag_scan():
         "sudo": PASSWORDLESS_SUDO,
         "pkg_manager": mgr,
         "systemd": which("systemctl"),
-        "docker": which("docker"),
         "journal": which("journalctl"),
     }
 
@@ -1081,12 +1062,22 @@ def _verify_issue(iid):
                        [_diag_ev("dpkg audit", "clean" if not bad else "errors", "dpkg --audit")])
         if iid in ("many_updates", "pending_updates"):
             u = _updatable_packages()
+            check_cmd = {
+                "apt": "apt list --upgradable", "dnf": "dnf check-update",
+                "yum": "yum check-update", "zypper": "zypper list-updates",
+                "pacman": "pacman -Qu", "apk": "apk version -l '<'",
+            }.get(u["manager"], "")
             return res(u["count"] == 0, f"{u['count']} pending update(s)",
-                       [_diag_ev("Pending updates", str(u["count"]), "check-update")])
-        if iid in ("kernel_errors", "kernel_notes"):
-            _, out, _ = run("dmesg 2>/dev/null | grep -iE 'error|fail|critical' | wc -l")
-            n = _int_or((out or "").strip()) if out else 0
-            return res(n <= 10, f"{n} kernel error line(s)", [_diag_ev("Kernel errors", str(n), "dmesg --level=err")])
+                       [_diag_ev("Pending updates", str(u["count"]), check_cmd)])
+        if iid == "kernel_errors":
+            cmd = "journalctl -k -b -p err..alert --no-pager -q 2>/dev/null"
+            code, out, _ = run(cmd)
+            if code != 0:
+                cmd = "dmesg --level=err,crit,alert,emerg 2>/dev/null"
+                _, out, _ = run(cmd)
+            n = len([line for line in (out or "").splitlines() if line.strip()])
+            return res(n == 0, f"{n} current-boot kernel error line(s)",
+                       [_diag_ev("Kernel errors", str(n), cmd)])
         if iid == "network_errors":
             io = psutil.net_io_counters()
             errs = (io.errin or 0) + (io.errout or 0) + (io.dropin or 0) + (io.dropout or 0)
@@ -1118,19 +1109,6 @@ def _verify_issue(iid):
                 return res(size_mb <= 2048, f"Journal {m.group(1)}{unit}",
                            [_diag_ev("Journal size", f"{m.group(1)}{unit}", "journalctl --disk-usage")])
             return res(True, "journalctl unavailable")
-        if iid == "docker_daemon_down":
-            code2, _, err2 = run("docker info >/dev/null 2>&1")
-            return res(code2 == 0,
-                       "Docker daemon OK" if code2 == 0 else "Docker daemon still unreachable",
-                       [_diag_ev("Docker", "OK" if code2 == 0 else "unreachable", "docker info")])
-        if iid == "docker_warnings":
-            _, out, _ = run("docker info 2>&1 | grep -i 'warning\\|error' | head -5")
-            return res(not (out or "").strip(), "no docker warnings" if not (out or "").strip() else "warnings remain",
-                       [_diag_ev("Docker warnings", (out or "").strip()[:120] or "none", "docker info")])
-        if iid == "dangling_images":
-            _, out, _ = run("docker images -f 'dangling=true' -q 2>/dev/null | wc -l")
-            n = _int_or((out or "").strip()) if out else 0
-            return res(n <= 5, f"{n} dangling image(s)", [_diag_ev("Dangling images", str(n), "docker images -f dangling=true -q | wc -l")])
     except Exception as e:
         return res(False, "verification error: " + str(e)[:200])
     return res(False, "no automated verification for this issue")
@@ -1246,15 +1224,6 @@ def api_troubleshooting_fix_all():
                     fix_result["output"] = ((out or "") + (out2 or "")).strip()[-500:] or "Reset complete"
                     record_fix(fix_result, code)
             
-            elif fix == "docker-prune":
-                if which("docker"):
-                    code, out, err = run("docker system prune -f", timeout=120, sudo=True)
-                    fix_result["output"] = (out or err or ("Done" if code == 0 else "command failed")).strip()[-500:]
-                    record_fix(fix_result, code)
-                else:
-                    fix_result["output"] = "Docker not installed"
-                    results["skipped"].append(fix_result)
-            
             elif fix == "clean-zombies":
                 try:
                     import psutil
@@ -1335,12 +1304,6 @@ def api_fix():
             "journalctl --vacuum-time=7d >/dev/null 2>&1; "
             "find /var/log -type f -name '*.gz' -delete 2>/dev/null; echo 'Logs cleared'",
             timeout=60, sudo=True)
-    elif action == "docker-prune":
-        if which("docker"):
-            _, msg, err = run("docker system prune -f", timeout=120, sudo=True)
-            msg = (msg or err or "done")[-400:]
-        else:
-            msg = "Docker not installed"
     else:
         msg = "Unknown action"
     return jsonify({"result": (msg or "Done")[:500]})
@@ -1616,76 +1579,6 @@ def api_network():
         return jsonify({"nics": nics})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-# ------------------------------------------------------------------
-# Docker
-# ------------------------------------------------------------------
-@app.route("/api/docker")
-def api_docker():
-    if not which("docker"):
-        return jsonify({"available": False, "containers": [], "info": ""})
-    code, out, err = run("docker ps -a --format '{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'", timeout=15, sudo=True)
-    if code != 0:
-        return jsonify({"available": False, "containers": [], "info": (err or "docker not accessible").strip()[:200]})
-    containers = []
-    for line in out.splitlines():
-        parts = (line.split("|") + ["", "", "", ""])[:4]
-        if parts[0]:
-            containers.append({"name": parts[0], "image": parts[1], "status": parts[2], "ports": parts[3]})
-    return jsonify({"available": True, "containers": containers})
-
-@app.route("/api/docker/action", methods=["POST"])
-def api_docker_action():
-    data = request.json or {}
-    name, action = data.get("name", ""), data.get("action", "")
-    if not safe_name(name):
-        return jsonify({"error": "invalid container name"}), 400
-    if action not in ("start", "stop", "restart", "remove"):
-        return jsonify({"error": "invalid action"}), 400
-    flag = "-f " if action == "remove" else ""
-    _, out, err = run(f"docker {action} {flag}{shlex.quote(name)}", timeout=60, sudo=True)
-    if err:
-        return jsonify({"error": err.strip()[:300]}), 500
-    return jsonify({"result": f"{action} {name}: ok"})
-
-@app.route("/api/docker/prune", methods=["POST"])
-def api_docker_prune():
-    if not which("docker"):
-        return jsonify({"error": "docker not installed"}), 400
-    _, out, err = run("docker system prune -f", timeout=120, sudo=True)
-    return jsonify({"result": (out or err or "pruned")[-400:]})
-
-@app.route("/api/docker/images")
-def api_docker_images():
-    """Local images list (for the Docker tab inventory)."""
-    if not which("docker"):
-        return jsonify({"available": False, "images": []})
-    code, out, err = run(
-        "docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedSince}}'",
-        timeout=15, sudo=True)
-    if code != 0:
-        return jsonify({"available": False, "images": [], "info": (err or "").strip()[:200]})
-    images = []
-    for line in out.splitlines():
-        parts = (line.split("|") + ["", "", "", ""])[:4]
-        if parts[0] and not parts[0].startswith("<none>:<none>"):
-            images.append({"repo": parts[0], "id": parts[1][:12], "size": parts[2], "created": parts[3]})
-    return jsonify({"available": True, "images": images[:120]})
-
-@app.route("/api/docker/usage")
-def api_docker_usage():
-    """docker system df summary for the storage header."""
-    if not which("docker"):
-        return jsonify({"available": False, "rows": []})
-    code, out, _ = run("docker system df --format '{{.Type}}|{{.TotalCount}}|{{.Active}}|{{.Size}}|{{.Reclaimable}}'",
-                       timeout=20, sudo=True)
-    rows = []
-    for line in (out or "").splitlines():
-        parts = (line.split("|") + ["", "", "", "", ""])[:5]
-        if parts[0]:
-            rows.append({"type": parts[0], "count": parts[1], "active": parts[2],
-                         "size": parts[3], "reclaimable": parts[4]})
-    return jsonify({"available": code == 0 and bool(rows), "rows": rows})
 
 # ------------------------------------------------------------------
 # Desktop app integration
