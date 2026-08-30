@@ -1,25 +1,12 @@
-# Core dependencies with pinned secure versions
-flask>=3.0.0,<4.0.0
-psutil>=5.9.0,<7.0.0
-markupsafe>=2.1.3
-
-# Security enhancements
-flask-limiter>=3.5.0
-python-dotenv>=1.0.0
-
-# HTTP client libraries (pinned to secure versions)
-aiohttp>=3.14.3
-urllib3>=2.6.3
-requests>=2.32.3
-
-# Auth library (pinned to secure version)
-authlib>=1.6.11
-
-# Template engine
-werkzeug>=3.1.6
-
-# Async support
-tornado>=6.5.7
-
-# ML libraries (if needed, use safe loading practices)
-# transformers - use with trust_remote_code=False always
+# Core dependencies with pinned secure version ranges.
+# Keep this list to packages the application actually imports:
+#   app.py  -> flask, psutil, markupsafe, flask-limiter, python-dotenv, werkzeug
+#   main()  -> waitress (production WSGI server, used when installed)
+# Ranges are upper-bounded for reproducibility; pip-audit clean as of 2026-08.
+flask>=3.0.3,<3.2.0
+psutil>=5.9.8,<8.0.0
+markupsafe>=2.1.5,<4.0.0
+flask-limiter>=3.8.0,<5.0.0
+python-dotenv>=1.0.1,<2.0.0
+werkzeug>=3.1.6,<3.2.0
+waitress>=3.0.0,<4.0.0

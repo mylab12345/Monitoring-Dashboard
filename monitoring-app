@@ -41,13 +41,17 @@ except Exception:
     pass
 PORT = os.environ.get("MONITORING_PORT", PORT)
 HOME_DIR = os.environ.get("MONITORING_HOME", HOME_DIR)
+TOKEN = os.environ.get("MONITORING_TOKEN", "").strip()
 URL = f"http://127.0.0.1:{PORT}"
 ICON = os.path.join(HOME_DIR, "static", "icon.png")
 
 
 def api_up(timeout=2):
     try:
-        with urllib.request.urlopen(f"{URL}/api/version", timeout=timeout) as r:
+        req = urllib.request.Request(f"{URL}/api/version")
+        if TOKEN:
+            req.add_header("Authorization", "Bearer " + TOKEN)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
     except Exception:
         return None

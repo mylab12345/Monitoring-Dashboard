@@ -38,11 +38,11 @@ rm -rf "$PRIVILEGE_DIR"
 rm -f "$SUDOERS_FILE"
 log "Removed privileged helpers and $SUDOERS_FILE"
 
-# CLI + env
-rm -f /usr/local/bin/monitoring /etc/monitoring.env \
+# CLI + env (both the control CLI and the desktop-app launcher)
+rm -f /usr/local/bin/monitoring /usr/local/bin/monitoring-app /etc/monitoring.env \
       /usr/share/applications/monitoring.desktop /etc/xdg/autostart/monitoring.desktop \
       /usr/share/pixmaps/monitoring.png
-log "Removed CLI and /etc/monitoring.env"
+log "Removed CLI, desktop launcher and /etc/monitoring.env"
 
 # Application
 if [ "$PURGE" -eq 1 ]; then

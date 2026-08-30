@@ -11,7 +11,7 @@ Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rock
 The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **creates a dedicated non-login system account `monitoring`**, installs only the explicitly whitelisted sudo helpers in `/etc/sudoers.d/monitoring` (validated with `visudo`), **installs the app** to `/opt/monitoring`, registers it as a **system service running as `monitoring`**, installs the **desktop app** (menu shortcut + autostart) and adds a **`monitoring` CLI**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/mylab12345/Montoring/main/install.sh | sudo bash
 ```
 
 Or from a local checkout:
@@ -20,9 +20,30 @@ Or from a local checkout:
 sudo bash install.sh
 ```
 
-Options: `--port N` (default 8050), `--home DIR` (default /opt/monitoring), `--no-vm` (skip libvirt tooling), `--no-start`.
+Options: `--port N` (default 8050), `--bind ADDR` (default 0.0.0.0), `--token TOKEN` (or `auto` to generate one — see Security below), `--home DIR` (default /opt/monitoring), `--no-vm` (skip libvirt tooling), `--no-start`.
 
 When done, open **http://localhost:8050** — or launch it like a normal app (next section).
+
+## 🔐 Security (read this before exposing the dashboard)
+
+The dashboard can **control the whole machine** — kill processes, start/stop
+services, reboot VMs, run package upgrades, vacuum logs. Treat it as a root
+shell with a GUI:
+
+- **Access token (recommended):** install with `sudo bash install.sh --token auto`
+  (or set `MONITORING_TOKEN` in `/etc/monitoring.env`). Every `/api/*` request
+  then requires `Authorization: Bearer <token>`; the UI asks for the token the
+  first time it loads. The token survives re-installs and updates.
+- **Bind address:** default is `0.0.0.0`. For a single-user machine use
+  `sudo bash install.sh --bind 127.0.0.1` so the dashboard is only reachable
+  from localhost. The installer only opens the firewall port when you bind to
+  a non-loopback address, and warns loudly if you do so without a token.
+- **Privilege model:** the service runs as a dedicated non-login `monitoring`
+  account. Privileged operations (systemd, packages, journal vacuum, kill,
+  libvirt/qemu) go through whitelisted, argument-validating helper commands
+  granted via absolute-path `NOPASSWD` sudo entries — never `sudo ALL`, never
+  a shell.
+- **API calls with curl:** `curl -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/status`
 
 ## 🖥️ Standalone Desktop App
 
