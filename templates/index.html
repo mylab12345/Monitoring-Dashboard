@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Montoring — Linux Mint Dashboard</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+</head>
+<body>
+
+<!-- Background wallpaper -->
+<div class="bg-layer" aria-hidden="true"></div>
+
+<div class="container">
+
+  <!-- Header -->
+  <header class="header" role="banner">
+    <div>
+      <h1>Montoring</h1>
+      <div class="subtitle">Linux Mint OS — System Monitor & VM Manager</div>
+    </div>
+    <div class="meta" id="headerMeta">
+      <span>Loading…</span>
+    </div>
+  </header>
+
+  <!-- Metrics -->
+  <section aria-label="Live Metrics" class="grid-4" id="metricsGrid">
+    <article class="card" aria-label="CPU">
+      <div class="label">CPU Usage</div>
+      <div class="metric"><span class="val" id="cpuVal">--</span><span class="unit">%</span><span class="trend" id="cpuTrend">●</span></div>
+      <div class="progress-track"><div class="progress-fill" id="cpuBar" style="width:0%"></div></div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem">Load 1m: <strong id="load1">--</strong></div>
+    </article>
+    <article class="card" aria-label="Memory">
+      <div class="label">Memory</div>
+      <div class="metric"><span class="val" id="ramVal">--</span><span class="unit">%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="ramBar" style="width:0%"></div></div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem"><span id="ramUsed">--</span> / <span id="ramTotal">--</span> GB</div>
+    </article>
+    <article class="card" aria-label="Disk">
+      <div class="label">Disk /</div>
+      <div class="metric"><span class="val" id="diskVal">--</span><span class="unit">%</span></div>
+      <div class="progress-track"><div class="progress-fill" id="diskBar" style="width:0%"></div></div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem"><span id="diskUsed">--</span> / <span id="diskTotal">--</span> GB</div>
+    </article>
+    <article class="card" aria-label="Uptime">
+      <div class="label">Uptime</div>
+      <div class="metric"><span class="val" id="uptimeVal">--</span><span class="unit">h</span></div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim);margin-top:.4rem">Temp: <strong id="tempVal">--</strong> · Net: <strong id="netVal">--</strong></div>
+    </article>
+  </section>
+
+  <!-- Health & Fix -->
+  <section aria-label="System Health" class="grid-3" style="margin-top:1.5rem">
+    <article class="card" style="grid-column:span 2">
+      <h2>System Health Checks</h2>
+      <div id="checksList">Loading checks…</div>
+    </article>
+    <article class="card">
+      <h2>Quick Fixes</h2>
+      <p style="font-size:.9rem;color:var(--text-dim);margin-bottom:.75rem">Run safe maintenance actions on your Mint OS.</p>
+      <div class="btn-group">
+        <button class="btn" onclick="runFix('update')">Update Lists</button>
+        <button class="btn" onclick="runFix('upgrade')">Upgrade</button>
+        <button class="btn" onclick="runFix('autoremove')">Autoremove</button>
+        <button class="btn" onclick="runFix('clean')">Clean Cache</button>
+        <button class="btn" onclick="runFix('fix-broken')">Fix Broken</button>
+        <button class="btn" onclick="runFix('clear-logs')">Clear Logs</button>
+      </div>
+      <div id="fixResult" style="margin-top:.75rem;font-family:'JetBrains Mono',monospace;font-size:.82rem;color:#c8e6c9;min-height:1.2rem"></div>
+    </article>
+  </section>
+
+  <!-- VMs -->
+  <section aria-label="VM Manager" style="margin-top:1.5rem">
+    <article class="card" style="padding:1.25rem 1.5rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem">
+        <div><h2>Virtual Machines <span style="font-weight:400;color:var(--text-dim);font-size:.9rem">(libvirt / qemu)</span></h2><p style="font-size:.85rem;color:var(--text-dim)">Access via libvirt group. Resize disks safely.</p></div>
+        <button class="btn btn-primary" onclick="loadVMs()">Refresh VMs</button>
+      </div>
+      <div id="vmList" style="margin-top:1rem"></div>
+    </article>
+  </section>
+
+  <!-- System Details -->
+  <section aria-label="System Details" class="grid-3" style="margin-top:1.5rem">
+    <article class="card">
+      <h2>Network</h2>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--text-dim);line-height:1.8">
+        <div>Sent: <strong id="netSent">--</strong></div>
+        <div>Recv: <strong id="netRecv">--</strong></div>
+      </div>
+    </article>
+    <article class="card">
+      <h2>Users / Sessions</h2>
+      <div class="metric" style="margin-top:.4rem"><span class="val" id="usersVal">--</span><span class="unit" style="font-size:1.2rem">users</span></div>
+    </article>
+    <article class="card">
+      <h2>OS</h2>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:#fff;margin-top:.4rem" id="osInfo">--</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--text-dim);margin-top:.25rem" id="hostnameInfo">--</div>
+    </article>
+  </section>
+
+  <footer class="footer" role="contentinfo">Montoring — Built for Linux Mint • Minimal • Beautiful • Local</footer>
+</div>
+
+<script>
+// ---------------------------------------------------------------
+// Data fetch helpers
+// ---------------------------------------------------------------
+async function fetchJSON(url){
+  try{const r=await fetch(url);return await r.json();}catch(e){return null;}
+}
+
+function fmtTime(sec){
+  const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60);
+  if(d>0)return `${d}d ${h}h ${m}m`;
+  return `${h}h ${m}m`;
+}
+
+function barColor(v){
+  if(v>=85)return 'danger';
+  if(v>=60)return 'warn';
+  return '';
+}
+
+// ---------------------------------------------------------------
+// Status update
+// ---------------------------------------------------------------
+async function updateStatus(){
+  const d=await fetchJSON('/api/status');
+  if(!d)return;
+  document.getElementById('headerMeta').innerHTML=`
+    <span>${d.os}</span><span>${new Date().toLocaleTimeString()}</span><span>${d.hostname}</span>`;
+  document.getElementById('cpuVal').textContent=Math.round(d.cpu_percent);
+  document.getElementById('cpuBar').style.width=d.cpu_percent+'%';
+  document.getElementById('cpuBar').className='progress-fill '+barColor(d.cpu_percent);
+  document.getElementById('cpuTrend').textContent=d.cpu_percent>70?'●':'●';
+  document.getElementById('load1').textContent=d.load_1;
+
+  document.getElementById('ramVal').textContent=Math.round(d.ram_percent);
+  document.getElementById('ramBar').style.width=d.ram_percent+'%';
+  document.getElementById('ramBar').className='progress-fill '+barColor(d.ram_percent);
+  document.getElementById('ramUsed').textContent=d.ram_used_gb+' GB';
+  document.getElementById('ramTotal').textContent=d.ram_total_gb+' GB';
+
+  document.getElementById('diskVal').textContent=Math.round(d.disk_percent);
+  document.getElementById('diskBar').style.width=d.disk_percent+'%';
+  document.getElementById('diskBar').className='progress-fill '+barColor(d.disk_percent);
+  document.getElementById('diskUsed').textContent=d.disk_used_gb+' GB';
+  document.getElementById('diskTotal').textContent=d.disk_total_gb+' GB';
+
+  document.getElementById('uptimeVal').textContent=Math.round(d.uptime_sec/3600);
+  document.getElementById('tempVal').textContent=d.temp;
+  document.getElementById('netVal').textContent=d.net_sent+'/'+d.net_recv;
+
+  document.getElementById('netSent').textContent=d.net_sent;
+  document.getElementById('netRecv').textContent=d.net_recv;
+  document.getElementById('usersVal').textContent=d.users;
+  document.getElementById('osInfo').textContent=d.os;
+  document.getElementById('hostnameInfo').textContent=d.hostname;
+}
+
+// ---------------------------------------------------------------
+// Health checks
+// ---------------------------------------------------------------
+async function updateChecks(){
+  const list=document.getElementById('checksList');
+  const data=await fetchJSON('/api/checks');
+  if(!data){list.innerHTML='<div class="check-row">Unable to load checks.</div>';return;}
+  list.innerHTML=data.map(c=>`
+    <div class="check-row">
+      <div><strong>${c.name}</strong> <span style="font-family:'JetBrains Mono',monospace;font-size:.78rem;color:var(--text-dim)">${c.detail}</span></div>
+      <span class="status-badge status-${c.status}">${c.status}</span>
+    </div>
+  `).join('');
+}
+
+// ---------------------------------------------------------------
+// Fix actions
+// ---------------------------------------------------------------
+async function runFix(action){
+  const out=document.getElementById('fixResult');
+  out.textContent='Running…';
+  const r=await fetch('/api/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+  const j=await r.json();
+  out.textContent=j.result ? (j.result.length>200?j.result.slice(0,200)+'…':j.result) : 'Done';
+}
+
+// ---------------------------------------------------------------
+// VMs
+// ---------------------------------------------------------------
+async function loadVMs(){
+  const container=document.getElementById('vmList');
+  container.innerHTML='<div style="color:var(--text-dim)">Loading VMs…</div>';
+  const vms=await fetchJSON('/api/vms');
+  if(!vms || vms.length===0){
+    container.innerHTML='<div style="color:var(--text-dim)">No VMs found or libvirt not accessible.<br>Ensure you are in the <strong>libvirt</strong> group and the socket is available.</div>';
+    return;
+  }
+  container.innerHTML=vms.map(vm=>{
+    const cls=vm.state==='running'?'running':vm.state==='paused'?'paused':'shutoff';
+    return `
+    <div class="card vm-card ${cls}" style="margin-top:.75rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
+        <div>
+          <h3 style="font-size:1rem;margin-bottom:.15rem">${vm.name}</h3>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim)">
+            State: <strong style="color:#fff">${vm.state}</strong> · Memory: ${vm.mem} · vCPUs: ${vm.vcpus}
+          </div>
+        </div>
+        <button class="btn" onclick="openResizeModal('${vm.name}')">Resize Disk</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Resize modal (simple inline)
+function openResizeModal(name){
+  const diskPath=prompt(`Disk path for ${name} (e.g. /var/lib/libvirt/images/${name}.qcow2):`);
+  if(!diskPath) return;
+  const size=prompt('New size in GB (e.g. 40):');
+  if(!size) return;
+  fetch('/api/vm_resize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,disk_path:diskPath,new_size_gb:parseInt(size)})})
+    .then(r=>r.json()).then(d=>alert('Resize result: '+(d.result||d.error||'unknown')));
+}
+
+// ---------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------
+updateStatus();
+updateChecks();
+loadVMs();
+setInterval(updateStatus,3000);
+setInterval(updateChecks,8000);
+setInterval(loadVMs,15000);
+</script>
+
+</body>
+</html>

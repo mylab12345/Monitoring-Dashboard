@@ -1,0 +1,135 @@
+/* Montoring — Modern Dark Glass Dashboard */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@300;400;600&display=swap');
+
+:root{
+  --bg: #0b0d12;
+  --surface: rgba(255,255,255,0.05);
+  --surface-hover: rgba(255,255,255,0.08);
+  --border: rgba(255,255,255,0.08);
+  --text-main: #f2f2f7;
+  --text-dim: #a1a1aa;
+  --accent-1: #7ee787; /* mint green */
+  --accent-2: #7ee7f5; /* cyan */
+  --accent-3: #f0c27b; /* warm gold */
+  --accent-4: #e79df0; /* soft purple */
+  --radius: 24px;
+  --shadow: 0 24px 60px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04) inset;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:'Outfit',system-ui,sans-serif;
+  background:#0b0d12;
+  color:var(--text-main);
+  min-height:100vh;
+  overflow-x:hidden;
+}
+
+/* Background wallpaper + overlay */
+.bg-layer{
+  position:fixed;inset:0;z-index:-2;
+  background:url('wallpaper.jpg') center/cover no-repeat;
+  opacity:0.35;
+  filter:saturate(0.6) contrast(1.05);
+}
+.bg-layer::after{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(circle at 30% 20%, rgba(16,20,30,0.25) 0%, rgba(11,13,18,0.92) 70%);
+}
+
+/* Glass container */
+.container{
+  max-width:1280px;margin:2rem auto;padding:0 1.5rem 4rem;
+  position:relative;z-index:1;
+}
+
+/* Header */
+.header{
+  display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  margin-bottom:2rem;padding:1.25rem 1.75rem;
+  background:var(--surface);backdrop-filter:blur(24px) saturate(140%);
+  -webkit-backdrop-filter:blur(24px) saturate(140%);
+  border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);
+}
+.header h1{
+  font-weight:800;font-size:2.2rem;letter-spacing:-0.03em;line-height:1.05;
+  background:linear-gradient(135deg,#e8f5e9 0%,#7ee787 50%,#7ee7f5 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.header .subtitle{font-weight:300;color:var(--text-dim);margin-top:.15rem;font-size:.95rem}
+.header .meta{display:flex;gap:.75rem;font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text-dim)}
+.header .meta span{background:rgba(255,255,255,0.05);padding:.25rem .6rem;border-radius:999px;border:1px solid var(--border)}
+
+/* Grid */
+.grid-4{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.25rem}
+.grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.25rem}
+
+/* Cards */
+.card{
+  background:linear-gradient(160deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.03) 100%);
+  backdrop-filter:blur(16px) saturate(120%);-webkit-backdrop-filter:blur(16px) saturate(120%);
+  border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;
+  box-shadow:var(--shadow);transition:transform .15s ease, box-shadow .2s ease;
+  position:relative;overflow:hidden;
+}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--accent-1),var(--accent-2),var(--accent-3),var(--accent-4));
+  opacity:.7;
+}
+.card:hover{transform:translateY(-3px);box-shadow:0 32px 70px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.06) inset}
+.card h2{font-size:1.1rem;font-weight:600;margin-bottom:.75rem;letter-spacing:-0.01em;color:#fff}
+.card .label{font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em}
+
+/* Metrics big numbers */
+.metric{display:flex;align-items:baseline;gap:.5rem;margin-top:.25rem}
+.metric .val{font-size:2.6rem;font-weight:800;letter-spacing:-0.05em;line-height:1}
+.metric .unit{font-family:'JetBrains Mono',monospace;font-size:.9rem;color:var(--text-dim)}
+.metric .trend{font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--accent-1);margin-left:auto}
+
+/* Progress bars */
+.progress-track{height:10px;border-radius:999px;background:rgba(255,255,255,0.06);overflow:hidden;margin-top:.6rem;border:1px solid rgba(255,255,255,0.05)}
+.progress-fill{height:100%;border-radius:999px;transition:width .6s ease;background:linear-gradient(90deg,var(--accent-1),var(--accent-2))}
+.progress-fill.warn{background:linear-gradient(90deg,var(--accent-3),#ff9e7d)}
+.progress-fill.danger{background:linear-gradient(90deg,#ff6b6b,#ff8e8e)}
+
+/* Health status list */
+.check-row{display:flex;align-items:center;justify-content:space-between;padding:.6rem 0;border-bottom:1px solid rgba(255,255,255,0.06);font-size:.9rem}
+.check-row:last-child{border-bottom:0}
+.status-badge{font-family:'JetBrains Mono',monospace;font-size:.72rem;padding:.15rem .5rem;border-radius:999px;text-transform:uppercase;font-weight:600}
+.status-ok{background:rgba(126,231,135,0.15);color:var(--accent-1);border:1px solid rgba(126,231,135,0.3)}
+.status-warn{background:rgba(240,194,123,0.15);color:var(--accent-3);border:1px solid rgba(240,194,123,0.3)}
+.status-fail{background:rgba(255,107,107,0.15);color:#ff9e9e;border:1px solid rgba(255,107,107,0.3)}
+
+/* Buttons */
+.btn{
+  display:inline-flex;align-items:center;gap:.5rem;padding:.55rem 1rem;border-radius:12px;border:1px solid var(--border);
+  background:rgba(255,255,255,0.07);color:#fff;font-family:'Outfit',sans-serif;font-weight:600;font-size:.85rem;cursor:pointer;
+  backdrop-filter:blur(8px);transition:all .15s ease;text-decoration:none;
+}
+.btn:hover{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.18);transform:translateY(-1px)}
+.btn-primary{background:linear-gradient(135deg,#7ee787,#7ee7f5);color:#0b0d12;border-color:transparent}
+.btn-primary:hover{filter:brightness(1.1)}
+.btn-group{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.75rem}
+
+/* VM cards */
+.vm-card{border-left:3px solid var(--accent-3);}
+.vm-card.running{border-left-color:var(--accent-1)}
+.vm-card.paused{border-left-color:var(--accent-3)}
+.vm-card.shutoff{border-left-color:#c4c4c4}
+
+/* Forms / inputs inside cards */
+input, select{
+  background:rgba(255,255,255,0.06);border:1px solid var(--border);color:#fff;border-radius:10px;padding:.45rem .6rem;font-family:'Outfit',sans-serif;font-size:.85rem;outline:none;transition:border-color .15s}
+input:focus, select:focus{border-color:var(--accent-2)}
+
+/* Footer */
+.footer{margin-top:3rem;padding:.75rem;text-align:center;color:#73737d;font-size:.8rem;font-family:'JetBrains Mono',monospace}
+
+/* Responsive */
+@media(max-width:640px){
+  .header{flex-direction:column;align-items:flex-start}
+  .header h1{font-size:1.7rem}
+}
