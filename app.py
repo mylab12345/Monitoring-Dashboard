@@ -404,204 +404,733 @@ DOCKER_FIXES = {
     "prune_images": "docker image prune -af",
 }
 
-@app.route("/api/troubleshooting")
-def api_troubleshooting():
-    """Comprehensive troubleshooting diagnostics."""
+# ------------------------------------------------------------------
+# Troubleshooting Hub — guided diagnostics, fix & verification
+# ------------------------------------------------------------------
+TROUBLESHOOT_CATEGORIES = {
+    "cpu":      {"label": "CPU & Processes",    "icon": "cpu"},
+    "memory":   {"label": "Memory & Swap",      "icon": "mem"},
+    "disk":     {"label": "Disk & Storage",     "icon": "disk"},
+    "services": {"label": "Services & Daemons", "icon": "gear"},
+    "network":  {"label": "Network",            "icon": "network"},
+    "packages": {"label": "Packages & Updates", "icon": "package"},
+    "kernel":   {"label": "Kernel & Hardware",  "icon": "zap"},
+    "docker":   {"label": "Docker & Containers","icon": "box"},
+}
+CATEGORY_ORDER = ["cpu", "memory", "disk", "services", "network", "packages", "kernel", "docker"]
+
+def _top_processes(count=6, order="cpu"):
+    """Small, fast process snapshot for deep-diagnostics tables."""
+    try:
+        import psutil
+        rows = []
+        for p in psutil.process_iter(["pid", "name", "username", "memory_percent", "status"]):
+            try:
+                rss = p.memory_info().rss if hasattr(p, "memory_info") else 0
+                rows.append({
+                    "pid": p.info["pid"],
+                    "name": p.info["name"] or "?",
+                    "user": p.info["username"] or "-",
+                    "cpu": round(p.cpu_percent(interval=None) or 0.0, 1),
+                    "mem": round(p.info["memory_percent"] or 0.0, 1),
+                    "rss_mb": round((rss or 0) / 1024 / 1024, 1),
+                    "status": p.info["status"],
+                })
+            except Exception:
+                continue
+        key = "mem" if order == "mem" else "cpu"
+        rows.sort(key=lambda r: r.get(key, 0), reverse=True)
+        return rows[:count]
+    except Exception:
+        return []
+
+def _diag_issue(iid, name, detail, category, severity, icon=None, fix=None,
+                evidence=None, impact="", recommended_fix=None, verify=None,
+                deep=None, sample=None, processes=None, services=None):
+    """Build one enriched diagnostic issue (keeps legacy fields intact)."""
+    rec = recommended_fix or {}
+    return {
+        "id": iid,
+        "name": name,
+        "detail": detail,
+        "category": category,
+        "severity": severity,
+        "icon": icon or "alert",
+        "evidence": evidence or [],
+        "impact": impact or "",
+        "verify": verify or [],
+        "deep": deep,
+        "sample": sample,
+        "processes": processes,
+        "services": services,
+        "fix": rec.get("id") or fix,
+        "recommended_fix": rec or None,
+    }
+
+def _diag_ev(label, value, cmd=None):
+    e = {"label": label, "value": value}
+    if cmd:
+        e["cmd"] = cmd
+    return e
+
+def _diag_scan():
     issues = {"critical": [], "warnings": [], "info": []}
-    
-    # 1. Disk space check
-    code, out, err = run("df -h /")
-    if code == 0 and out:
-        lines = out.splitlines()
-        if len(lines) > 1:
-            parts = lines[1].split()
-            if len(parts) >= 5:
-                disk_pct = int(parts[4].replace('%', ''))
-                if disk_pct >= 95:
-                    issues["critical"].append({
-                        "id": "disk_critical",
-                        "name": "Critical Disk Space",
-                        "detail": f"Root partition is {disk_pct}% full",
-                        "fix": "clear-logs",
-                        "icon": "storage"
-                    })
-                elif disk_pct >= 85:
-                    issues["warnings"].append({
-                        "id": "disk_warning",
-                        "name": "Low Disk Space",
-                        "detail": f"Root partition is {disk_pct}% full",
-                        "fix": "clear-logs",
-                        "icon": "storage"
-                    })
-    
-    # 2. Failed systemd services
+    all_issues = []
+
+    def put(severity, issue):
+        issues[severity].append(issue)
+        all_issues.append(issue)
+
+    try:
+        import psutil
+    except Exception:
+        psutil = None
+
+    # -------------------------------------------------- 1. Disk & storage
+    try:
+        du = psutil.disk_usage("/")
+        total_gb, used_gb, free_gb = du.total / 1024**3, du.used / 1024**3, du.free / 1024**3
+        pct = round(du.percent, 1)
+        disk_ev = [
+            _diag_ev("Root usage", f"{pct:.0f}%  ·  {used_gb:.1f} / {total_gb:.1f} GB used", "df -h /"),
+            _diag_ev("Free space", f"{free_gb:.1f} GB", "df -h /"),
+        ]
+        disk_fix = {
+            "id": "clear-logs",
+            "label": "Free disk space",
+            "description": "Vacuum the system journal and remove old compressed logs to reclaim space. This never touches recent logs.",
+            "risk": "low",
+            "commands": ["journalctl --vacuum-time=7d --vacuum-size=100M",
+                         "find /var/log -type f -name '*.gz' -delete"],
+        }
+        disk_verify = [_diag_ev("Re-check root usage", "below 95%", "df -h /")]
+        if pct >= 95:
+            put("critical", _diag_issue(
+                "disk_critical", "Critical Disk Space",
+                f"Root filesystem is {pct:.0f}% full — only {free_gb:.1f} GB free.",
+                "disk", "critical", "disk", fix="clear-logs", evidence=disk_ev,
+                impact="Writes will fail: log rotation, package installs, temp files and application data. A full root filesystem can stop services and block logins.",
+                recommended_fix=disk_fix, verify=disk_verify))
+        elif pct >= 85:
+            put("warning", _diag_issue(
+                "disk_warning", "Low Disk Space",
+                f"Root filesystem is {pct:.0f}% full — {free_gb:.1f} GB free.",
+                "disk", "warning", "disk", fix="clear-logs", evidence=disk_ev,
+                impact="Continuous growth may soon trigger failed writes, truncated logs and service failures.",
+                recommended_fix=disk_fix, verify=disk_verify))
+        # inodes
+        code, out, _ = run("df -i / 2>/dev/null")
+        if code == 0 and out:
+            lines = out.splitlines()
+            if len(lines) > 1:
+                parts = lines[1].split()
+                if len(parts) >= 5:
+                    try:
+                        ipct = int(parts[4].replace("%", ""))
+                        if ipct >= 90:
+                            put("warning", _diag_issue(
+                                "disk_inodes", "Inodes Nearly Exhausted",
+                                f"Root filesystem uses {ipct}% of inodes; new files may be refused even with free space.",
+                                "disk", "warning", "disk", fix="clear-old-logs",
+                                evidence=[_diag_ev("Inode usage", f"{ipct}%  ·  {parts[3]} free", "df -i /")],
+                                impact="File creation will fail across the system, breaking caches, mail, logs and package operations.",
+                                recommended_fix={
+                                    "id": "clear-old-logs",
+                                    "label": "Remove old log files",
+                                    "description": "Delete compressed log files older than 30 days to free inodes in /var/log.",
+                                    "risk": "low",
+                                    "commands": ["find /var/log -type f -name '*.gz' -mtime +30 -delete"],
+                                },
+                                verify=[_diag_ev("Re-check inode usage", "below 90%", "df -i /")]))
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+
+    # -------------------------------------------------- 2. Memory & swap
+    try:
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        mem_ev = [
+            _diag_ev("Memory used", f"{mem.percent:.0f}%  ·  {mem.used / 1024**3:.1f} / {mem.total / 1024**3:.1f} GB", "free -h"),
+            _diag_ev("Swap used", f"{swap.percent:.0f}%  ·  {swap.used / 1024**3:.1f} / {swap.total / 1024**3:.1f} GB",
+                     "free -h") if swap.total else None,
+        ]
+        mem_ev = [e for e in mem_ev if e]
+        mem_fix = {
+            "id": None,
+            "label": "Free memory / tune workload",
+            "description": "No automatic fix is applied for memory pressure. Close or restart memory-heavy applications, or investigate the top consumers below.",
+            "risk": "medium",
+            "commands": [],   # guidance only — never auto-kill
+        }
+        mem_verify = [_diag_ev("Re-check memory usage", "below 85%", "free -h")]
+        deep_mem = {"kind": "procs", "title": "Top memory consumers", "columns": ["PID", "Process", "CPU %", "MEM %", "RSS"],
+                    "rows": _top_processes(6, "mem")}
+        top = _top_processes(1, "mem")
+        top_txt = f"Top consumer: {top[0]['name']} (PID {top[0]['pid']}, {top[0]['mem']}%)" if top else "No consumer info"
+        if mem.percent >= 95:
+            put("critical", _diag_issue(
+                "memory_critical", "Critical Memory Usage",
+                f"System memory is {mem.percent:.0f}% full ({mem.used / 1024**3:.1f} / {mem.total / 1024**3:.1f} GB). {top_txt}",
+                "memory", "critical", "mem", evidence=mem_ev, deep=deep_mem,
+                impact="The kernel will swap aggressively, causing severe slowdowns; the OOM killer may terminate processes and services.",
+                recommended_fix=mem_fix, verify=mem_verify))
+        elif mem.percent >= 85:
+            put("warning", _diag_issue(
+                "memory_warning", "High Memory Usage",
+                f"System memory is {mem.percent:.0f}% full. {top_txt}",
+                "memory", "warning", "mem", evidence=mem_ev, deep=deep_mem,
+                impact="Memory pressure can degrade performance, increase swap activity and eventually trigger OOM kills.",
+                recommended_fix=mem_fix, verify=mem_verify))
+        if swap.total and swap.percent >= 40:
+            put("warning", _diag_issue(
+                "swap_warning", "High Swap Usage",
+                f"Swap is {swap.percent:.0f}% used ({swap.used / 1024**3:.1f} / {swap.total / 1024**3:.1f} GB) — sustained swapping slows the whole system.",
+                "memory", "warning", "mem",
+                evidence=[_diag_ev("Swap used", f"{swap.percent:.0f}%", "free -h"),
+                          _diag_ev("Memory pressure", f"{mem.percent:.0f}% RAM used", "free -h")],
+                impact="Disk-backed paging causes high latency for every process; heavy swapping also wears SSDs.",
+                recommended_fix={
+                    "id": None, "label": "Reduce memory pressure",
+                    "description": "Free RAM by closing large applications or adding RAM; check the top consumers in the deep diagnostics.",
+                    "risk": "medium", "commands": [],
+                },
+                verify=[_diag_ev("Re-check swap usage", "below 40%", "free -h")]))
+    except Exception:
+        pass
+
+    # -------------------------------------------------- 3. CPU & load
+    try:
+        cores = psutil.cpu_count(logical=True) or 1
+        l1, l5, l15 = os.getloadavg()
+        load_ev = [
+            _diag_ev("Load average", f"{l1:.2f} / {l5:.2f} / {l15:.2f}  (over {cores} logical cores)", "uptime"),
+        ]
+        load_verify = [_diag_ev("Re-check load average", f"below {cores * 1.2:.0f} (load1)", "uptime")]
+        deep_cpu = {"kind": "procs", "title": "Top CPU consumers", "columns": ["PID", "Process", "CPU %", "MEM %", "RSS"],
+                    "rows": _top_processes(6, "cpu")}
+        if l1 >= cores * 2:
+            put("critical", _diag_issue(
+                "cpu_load_critical", "Extreme CPU Load",
+                f"Load average {l1:.2f} is more than {cores * 2:.0f} (2× {cores} cores) — the system is overloaded.",
+                "cpu", "critical", "cpu", evidence=load_ev, deep=deep_cpu,
+                impact="Interactive sessions stall, scheduled jobs miss deadlines, and timeouts cascade across services.",
+                recommended_fix={
+                    "id": None, "label": "Identify and tame the run-away workload",
+                    "description": "Inspect the top CPU consumers below. Restarting or adjusting them is safer than killing blindly.",
+                    "risk": "medium", "commands": ["top -b -n1 | head -20"],
+                }, verify=load_verify))
+        elif l1 >= cores * 1.2:
+            put("warning", _diag_issue(
+                "cpu_load_high", "High CPU Load",
+                f"Load average {l1:.2f} exceeds {cores} logical cores — run-away jobs may be competing for CPU.",
+                "cpu", "warning", "cpu", evidence=load_ev, deep=deep_cpu,
+                impact="Responsiveness drops; CPU-bound tasks queue up and can starve interactive work.",
+                recommended_fix={
+                    "id": None, "label": "Balance CPU demand",
+                    "description": "Look at the top consumers; defer batch jobs or restart misbehaving processes found below.",
+                    "risk": "medium", "commands": ["top -b -n1 | head -20"],
+                }, verify=load_verify))
+        top_cpu = _top_processes(1, "cpu")
+        if top_cpu and top_cpu[0]["cpu"] >= 75:
+            p = top_cpu[0]
+            put("warning", _diag_issue(
+                "high_cpu_process", "Single Process Saturating CPU",
+                f"{p['name']} (PID {p['pid']}) is using {p['cpu']}% CPU — it may be hung or in a hot loop.",
+                "cpu", "warning", "cpu",
+                evidence=[_diag_ev("Busiest process", f"{p['name']} — {p['cpu']}% CPU, {p['mem']}% MEM (PID {p['pid']})", f"ps -p {p['pid']} -o pid,pcpu,pmem,comm"),
+                          _diag_ev("Status", p["status"], "ps aux")],
+                impact="A single hot process can eat an entire core, delaying everything else and burning power.",
+                recommended_fix={
+                    "id": None, "label": "Review the process",
+                    "description": "Stop or restart the process if it is stuck; only kill it after inspecting its behaviour in the Processes tab.",
+                    "risk": "high", "commands": [f"ps -p {p['pid']} -o pid,pcpu,pmem,stat,cmd"],
+                },
+                verify=[_diag_ev("Re-check process CPU", "below 75%", "ps -eo pid,pcpu,comm --sort=-pcpu | head")],
+                deep={"kind": "procs", "title": "Top CPU consumers", "columns": ["PID", "Process", "CPU %", "MEM %", "RSS"],
+                      "rows": _top_processes(6, "cpu")}))
+    except Exception:
+        pass
+
+    # zombies
+    try:
+        zombies = [p for p in psutil.process_iter(["pid", "name", "status", "username"]) if p.info["status"] == "zombie"]
+        if zombies:
+            zinfo = [{"pid": z.info["pid"], "name": z.info["name"]} for z in zombies[:5]]
+            put("warning", _diag_issue(
+                "zombie_processes", "Zombie Processes",
+                f"{len(zombies)} zombie process(es) detected — they hold PIDs and process slots until their parent reaps them.",
+                "cpu", "warning", "cpu", fix="clean-zombies", processes=zinfo,
+                evidence=[_diag_ev("Zombie count", f"{len(zombies)}", "ps -eo stat,pid,comm | awk '$1 ~ /^Z/ {print}'")],
+                impact="Zombies consume PIDs and kernel process table entries. Many of them can exhaust the PID limit and block new processes.",
+                recommended_fix={
+                    "id": "clean-zombies",
+                    "label": "Reap zombie processes",
+                    "description": "Sends SIGTERM to the parent processes of zombies so the kernel reaps them.",
+                    "risk": "medium",
+                    "commands": ["ps -eo stat,pid,ppid,comm | grep \'^Z\'"],
+                },
+                verify=[_diag_ev("Re-check zombie count", "0 zombies", "ps -eo stat | grep -c '^Z'")]))
+    except Exception:
+        pass
+
+    # -------------------------------------------------- 4. Services
     if which("systemctl"):
         code, out, err = run("systemctl --failed --no-pager --plain --no-legend 2>/dev/null")
-        if out:
-            failed_services = []
-            for line in out.splitlines():
-                parts = line.split()
-                if parts:
-                    svc_name = parts[0]
-                    failed_services.append(svc_name)
-            if failed_services:
-                issues["critical"].append({
-                    "id": "failed_services",
-                    "name": "Failed Systemd Services",
-                    "detail": f"{len(failed_services)} service(s) failed: {', '.join(failed_services[:5])}" + ("..." if len(failed_services) > 5 else ""),
-                    "services": failed_services,
-                    "fix": "restart-failed-services",
-                    "icon": "settings"
-                })
-    
-    # 3. Broken packages
+        failed_services = []
+        for line in (out or "").splitlines():
+            parts = line.split()
+            if parts:
+                failed_services.append(parts[0])
+        if failed_services:
+            svc_rows = [{"name": s, "status": "failed"} for s in failed_services[:20]]
+            put("critical", _diag_issue(
+                "failed_services", "Failed Systemd Services",
+                f"{len(failed_services)} service(s) failed: {', '.join(failed_services[:5])}{'…' if len(failed_services) > 5 else ''}",
+                "services", "critical", "gear", fix="restart-failed-services", services=failed_services,
+                evidence=[_diag_ev("Failed units", ", ".join(failed_services[:8]) + ("…" if len(failed_services) > 8 else ""), "systemctl --failed"),
+                          _diag_ev("Unit count", f"{len(failed_services)} failed", "systemctl --failed | wc -l")],
+                impact="Failed services can break network, storage, logging and application availability until repaired.",
+                recommended_fix={
+                    "id": "restart-failed-services",
+                    "label": "Reset and restart failed services",
+                    "description": "Clears failed state and restarts each failed unit; services that fail again stay visible.",
+                    "risk": "medium",
+                    "commands": ["systemctl reset-failed", "systemctl restart <unit>"],
+                },
+                verify=[_diag_ev("Re-check failed services", "0 failed", "systemctl --failed")],
+                deep={"kind": "services", "title": "Failed units", "rows": svc_rows}))
+
+    # -------------------------------------------------- 5. Network
+    try:
+        io = psutil.net_io_counters()
+        errs = (io.errin or 0) + (io.errout or 0) + (io.dropin or 0) + (io.dropout or 0)
+        if errs > 0:
+            sev = "warning" if errs >= 100 else "info"
+            put(sev, _diag_issue(
+                "network_errors", "Network Errors Detected",
+                f"Cumulative NIC errors/drops: {errs} (errin {io.errin}, errout {io.errout}, dropin {io.dropin}, dropout {io.dropout}).",
+                "network", sev, "network",
+                evidence=[_diag_ev("Interface counters", f"errin {io.errin} · errout {io.errout} · dropin {io.dropin} · dropout {io.dropout}", "ip -s link")],
+                impact="Packet errors and drops cause retransmissions, timeouts, slow throughput and flaky connections.",
+                recommended_fix={
+                    "id": None, "label": "Inspect interfaces & cabling",
+                    "description": "Check `ip -s link` for which interface is dropping; verify cables, duplex settings and driver warnings in dmesg.",
+                    "risk": "low", "commands": ["ip -s link", "dmesg --level=err,warn | tail -40"],
+                },
+                verify=[_diag_ev("Re-check counters", "no new errors", "ip -s link")]))
+        # interface down but configured with IPv4
+        addrs = psutil.net_if_addrs()
+        stats = psutil.net_if_stats()
+        import socket as _socket
+        down = []
+        for name, st in stats.items():
+            if name.startswith("lo") or st.isup:
+                continue
+            has_ipv4 = any(a.family == _socket.AF_INET for a in addrs.get(name, []))
+            if has_ipv4:
+                down.append(name)
+        if down:
+            put("warning", _diag_issue(
+                "interface_down", "Network Interface Down",
+                f"Configured interface(s) are down: {', '.join(down)}.",
+                "network", "warning", "network",
+                evidence=[_diag_ev("Interfaces down", ", ".join(down), "ip -br addr")],
+                impact="Any service bound to these interfaces is unreachable; connectivity and remote access may be lost.",
+                recommended_fix={
+                    "id": None, "label": "Bring the interface up",
+                    "description": "Use nmcli/ip to bring the link up, or check physical cabling and network-manager state.",
+                    "risk": "medium", "commands": ["ip -br addr", "ip link set <iface> up"],
+                },
+                verify=[_diag_ev("Re-check interface state", "up", "ip -br addr")]))
+    except Exception:
+        pass
+
+    # -------------------------------------------------- 6. Packages
+    mgr = _pkg_manager()
     code, out, err = run("dpkg --audit 2>/dev/null")
-    if code != 0 or "error" in (out + err).lower():
-        issues["critical"].append({
-            "id": "broken_packages",
-            "name": "Broken Packages",
-            "detail": "Package database has inconsistencies",
-            "fix": "fix-broken-packages",
-            "icon": "package"
-        })
-    
-    # 4. Pending updates
+    if (out or err) and ("error" in (out + err).lower()):
+        put("critical", _diag_issue(
+            "broken_packages", "Broken Packages",
+            "Package database has inconsistencies (dpkg reports errors).",
+            "packages", "critical", "package", fix="fix-broken-packages",
+            evidence=[_diag_ev("dpkg audit", (out or err).strip().splitlines()[0][:160] if (out or err).strip() else "errors", "dpkg --audit")],
+            impact="Package installs, upgrades and removals can fail; broken dependencies can also break applications.",
+            recommended_fix={
+                "id": "fix-broken-packages",
+                "label": "Repair package database",
+                "description": "Reconfigures pending packages and installs missing dependencies (apt systems).",
+                "risk": "medium",
+                "commands": ["dpkg --configure -a", "apt install -f -y"],
+            },
+            verify=[_diag_ev("Re-run dpkg audit", "no errors", "dpkg --audit")]))
     updates = _updatable_packages()
+    upd_ev = [_diag_ev("Packages upgradable", f"{updates['count']} ({updates['manager'] or 'n/a'})", "apt list --upgradable" if updates["manager"] == "apt" else "check-update")]
+    upd_fix = {
+        "id": "update-packages",
+        "label": "Install available updates",
+        "description": f"Runs the package-manager upgrade for {updates['manager'] or 'your system'}.",
+        "risk": "medium", "commands": [],
+    }
+    upd_verify = [_diag_ev("Re-check pending updates", "0 packages", "check-update")]
     if updates["count"] > 50:
-        issues["warnings"].append({
-            "id": "many_updates",
-            "name": "Many Pending Updates",
-            "detail": f"{updates['count']} packages can be updated ({updates['manager'] or 'unknown'})",
-            "fix": "update-packages",
-            "icon": "update"
-        })
+        put("warning", _diag_issue(
+            "many_updates", "Many Pending Updates",
+            f"{updates['count']} packages can be updated ({updates['manager'] or 'unknown'}).",
+            "packages", "warning", "package", fix="upgrade-packages", evidence=upd_ev,
+            impact="Unpatched packages accumulate security and stability bugs; a large backlog also lengthens future update windows.",
+            recommended_fix=upd_fix, verify=upd_verify))
     elif updates["count"] > 0:
-        issues["info"].append({
-            "id": "pending_updates",
-            "name": "Pending Updates",
-            "detail": f"{updates['count']} packages upgradable",
-            "fix": "update-packages",
-            "icon": "update"
-        })
-    
-    # 5. Kernel errors from dmesg
+        put("info", _diag_issue(
+            "pending_updates", "Pending Updates",
+            f"{updates['count']} packages upgradable ({updates['manager'] or 'n/a'}).",
+            "packages", "info", "package", fix="upgrade-packages", evidence=upd_ev,
+            impact="Updates fix bugs and security issues; keeping them current reduces risk.",
+            recommended_fix=upd_fix, verify=upd_verify))
+
+    # -------------------------------------------------- 7. Kernel
     code, out, err = run("dmesg 2>/dev/null | grep -iE 'error|fail|critical' | tail -20")
-    if out:
-        error_lines = [l.strip() for l in out.splitlines() if l.strip()]
+    error_lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
+    if error_lines:
         if len(error_lines) > 10:
-            issues["warnings"].append({
-                "id": "kernel_errors",
-                "name": "Kernel Errors Detected",
-                "detail": f"{len(error_lines)} recent kernel error(s) found in dmesg",
-                "sample": error_lines[:3],
-                "icon": "memory"
-            })
-    
-    # 6. Zombie processes
-    try:
-        import psutil
-        zombies = [p for p in psutil.process_iter(["pid", "name", "status"]) if p.info["status"] == "zombie"]
-        if zombies:
-            zombie_info = [{"pid": z.info["pid"], "name": z.info["name"]} for z in zombies[:5]]
-            issues["warnings"].append({
-                "id": "zombie_processes",
-                "name": "Zombie Processes",
-                "detail": f"{len(zombies)} zombie process(es) detected",
-                "processes": zombie_info,
-                "fix": "clean-zombies",
-                "icon": "process"
-            })
-    except Exception:
-        pass
-    
-    # 7. High memory pressure
-    try:
-        import psutil
-        mem = psutil.virtual_memory()
-        if mem.percent >= 95:
-            issues["critical"].append({
-                "id": "memory_critical",
-                "name": "Critical Memory Usage",
-                "detail": f"System memory is {mem.percent}% full",
-                "icon": "memory"
-            })
-        elif mem.percent >= 85:
-            issues["warnings"].append({
-                "id": "memory_warning",
-                "name": "High Memory Usage",
-                "detail": f"System memory is {mem.percent}% full",
-                "icon": "memory"
-            })
-    except Exception:
-        pass
-    
-    # 8. Docker issues
+            put("warning", _diag_issue(
+                "kernel_errors", "Kernel Errors Detected",
+                f"{len(error_lines)} recent kernel error/fail lines found in dmesg.",
+                "kernel", "warning", "zap", evidence=[
+                    _diag_ev("Error lines (last 20)", f"{len(error_lines)}", "dmesg --level=err"),
+                    _diag_ev("Sample", error_lines[0][:180] if error_lines else "", "dmesg | tail"),
+                ],
+                sample=error_lines[:3],
+                impact="Kernel errors can indicate failing hardware, driver bugs or filesystem corruption — often the root cause of other symptoms.",
+                recommended_fix={
+                    "id": None, "label": "Collect and diagnose kernel logs",
+                    "description": "Check the samples for driver/hardware matches, then act accordingly (update firmware/driver, reseat hardware, check fsck).",
+                    "risk": "low", "commands": ["journalctl -k -b --no-pager | tail -80"],
+                },
+                verify=[_diag_ev("Re-check dmesg", "fewer error lines", "dmesg --level=err | wc -l")],
+                deep={"kind": "logs", "title": "Recent kernel error lines", "lines": error_lines[:6]}))
+        else:
+            put("info", _diag_issue(
+                "kernel_notes", "Kernel Log Notes",
+                f"{len(error_lines)} minor kernel error line(s) found.",
+                "kernel", "info", "zap",
+                evidence=[_diag_ev("Error lines", f"{len(error_lines)}", "dmesg --level=err")],
+                impact="Usually benign, but worth correlating with other symptoms.",
+                recommended_fix={
+                    "id": None, "label": "Watch dmesg",
+                    "description": "No action needed now; monitor if issues persist.",
+                    "risk": "low", "commands": ["dmesg --level=err | tail -20"],
+                },
+                verify=[_diag_ev("Re-check dmesg", "count stable or lower", "dmesg --level=err | wc -l")],
+                sample=error_lines[:2]))
+
+    # -------------------------------------------------- 8. Docker
     if which("docker"):
-        code, out, err = run("docker info 2>&1 | grep -i 'warning\\|error' | head -5")
-        if out:
-            issues["warnings"].append({
-                "id": "docker_warnings",
-                "name": "Docker Warnings",
-                "detail": out.strip(),
-                "fix": "docker-prune",
-                "icon": "container"
-            })
-        
-        # Check for dangling images
-        code, out, err = run("docker images -f 'dangling=true' -q 2>/dev/null | wc -l")
-        dangling_count = _int_or(out.strip()) if out else 0
-        if dangling_count > 5:
-            issues["info"].append({
-                "id": "dangling_images",
-                "name": "Dangling Docker Images",
-                "detail": f"{dangling_count} dangling images can be removed",
-                "fix": "docker-prune",
-                "icon": "container"
-            })
-    
-    # 9. Old log files
+        code, out, err = run("docker info 2>&1", timeout=15)
+        if code != 0:
+            put("warning", _diag_issue(
+                "docker_daemon_down", "Docker Daemon Unavailable",
+                "Docker CLI is installed but the daemon is not reachable. " + (err or out or "").strip()[:160],
+                "docker", "warning", "box",
+                evidence=[_diag_ev("Docker status", "daemon unreachable", "docker info")],
+                impact="All containers stop being managed: no restarts on boot, no builds, no log or resource control.",
+                recommended_fix={
+                    "id": None,
+                    "label": "Start the Docker daemon",
+                    "description": "Start/enable the docker service; check its journal if it fails to come up.",
+                    "risk": "low", "commands": ["systemctl start docker", "journalctl -u docker --no-pager -n 50"],
+                },
+                verify=[_diag_ev("Re-check Docker", "daemon OK", "docker info")]))
+        else:
+            warn_out, warn_err = run("docker info 2>&1 | grep -i 'warning\\|error' | head -5", timeout=15)
+            if warn_out and warn_out.strip():
+                put("warning", _diag_issue(
+                    "docker_warnings", "Docker Warnings",
+                    "Docker daemon reports warnings: " + warn_out.strip(),
+                    "docker", "warning", "box", fix="docker-prune",
+                    evidence=[_diag_ev("Daemon warnings", warn_out.strip().splitlines()[0][:160], "docker info")],
+                    impact="Warnings often precede storage exhaustion or degraded container networking.",
+                    recommended_fix={
+                        "id": "docker-prune",
+                        "label": "Prune unused Docker data",
+                        "description": "Removes unused containers, networks and dangling images. Images and volumes in use are kept.",
+                        "risk": "medium", "commands": ["docker system prune -f"],
+                    },
+                    verify=[_diag_ev("Re-check Docker warnings", "no warnings", "docker info")]))
+            code, out, err = run("docker images -f 'dangling=true' -q 2>/dev/null | wc -l", timeout=15)
+            dangling = _int_or((out or "").strip()) if out else 0
+            if dangling > 5:
+                put("info", _diag_issue(
+                    "dangling_images", "Dangling Docker Images",
+                    f"{dangling} dangling images can be removed (they consume disk but serve no runnable tag).",
+                    "docker", "info", "box", fix="docker-prune",
+                    evidence=[_diag_ev("Dangling images", f"{dangling}", "docker images -f dangling=true -q | wc -l")],
+                    impact="Repeated builds leak disk space; cleanup keeps storage predictable.",
+                    recommended_fix={
+                        "id": "docker-prune",
+                        "label": "Remove dangling images",
+                        "description": "Prunes unused Docker data including dangling images.",
+                        "risk": "medium", "commands": ["docker image prune -f"],
+                    },
+                    verify=[_diag_ev("Re-check dangling images", "5 or fewer", "docker images -f dangling=true -q | wc -l")]))
+
+    # -------------------------------------------------- 9. Log hygiene (disk)
     code, out, err = run("find /var/log -type f -name '*.gz' -mtime +30 2>/dev/null | wc -l")
-    old_logs = _int_or(out.strip()) if out else 0
+    old_logs = _int_or((out or "").strip()) if out else 0
     if old_logs > 10:
-        issues["info"].append({
-            "id": "old_logs",
-            "name": "Old Log Files",
-            "detail": f"{old_logs} compressed log files older than 30 days",
-            "fix": "clear-old-logs",
-            "icon": "description"
-        })
-    
-    # 10. Journal size
+        put("info", _diag_issue(
+            "old_logs", "Old Log Files",
+            f"{old_logs} compressed log files older than 30 days still stored.",
+            "disk", "info", "terminal", fix="clear-old-logs",
+            evidence=[_diag_ev("Old logs", f"{old_logs} files", "find /var/log -name '*.gz' -mtime +30 | wc -l")],
+            impact="Rotated logs consume inodes and disk space that belong to active data.",
+            recommended_fix={
+                "id": "clear-old-logs",
+                "label": "Delete old rotated logs",
+                "description": "Removes compressed logs older than 30 days; active logs are untouched.",
+                "risk": "low", "commands": ["find /var/log -type f -name '*.gz' -mtime +30 -delete"],
+            },
+            verify=[_diag_ev("Re-check old logs", "10 or fewer", "find /var/log -name '*.gz' -mtime +30 | wc -l")]))
     code, out, err = run("journalctl --disk-usage 2>/dev/null")
     if out:
-        match = re.search(r'(\d+(?:\.\d+)?)([KMGT]?B)', out)
+        match = re.search(r'(\d+(?:\.\d+)?)([KMGT]?)B', out)
         if match:
-            size_val = float(match.group(1))
+            size_mb = float(match.group(1))
             unit = match.group(2)
-            size_mb = size_val
-            if unit == 'K': size_mb = size_val / 1024
-            elif unit == 'M': pass
-            elif unit == 'G': size_mb = size_val * 1024
-            elif unit == 'T': size_mb = size_val * 1024 * 1024
-            
-            if size_mb > 2048:  # > 2GB
-                issues["info"].append({
-                    "id": "large_journal",
-                    "name": "Large Journal",
-                    "detail": f"System journal using {match.group(1)}{unit}",
-                    "fix": "vacuum-journal",
-                    "icon": "description"
-                })
-    
-    total_issues = len(issues["critical"]) + len(issues["warnings"]) + len(issues["info"])
-    health_score = max(0, 100 - (len(issues["critical"]) * 20) - (len(issues["warnings"]) * 10) - (len(issues["info"]) * 3))
-    
-    return jsonify({
+            if unit == "K":
+                size_mb = size_mb / 1024
+            elif unit == "G":
+                size_mb = size_mb * 1024
+            elif unit == "T":
+                size_mb = size_mb * 1024 * 1024
+            if size_mb > 2048:
+                put("info", _diag_issue(
+                    "large_journal", "Large Journal",
+                    f"System journal uses {match.group(1)}{unit} — above the 2 GB comfort mark.",
+                    "disk", "info", "terminal", fix="vacuum-journal",
+                    evidence=[_diag_ev("Journal size", f"{match.group(1)}{unit}", "journalctl --disk-usage")],
+                    impact="A growing journal consumes disk space and makes log searches slower.",
+                    recommended_fix={
+                        "id": "vacuum-journal",
+                        "label": "Vacuum journal",
+                        "description": "Trims the journal to 7 days / 100 MB.",
+                        "risk": "low", "commands": ["journalctl --vacuum-time=7d --vacuum-size=100M"],
+                    },
+                    verify=[_diag_ev("Re-check journal size", "≤ 2 GB", "journalctl --disk-usage")]))
+
+    # -------------------------------------------------- Summary
+    total = len(all_issues)
+    health_score = max(0, 100 - len(issues["critical"]) * 20 - len(issues["warnings"]) * 10 - len(issues["info"]) * 3)
+    if health_score >= 95:
+        grade = "Excellent"
+    elif health_score >= 80:
+        grade = "Good"
+    elif health_score >= 60:
+        grade = "Fair"
+    elif health_score >= 40:
+        grade = "At Risk"
+    else:
+        grade = "Poor"
+
+    categories = {}
+    for key in CATEGORY_ORDER:
+        meta = TROUBLESHOOT_CATEGORIES.get(key, {"label": key, "icon": ""})
+        cat = [i for i in all_issues if i.get("category") == key]
+        state = "ok"
+        if any(i["severity"] == "critical" for i in cat):
+            state = "critical"
+        elif any(i["severity"] == "warning" for i in cat):
+            state = "warning"
+        elif cat:
+            state = "info"
+        categories[key] = {
+            "label": meta["label"], "icon": meta["icon"],
+            "count": len(cat), "state": state, "issues": cat,
+        }
+
+    system = {}
+    try:
+        import psutil as _p
+        import platform as _pl
+        memv = _p.virtual_memory()
+        diskv = _p.disk_usage("/")
+        system = {
+            "hostname": os.uname().nodename,
+            "os": _pretty_distro(),
+            "kernel": f"{os.uname().sysname} {os.uname().release}",
+            "arch": os.uname().machine,
+            "cpu_model": _cpu_model(),
+            "cores": _p.cpu_count(logical=True) or 1,
+            "uptime_s": int(time.time() - _p.boot_time()),
+            "memory_total_gb": round(memv.total / 1024**3, 1),
+            "memory_used_gb": round(memv.used / 1024**3, 1),
+            "disk_total_gb": round(diskv.total / 1024**3, 1),
+            "disk_used_gb": round(diskv.used / 1024**3, 1),
+            "load": [round(x, 2) for x in os.getloadavg()] if hasattr(os, "getloadavg") else [],
+            "temp_c": _read_temp_c(),
+        }
+    except Exception:
+        pass
+
+    capabilities = {
+        "root": os.geteuid() == 0,
+        "sudo": PASSWORDLESS_SUDO,
+        "pkg_manager": mgr,
+        "systemd": which("systemctl"),
+        "docker": which("docker"),
+        "journal": which("journalctl"),
+    }
+
+    return {
         "issues": issues,
-        "total": total_issues,
+        "total": total,
         "health_score": health_score,
-        "timestamp": datetime.now().isoformat()
-    })
+        "grade": grade,
+        "categories": categories,
+        "capabilities": capabilities,
+        "system": system,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+@app.route("/api/troubleshooting")
+def api_troubleshooting():
+    """Guided diagnostics: enriched issues, categories, evidence & fixes.
+
+    Backwards-compatible with the previous schema (issues/total/health_score/
+    timestamp) and additionally returns categories, grade, capabilities and
+    system context so the UI can render a guided troubleshooting center.
+    """
+    try:
+        return jsonify(_diag_scan())
+    except Exception as e:
+        return jsonify({"issues": {"critical": [], "warnings": [], "info": []},
+                        "total": 0, "health_score": 100, "error": str(e)}), 500
+
+# ------------------------------------------------------------------
+# Post-fix verification (per issue)
+# ------------------------------------------------------------------
+def _verify_issue(iid):
+    """Run the targeted check for one issue id."""
+    def res(resolved, message, evidence=None):
+        return {"resolved": bool(resolved),
+                "state": "resolved" if resolved else "still_present",
+                "message": message, "evidence": evidence or []}
+
+    try:
+        import psutil
+    except Exception:
+        psutil = None
+
+    try:
+        if iid in ("disk_critical", "disk_warning", "disk_inodes"):
+            pct = psutil.disk_usage("/").percent
+            if iid == "disk_inodes":
+                _, out, _ = run("df -i / 2>/dev/null")
+                parts = (out.splitlines() or ["", ""])[1].split() if out and len(out.splitlines()) > 1 else []
+                ipct = int(parts[4].replace("%", "")) if len(parts) >= 5 else 0
+                return res(ipct < 90, f"Inode usage {ipct}%",
+                           [_diag_ev("Inode usage", f"{ipct}%", "df -i /")])
+            return res(pct < 85, f"Root filesystem at {pct:.1f}%",
+                       [_diag_ev("Root usage", f"{pct:.1f}%", "df -h /")])
+        if iid in ("memory_critical", "memory_warning", "swap_warning"):
+            mem = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+            if iid == "swap_warning":
+                return res(swap.total == 0 or swap.percent < 40, f"Swap at {swap.percent:.1f}%",
+                           [_diag_ev("Swap usage", f"{swap.percent:.1f}%", "free -h")])
+            return res(mem.percent < 85, f"Memory at {mem.percent:.1f}%",
+                       [_diag_ev("Memory usage", f"{mem.percent:.1f}%", "free -h")])
+        if iid in ("cpu_load_high", "cpu_load_critical"):
+            cores = psutil.cpu_count(logical=True) or 1
+            l1 = os.getloadavg()[0]
+            threshold = cores * 2 if iid == "cpu_load_critical" else cores * 1.2
+            return res(l1 < threshold, f"Load1 {l1:.2f} (cores {cores})",
+                       [_diag_ev("Load average", f"{l1:.2f}", "uptime")])
+        if iid == "high_cpu_process":
+            top = _top_processes(1, "cpu")
+            pct = top[0]["cpu"] if top else 0
+            return res(pct < 75, f"Busiest process {pct:.1f}% CPU",
+                       [_diag_ev("Busiest process", f"{pct:.1f}%", "ps -eo pcpu,comm --sort=-pcpu | head")])
+        if iid == "zombie_processes":
+            zb = [p for p in psutil.process_iter(["status"]) if p.info["status"] == "zombie"]
+            return res(not zb, f"{len(zb)} zombie(s)", [_diag_ev("Zombies", str(len(zb)), "ps -eo stat | grep -c '^Z'")])
+        if iid == "failed_services":
+            _, out, _ = run("systemctl --failed --no-pager --quiet 2>/dev/null | wc -l")
+            n = _int_or((out or "").strip()) if out else 0
+            return res(n == 0, f"{n} failed service(s)", [_diag_ev("Failed units", str(n), "systemctl --failed")])
+        if iid == "broken_packages":
+            _, out, err = run("dpkg --audit 2>&1")
+            bad = "error" in (out + err).lower()
+            return res(not bad, "dpkg audit clean" if not bad else "dpkg reports errors",
+                       [_diag_ev("dpkg audit", "clean" if not bad else "errors", "dpkg --audit")])
+        if iid in ("many_updates", "pending_updates"):
+            u = _updatable_packages()
+            return res(u["count"] == 0, f"{u['count']} pending update(s)",
+                       [_diag_ev("Pending updates", str(u["count"]), "check-update")])
+        if iid in ("kernel_errors", "kernel_notes"):
+            _, out, _ = run("dmesg 2>/dev/null | grep -iE 'error|fail|critical' | wc -l")
+            n = _int_or((out or "").strip()) if out else 0
+            return res(n <= 10, f"{n} kernel error line(s)", [_diag_ev("Kernel errors", str(n), "dmesg --level=err")])
+        if iid == "network_errors":
+            io = psutil.net_io_counters()
+            errs = (io.errin or 0) + (io.errout or 0) + (io.dropin or 0) + (io.dropout or 0)
+            return res(errs == 0, f"{errs} errors/drops", [_diag_ev("Counters", str(errs), "ip -s link")])
+        if iid == "interface_down":
+            stats = psutil.net_if_stats()
+            addrs = psutil.net_if_addrs()
+            import socket as _s
+            down = [n for n, st in stats.items() if not st.isup and not n.startswith("lo")
+                    and any(a.family == _s.AF_INET for a in addrs.get(n, []))]
+            return res(not down, "all configured interfaces up" if not down else "down: " + ", ".join(down),
+                       [_diag_ev("Interfaces", "up" if not down else ", ".join(down), "ip -br addr")])
+        if iid == "old_logs":
+            _, out, _ = run("find /var/log -type f -name '*.gz' -mtime +30 2>/dev/null | wc -l")
+            n = _int_or((out or "").strip()) if out else 0
+            return res(n <= 10, f"{n} old log file(s)", [_diag_ev("Old logs", str(n), "find /var/log -name '*.gz' -mtime +30 | wc -l")])
+        if iid == "large_journal":
+            _, out, _ = run("journalctl --disk-usage 2>/dev/null")
+            m = re.search(r'(\d+(?:\.\d+)?)([KMGT]?)B', out or "")
+            if m:
+                size_mb = float(m.group(1))
+                unit = m.group(2)
+                if unit == "K":
+                    size_mb /= 1024
+                elif unit == "G":
+                    size_mb *= 1024
+                elif unit == "T":
+                    size_mb *= 1024 * 1024
+                return res(size_mb <= 2048, f"Journal {m.group(1)}{unit}",
+                           [_diag_ev("Journal size", f"{m.group(1)}{unit}", "journalctl --disk-usage")])
+            return res(True, "journalctl unavailable")
+        if iid == "docker_daemon_down":
+            code2, _, err2 = run("docker info >/dev/null 2>&1")
+            return res(code2 == 0,
+                       "Docker daemon OK" if code2 == 0 else "Docker daemon still unreachable",
+                       [_diag_ev("Docker", "OK" if code2 == 0 else "unreachable", "docker info")])
+        if iid == "docker_warnings":
+            _, out, _ = run("docker info 2>&1 | grep -i 'warning\\|error' | head -5")
+            return res(not (out or "").strip(), "no docker warnings" if not (out or "").strip() else "warnings remain",
+                       [_diag_ev("Docker warnings", (out or "").strip()[:120] or "none", "docker info")])
+        if iid == "dangling_images":
+            _, out, _ = run("docker images -f 'dangling=true' -q 2>/dev/null | wc -l")
+            n = _int_or((out or "").strip()) if out else 0
+            return res(n <= 5, f"{n} dangling image(s)", [_diag_ev("Dangling images", str(n), "docker images -f dangling=true -q | wc -l")])
+    except Exception as e:
+        return res(False, "verification error: " + str(e)[:200])
+    return res(False, "no automated verification for this issue")
+
+@app.route("/api/troubleshooting/verify", methods=["POST"])
+def api_troubleshooting_verify():
+    """Targeted post-fix verification for one or more issue ids."""
+    data = request.json or {}
+    ids = list(data.get("issue_ids") or [])
+    if data.get("issue_id"):
+        ids.append(data["issue_id"])
+    ids = [str(i)[:64] for i in ids][:60]
+    results = {i: _verify_issue(i) for i in ids}
+    return jsonify({"results": results, "timestamp": datetime.now().isoformat()})
+
 
 @app.route("/api/troubleshooting/fix-all", methods=["POST"])
 def api_troubleshooting_fix_all():
@@ -671,7 +1200,17 @@ def api_troubleshooting_fix_all():
                     code, out, err = run(cmd, timeout=300, sudo=True)
                     fix_result["output"] = (out or err or "Done").strip()[-500:]
                     results["fixed"].append(fix_result)
-            
+
+            elif fix == "upgrade-packages" and mgr:
+                cmd = FIX_COMMANDS.get(mgr, {}).get("upgrade", "")
+                if cmd:
+                    code, out, err = run(cmd, timeout=600, sudo=True)
+                    fix_result["output"] = (out or err or "Upgrade complete").strip()[-500:]
+                    results["fixed"].append(fix_result)
+                else:
+                    fix_result["output"] = f"No upgrade command available for {mgr}"
+                    results["skipped"].append(fix_result)
+
             elif fix == "restart-failed-services":
                 if which("systemctl"):
                     code, out, err = run(SYSTEMD_FIXES["reset_failed"], timeout=30, sudo=True)
