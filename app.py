@@ -462,6 +462,8 @@ def _top_processes(count=6, order="cpu"):
         rows = []
         for p in psutil.process_iter(["pid", "name", "username", "memory_percent", "status"]):
             try:
+                if p.pid == _MY_PID:
+                    continue
                 rss = p.memory_info().rss if hasattr(p, "memory_info") else 0
                 rows.append({
                     "pid": p.info["pid"],
@@ -1389,14 +1391,18 @@ def api_updates():
 # ------------------------------------------------------------------
 _PRIMED = {"flag": False}
 
+_MY_PID = os.getpid()
+
 def _build_processes(limit):
     import psutil
     procs = []
     attrs = ["pid", "name", "username", "memory_percent", "status", "nice"]
     for p in psutil.process_iter(attrs):
         try:
+            if p.pid == _MY_PID:
+                continue
             info = p.info
-            cpu = p.cpu_percent(interval=None)  # 0.0 on first (priming) call
+            cpu = p.cpu_percent(interval=None)
             procs.append({
                 "pid": info["pid"],
                 "name": info["name"] or "?",
