@@ -527,7 +527,7 @@ def _diag_scan():
                 impact="Writes will fail: log rotation, package installs, temp files and application data. A full root filesystem can stop services and block logins.",
                 recommended_fix=disk_fix, verify=disk_verify))
         elif pct >= 85:
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "disk_warning", "Low Disk Space",
                 f"Root filesystem is {pct:.0f}% full — {free_gb:.1f} GB free.",
                 "disk", "warning", "disk", fix="clear-logs", evidence=disk_ev,
@@ -543,7 +543,7 @@ def _diag_scan():
                     try:
                         ipct = int(parts[4].replace("%", ""))
                         if ipct >= 90:
-                            put("warning", _diag_issue(
+                            put("warnings", _diag_issue(
                                 "disk_inodes", "Inodes Nearly Exhausted",
                                 f"Root filesystem uses {ipct}% of inodes; new files may be refused even with free space.",
                                 "disk", "warning", "disk", fix="clear-old-logs",
@@ -592,14 +592,14 @@ def _diag_scan():
                 impact="The kernel will swap aggressively, causing severe slowdowns; the OOM killer may terminate processes and services.",
                 recommended_fix=mem_fix, verify=mem_verify))
         elif mem.percent >= 85:
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "memory_warning", "High Memory Usage",
                 f"System memory is {mem.percent:.0f}% full. {top_txt}",
                 "memory", "warning", "mem", evidence=mem_ev, deep=deep_mem,
                 impact="Memory pressure can degrade performance, increase swap activity and eventually trigger OOM kills.",
                 recommended_fix=mem_fix, verify=mem_verify))
         if swap.total and swap.percent >= 40:
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "swap_warning", "High Swap Usage",
                 f"Swap is {swap.percent:.0f}% used ({swap.used / 1024**3:.1f} / {swap.total / 1024**3:.1f} GB) — sustained swapping slows the whole system.",
                 "memory", "warning", "mem",
@@ -637,7 +637,7 @@ def _diag_scan():
                     "risk": "medium", "commands": ["top -b -n1 | head -20"],
                 }, verify=load_verify))
         elif l1 >= cores * 1.2:
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "cpu_load_high", "High CPU Load",
                 f"Load average {l1:.2f} exceeds {cores} logical cores — run-away jobs may be competing for CPU.",
                 "cpu", "warning", "cpu", evidence=load_ev, deep=deep_cpu,
@@ -650,7 +650,7 @@ def _diag_scan():
         top_cpu = _top_processes(1, "cpu")
         if top_cpu and top_cpu[0]["cpu"] >= 75:
             p = top_cpu[0]
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "high_cpu_process", "Single Process Saturating CPU",
                 f"{p['name']} (PID {p['pid']}) is using {p['cpu']}% CPU — it may be hung or in a hot loop.",
                 "cpu", "warning", "cpu",
@@ -673,7 +673,7 @@ def _diag_scan():
         zombies = [p for p in psutil.process_iter(["pid", "name", "status", "username"]) if p.info["status"] == "zombie"]
         if zombies:
             zinfo = [{"pid": z.info["pid"], "name": z.info["name"]} for z in zombies[:5]]
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "zombie_processes", "Zombie Processes",
                 f"{len(zombies)} zombie process(es) detected — they hold PIDs and process slots until their parent reaps them.",
                 "cpu", "warning", "cpu", fix="clean-zombies", processes=zinfo,
@@ -747,7 +747,7 @@ def _diag_scan():
             if has_ipv4:
                 down.append(name)
         if down:
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "interface_down", "Network Interface Down",
                 f"Configured interface(s) are down: {', '.join(down)}.",
                 "network", "warning", "network",
@@ -790,7 +790,7 @@ def _diag_scan():
     }
     upd_verify = [_diag_ev("Re-check pending updates", "0 packages", "check-update")]
     if updates["count"] > 50:
-        put("warning", _diag_issue(
+        put("warnings", _diag_issue(
             "many_updates", "Many Pending Updates",
             f"{updates['count']} packages can be updated ({updates['manager'] or 'unknown'}).",
             "packages", "warning", "package", fix="upgrade-packages", evidence=upd_ev,
@@ -809,7 +809,7 @@ def _diag_scan():
     error_lines = [l.strip() for l in (out or "").splitlines() if l.strip()]
     if error_lines:
         if len(error_lines) > 10:
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "kernel_errors", "Kernel Errors Detected",
                 f"{len(error_lines)} recent kernel error/fail lines found in dmesg.",
                 "kernel", "warning", "zap", evidence=[
@@ -844,7 +844,7 @@ def _diag_scan():
     if which("docker"):
         code, out, err = run("docker info 2>&1", timeout=15)
         if code != 0:
-            put("warning", _diag_issue(
+            put("warnings", _diag_issue(
                 "docker_daemon_down", "Docker Daemon Unavailable",
                 "Docker CLI is installed but the daemon is not reachable. " + (err or out or "").strip()[:160],
                 "docker", "warning", "box",
@@ -860,7 +860,7 @@ def _diag_scan():
         else:
             warn_out, warn_err = run("docker info 2>&1 | grep -i 'warning\\|error' | head -5", timeout=15)
             if warn_out and warn_out.strip():
-                put("warning", _diag_issue(
+                put("warnings", _diag_issue(
                     "docker_warnings", "Docker Warnings",
                     "Docker daemon reports warnings: " + warn_out.strip(),
                     "docker", "warning", "box", fix="docker-prune",
