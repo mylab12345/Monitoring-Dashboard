@@ -1,6 +1,6 @@
 [Unit]
 Description=Monitoring — Linux System Dashboard
-Documentation=https://github.com/mylab12345/Monitoring
+Documentation=https://github.com/mylab12345/Monitoring-Dashboard
 After=network.target libvirtd.service
 Wants=network.target
 
