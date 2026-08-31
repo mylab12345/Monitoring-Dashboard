@@ -27,6 +27,7 @@ HELPERS = [
     "monitoring-journal-vacuum",
     "monitoring-clean-old-logs",
     "monitoring-vm",
+    "monitoring-vm-config",
     "monitoring-qemu",
     "monitoring-kill",
     "monitoring-zombie-clean",

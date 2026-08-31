@@ -15,6 +15,7 @@ User=monitoring
 Group=monitoring
 UMask=0027
 Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=LIBVIRT_DEFAULT_URI=qemu:///system
 LogsDirectory=monitoring
 StateDirectory=monitoring
 # Sandbox hardening (safe subset).

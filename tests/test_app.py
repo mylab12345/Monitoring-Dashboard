@@ -132,6 +132,22 @@ class InputValidation(unittest.TestCase):
             r = self.client.post("/api/vm_resize", json={**good, "new_size_gb": size})
             self.assertEqual(r.status_code, 400, f"size={size!r}")
 
+    def test_vm_config_validation(self):
+        r = self.client.post("/api/vm_config", json={})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/vm_config", json={"name": ""})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/vm_config", json={"name": "$(id)"})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/vm_config", json={"name": "vm1"})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/vm_config", json={"name": "vm1", "vcpus": 0})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/vm_config", json={"name": "vm1", "vcpus": 300})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/vm_config", json={"name": "vm1", "ram_gb": 0})
+        self.assertEqual(r.status_code, 400)
+
     def test_fix_unknown_action(self):
         r = self.client.post("/api/fix", json={"action": "bogus"})
         self.assertEqual(r.status_code, 200)
@@ -232,6 +248,16 @@ class HelperValidation(unittest.TestCase):
         r = self._helper("monitoring-qemu", "resize", "vm1", "/var/lib/libvirt/images/vm1.qcow2", "0")
         self.assertEqual(r.returncode, 2)
 
+    def test_vm_config_validation(self):
+        self.assertEqual(self._helper("monitoring-vm-config").returncode, 2)
+        self.assertEqual(self._helper("monitoring-vm-config", "setvcpus").returncode, 2)
+        self.assertEqual(self._helper("monitoring-vm-config", "setvcpus", "vm1").returncode, 2)
+        self.assertEqual(self._helper("monitoring-vm-config", "bogus", "vm1", "2").returncode, 2)
+        self.assertEqual(self._helper("monitoring-vm-config", "setvcpus", "$(id)", "2").returncode, 2)
+        self.assertEqual(self._helper("monitoring-vm-config", "setvcpus", "vm1", "abc").returncode, 2)
+        self.assertEqual(self._helper("monitoring-vm-config", "setvcpus", "vm1", "-1").returncode, 2)
+        self.assertEqual(self._helper("monitoring-vm-config", "setvcpus", "vm1", "2", "--bogus").returncode, 2)
+
     def test_package_validation(self):
         self.assertEqual(self._helper("monitoring-package", "--manager", "evil", "--action", "update").returncode, 2)
         self.assertEqual(self._helper("monitoring-package", "--manager", "apt", "--action", "explode").returncode, 2)
@@ -250,8 +276,8 @@ class HelperValidation(unittest.TestCase):
 
     def test_all_helpers_check(self):
         for name in ("monitoring-systemctl", "monitoring-package", "monitoring-journal-vacuum",
-                     "monitoring-clean-old-logs", "monitoring-vm", "monitoring-qemu",
-                     "monitoring-kill", "monitoring-zombie-clean",
+                     "monitoring-clean-old-logs", "monitoring-vm", "monitoring-vm-config",
+                     "monitoring-qemu", "monitoring-kill", "monitoring-zombie-clean",
                      "monitoring-privilege-check"):
             r = self._helper(name, "--check")
             self.assertEqual(r.returncode, 0, f"{name} --check failed: {r.stderr}")

@@ -18,6 +18,7 @@ monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-package
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-journal-vacuum
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-clean-old-logs
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm-config
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-qemu
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-kill
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-zombie-clean

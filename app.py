@@ -356,6 +356,7 @@ _PRIVILEGE_HELPERS = [
     "monitoring-journal-vacuum",
     "monitoring-clean-old-logs",
     "monitoring-vm",
+    "monitoring-vm-config",
     "monitoring-qemu",
     "monitoring-kill",
     "monitoring-zombie-clean",
@@ -2012,6 +2013,8 @@ def api_open_app():
 # VM / Libvirt management
 # ------------------------------------------------------------------
 VM_ACTIONS = ("start", "shutdown", "reboot", "reset", "destroy", "resume", "suspend")
+if not os.environ.get("LIBVIRT_DEFAULT_URI"):
+    os.environ["LIBVIRT_DEFAULT_URI"] = "qemu:///system"
 
 @app.route("/api/vms")
 def api_vms():
@@ -2115,6 +2118,138 @@ def api_vm_resize():
     code, msg, err = run_privileged("monitoring-qemu", ["resize", name, disk_path, str(new_size_int)], timeout=120)
     _audit("vm-resize", name=name, disk=disk_path, size_gb=new_size_int)
     return jsonify({"result": escape((msg or err or "").strip()[:400]), "disk": escape(disk_path), "size_gb": new_size_int})
+
+@app.route("/api/vm_config", methods=["POST"])
+@rate_limit("10 per minute")
+def api_vm_config():
+    data = request.json or {}
+    name = data.get("name")
+    ram_gb = data.get("ram_gb")
+    vcpus = data.get("vcpus")
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    if not validate_vm_name(name):
+        return jsonify({"error": "invalid VM name"}), 400
+    if ram_gb is None and vcpus is None:
+        return jsonify({"error": "ram_gb and/or vcpus required"}), 400
+
+    # Validate inputs
+    ram_mb = None
+    if ram_gb is not None:
+        try:
+            ram_mb = int(str(ram_gb).strip()) * 1024
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid ram_gb value"}), 400
+        if not 256 <= ram_mb <= 10485760:
+            return jsonify({"error": "ram_gb must be 0.25–10240"}), 400
+
+    vcpu_count = None
+    if vcpus is not None:
+        try:
+            vcpu_count = int(str(vcpus).strip())
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid vcpus value"}), 400
+        if not 1 <= vcpu_count <= 256:
+            return jsonify({"error": "vcpus must be 1–256"}), 400
+
+    # Determine if VM is running
+    _, state_raw, _ = run(["virsh", "-c", "qemu:///system", "domstate", name], timeout=10)
+    is_running = "running" in (state_raw or "").lower()
+
+    errors = []
+    notes = []
+    # --- Memory ---
+    if ram_mb is not None:
+        # Read current max memory
+        _, dominfo, _ = run(["virsh", "-c", "qemu:///system", "dominfo", name], timeout=15)
+        current_max_kb = 0
+        for line in (dominfo or "").splitlines():
+            if "Max memory" in line:
+                try:
+                    current_max_kb = int(line.split(":")[1].strip().split()[0])
+                except Exception:
+                    pass
+
+        new_max_kb = ram_mb * 1024
+        # If increasing beyond current max, raise max (only --config works on active domains)
+        if new_max_kb > current_max_kb:
+            code, out, err = run_privileged(
+                "monitoring-vm-config",
+                ["setmaxmem", name, str(new_max_kb), "--config"],
+                timeout=30,
+            )
+            if code != 0:
+                errors.append(f"setmaxmem failed: {(out + err).strip()[:200]}")
+            elif is_running:
+                notes.append("max memory increase takes effect on next boot")
+
+        # Set current memory: live if running and within current max, else config
+        if is_running and new_max_kb <= current_max_kb:
+            code, out, err = run_privileged(
+                "monitoring-vm-config",
+                ["setmem", name, str(new_max_kb), "--live"],
+                timeout=30,
+            )
+        else:
+            code, out, err = run_privileged(
+                "monitoring-vm-config",
+                ["setmem", name, str(new_max_kb), "--config"],
+                timeout=30,
+            )
+        if code != 0:
+            errors.append(f"setmem failed: {(out + err).strip()[:200]}")
+
+    # --- vCPUs ---
+    if vcpu_count is not None:
+        # Read current max vcpus from dominfo
+        _, dominfo2, _ = run(["virsh", "-c", "qemu:///system", "dominfo", name], timeout=15)
+        current_max_vcpus = 0
+        for line in (dominfo2 or "").splitlines():
+            if "CPU(s)" in line:
+                try:
+                    current_max_vcpus = int(line.split(":")[1].strip())
+                except Exception:
+                    pass
+
+        # If increasing beyond current max, set max (--maximum requires --config)
+        if vcpu_count > current_max_vcpus:
+            code, out, err = run_privileged(
+                "monitoring-vm-config",
+                ["setvcpus", name, str(vcpu_count), "--config", "--maximum"],
+                timeout=30,
+            )
+            if code != 0:
+                errors.append(f"setvcpus max failed: {(out + err).strip()[:200]}")
+            elif is_running:
+                notes.append("vCPU increase beyond current max takes effect on next boot")
+
+        # Set current vcpus: live if running and within current max, else config
+        if is_running and vcpu_count <= current_max_vcpus:
+            code, out, err = run_privileged(
+                "monitoring-vm-config",
+                ["setvcpus", name, str(vcpu_count), "--live"],
+                timeout=30,
+            )
+        else:
+            code, out, err = run_privileged(
+                "monitoring-vm-config",
+                ["setvcpus", name, str(vcpu_count), "--config"],
+                timeout=30,
+            )
+        if code != 0:
+            errors.append(f"setvcpus failed: {(out + err).strip()[:200]}")
+
+    if errors:
+        _audit("vm-config", name=name, ram_gb=ram_gb, vcpus=vcpus, error="; ".join(errors))
+        return jsonify({"error": "; ".join(errors)}), 500
+
+    _audit("vm-config", name=name, ram_gb=ram_gb, vcpus=vcpus)
+    result_msg = f"Configuration updated for {escape(name)}"
+    if notes:
+        result_msg += " (" + "; ".join(notes) + ")"
+    return jsonify({"result": result_msg, "name": escape(name),
+                     "ram_gb": ram_gb, "vcpus": vcpus, "live": is_running})
+
 
 # ------------------------------------------------------------------
 # Start

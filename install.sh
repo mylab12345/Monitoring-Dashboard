@@ -265,6 +265,9 @@ if [ "$WITH_VM" -eq 1 ]; then
     apk)    install_pkgs libvirt qemu-img ;;
     *)      : ;;
   esac
+  # virsh needs a writable cache dir for the service account.
+  mkdir -p "$MONITORING_HOME/.cache/libvirt"
+  chown -R "$MONITORING_USER":"$MONITORING_GROUP" "$MONITORING_HOME/.cache"
 fi
 
 # Re-apply groups now that subsystem groups may have been created.

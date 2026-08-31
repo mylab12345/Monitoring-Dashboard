@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""monitoring-vm-config - validated libvirt CPU/memory configuration.
+
+Supports live and config-only changes to VM CPU count and memory allocation.
+VM names and numeric values are validated strictly; no shell is ever invoked.
+"""
+import re
+import shutil
+import subprocess
+import sys
+
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+ACTIONS = {"setvcpus", "setmaxmem", "setmem"}
+ALLOWED_FLAGS = {"--live", "--config", "--maximum"}
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-vm-config: ok")
+        return 0
+
+    if len(argv) < 3:
+        print("monitoring-vm-config: usage <action> <name> <value> [--flags...]",
+              file=sys.stderr)
+        return 2
+
+    action = argv[0]
+    name = argv[1]
+    value_str = argv[2]
+    extra_flags = argv[3:]
+
+    if action not in ACTIONS:
+        print(f"monitoring-vm-config: invalid action: {action}", file=sys.stderr)
+        return 2
+
+    if not isinstance(name, str) or not name or len(name) > 120 or name.startswith("-"):
+        print("monitoring-vm-config: invalid VM name", file=sys.stderr)
+        return 2
+    if NAME_RE.match(name) is None:
+        print("monitoring-vm-config: invalid VM name", file=sys.stderr)
+        return 2
+
+    try:
+        value = int(value_str)
+    except ValueError:
+        print("monitoring-vm-config: value must be an integer", file=sys.stderr)
+        return 2
+
+    if value < 0 or value > 20971520:
+        print("monitoring-vm-config: value out of range", file=sys.stderr)
+        return 2
+
+    for f in extra_flags:
+        if f not in ALLOWED_FLAGS:
+            print(f"monitoring-vm-config: invalid flag: {f}", file=sys.stderr)
+            return 2
+
+    virsh = shutil.which("virsh")
+    if not virsh:
+        print("monitoring-vm-config: virsh not found", file=sys.stderr)
+        return 127
+
+    cmd = [virsh, "-c", "qemu:///system", action, name, str(value)] + extra_flags
+
+    r = subprocess.run(cmd, shell=False, capture_output=True, text=True, timeout=60)
+    if r.stdout:
+        print(r.stdout.strip())
+    if r.stderr:
+        print(r.stderr.strip(), file=sys.stderr)
+    return r.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

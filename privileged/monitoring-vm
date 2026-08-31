@@ -36,7 +36,7 @@ def main(argv):
     if not virsh:
         print("monitoring-vm: virsh not found", file=sys.stderr)
         return 127
-    return subprocess.run([virsh, action, name], shell=False).returncode
+    return subprocess.run([virsh, "-c", "qemu:///system", action, name], shell=False).returncode
 
 
 if __name__ == "__main__":

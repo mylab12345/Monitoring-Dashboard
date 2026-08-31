@@ -2578,6 +2578,7 @@ async function loadVMs(){
               <button class="btn btn-sm btn-danger" onclick="vmAction('${n}','destroy')">${icon('stop',12)}Force Off</button>`
             :`<button class="btn btn-sm btn-primary" onclick="vmAction('${n}','start')">${icon('play',12)}Start</button>`)}
           <button class="btn btn-sm" onclick="openResizeModal('${n}')">${icon('resize',12)}Resize Disk</button>
+          <button class="btn btn-sm" onclick="openConfigModal('${n}',${esc(vm.vcpus)},'${esc(vm.mem)}')">${icon('gear',12)}Configure</button>
         </div>
       </div>
     </div>`;
@@ -2614,6 +2615,38 @@ async function openResizeModal(name){
   const j=await postJSON('/api/vm_resize',{name,disk_path:r.values.disk_path,new_size_gb:size});
   if(j.error){toast('Resize failed: '+j.error,'err');logActivity('vm','Resize of '+name+' failed',false);}
   else toast(j.result||'Resize queued');
+}
+async function openConfigModal(name,currentVcpus,currentMem){
+  const memMatch=(currentMem||'').match(/([\d.]+)\s*(GB|MB)/i);
+  let currentRamGB=0;
+  if(memMatch){
+    currentRamGB=parseFloat(memMatch[1]);
+    if(memMatch[2].toUpperCase()==='MB')currentRamGB=Math.round(currentRamGB/1024*10)/10;
+  }
+  const vcpus=parseInt(currentVcpus,10)||1;
+  const r=await openModal({
+    title:'Configure '+name,
+    html:'<div style="font-size:.82rem;color:var(--text-2);margin-bottom:8px">'
+      +(location.hostname==='localhost'||location.hostname==='127.0.0.1'
+        ?'Changes take effect immediately on a running VM (hot-add).'
+        :'Changes take effect immediately on a running VM (hot-add). To decrease, power off the VM first.')
+      +'</div>',
+    icon:'gear',confirmText:'Apply',
+    fields:[
+      {key:'vcpus',label:'vCPUs',type:'number',value:String(vcpus),placeholder:'2'},
+      {key:'ram_gb',label:'RAM (GB)',type:'number',value:String(currentRamGB||4),placeholder:'4'}
+    ],
+    note:'Current: '+vcpus+' vCPUs, '+esc(currentMem)
+  });
+  if(!r)return;
+  const newVcpus=parseInt(r.values.vcpus,10);
+  const newRamGB=parseFloat(r.values.ram_gb);
+  if(!newVcpus||newVcpus<1){toast('Enter a valid vCPU count (1–256)','err');return;}
+  if(!newRamGB||newRamGB<0.25){toast('Enter a valid RAM value (≥ 0.25 GB)','err');return;}
+  logActivity('vm','Configure '+name+': vcpus='+newVcpus+' ram='+newRamGB+'GB');
+  const j=await postJSON('/api/vm_config',{name,vcpus:newVcpus,ram_gb:newRamGB});
+  if(j.error){toast('Configure failed: '+j.error,'err');logActivity('vm','Configure '+name+' failed',false);}
+  else{toast(j.result||'Configuration updated');loadVMs();}
 }
 
 // ================================================================
