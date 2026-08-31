@@ -26,7 +26,7 @@ StateDirectory=monitoring
 # set"). ProtectSystem=full/ProtectHome/PrivateTmp do not imply it and keep
 # the code and home directory read-only for the service account.
 ProtectSystem=full
-ProtectHome=true
+ProtectHome=read-only
 PrivateTmp=true
 # Supplementary groups are granted via usermod during install, not here.
 # The service account uses passwordless sudo only for the whitelisted
