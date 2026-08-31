@@ -73,9 +73,12 @@ def api_vm_action():
         return jsonify({"error": "invalid action"}), 400
 
     code, out, err = run_privileged("monitoring-vm", [action, name], timeout=60)
-    if code != 0 and "error" in (out + err).lower():
-        return jsonify({"error": escape((out + err).strip()[:300])}), 500
-    _audit("vm-action", action=action, name=name)
+    if code != 0:
+        detail = ((err or "") + (out or "")).strip()[:300] or "helper failed"
+        _audit("vm-action", action=action, name=name,
+               outcome="failed", exit_code=code)
+        return jsonify({"error": escape(detail), "exit_code": code}), 500
+    _audit("vm-action", action=action, name=name, outcome="success")
     return jsonify({"result": escape((out or err or f"{action} {escape(name)}: ok").strip()[:300])})
 
 
@@ -114,8 +117,15 @@ def api_vm_resize():
     # Resize through the whitelisted qemu helper which verifies the disk
     # actually belongs to the named domain before touching it.
     code, msg, err = run_privileged("monitoring-qemu", ["resize", name, disk_path, str(new_size_int)], timeout=120)
-    _audit("vm-resize", name=name, disk=disk_path, size_gb=new_size_int)
-    return jsonify({"result": escape((msg or err or "").strip()[:400]), "disk": escape(disk_path), "size_gb": new_size_int})
+    if code != 0:
+        detail = ((err or "") + (msg or "")).strip()[:400] or "helper failed"
+        _audit("vm-resize", name=name, disk=disk_path, size_gb=new_size_int,
+               outcome="failed", exit_code=code)
+        return jsonify({"error": escape(detail), "exit_code": code}), 500
+    _audit("vm-resize", name=name, disk=disk_path, size_gb=new_size_int,
+           outcome="success")
+    return jsonify({"result": escape((msg or err or "Resize complete").strip()[:400]),
+                    "disk": escape(disk_path), "size_gb": new_size_int})
 
 
 @bp.route("/api/vm_config", methods=["POST"])

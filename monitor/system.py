@@ -7,7 +7,7 @@ from flask import Blueprint, jsonify
 from .commands import run, which
 from .common import _cached, _int_or
 from .metrics import _cpu_model, _pretty_distro
-from .packages import _updatable_packages
+from .packages import _dpkg_audit, _updatable_packages
 
 bp = Blueprint("system", __name__)
 
@@ -49,10 +49,11 @@ def _build_checks():
     updates = _updatable_packages()
     results.append({"name": "Pending Updates", "status": "warn" if updates["count"] > 0 else "ok",
                     "detail": f"{updates['count']} packages upgradable ({updates['manager'] or 'n/a'})"})
-    if which("dpkg"):
-        code, out, err = run(["dpkg", "--audit"])
-        broken = "found" if "error" in (out + err).lower() else "none"
-        results.append({"name": "Broken Packages", "status": "warn" if broken != "none" else "ok", "detail": broken})
+    dpkg_available, dpkg_healthy, dpkg_detail = _dpkg_audit()
+    if dpkg_available:
+        broken = "none" if dpkg_healthy else "incomplete package state"
+        detail = broken if dpkg_healthy else (dpkg_detail.splitlines()[0][:240] if dpkg_detail else broken)
+        results.append({"name": "Broken Packages", "status": "warn" if not dpkg_healthy else "ok", "detail": detail})
     failed = "0"
     if which("systemctl"):
         code, out, err = run(["systemctl", "--failed", "--no-pager", "--quiet"])

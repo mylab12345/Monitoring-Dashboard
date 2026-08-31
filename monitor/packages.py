@@ -23,28 +23,39 @@ FIX_COMMANDS = {
     "apt":    {"update": ["monitoring-package", "--manager", "apt", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "apt", "--action", "upgrade"],
                "autoremove": ["monitoring-package", "--manager", "apt", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "apt", "--action", "clean"]},
+               "clean": ["monitoring-package", "--manager", "apt", "--action", "clean"],
+               "fix-broken": ["monitoring-package", "--manager", "apt", "--action", "fix-broken"]},
     "dnf":    {"update": ["monitoring-package", "--manager", "dnf", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "dnf", "--action", "upgrade"],
                "autoremove": ["monitoring-package", "--manager", "dnf", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "dnf", "--action", "clean"]},
+               "clean": ["monitoring-package", "--manager", "dnf", "--action", "clean"],
+               "fix-broken": ["monitoring-package", "--manager", "dnf", "--action", "fix-broken"]},
     "yum":    {"update": ["monitoring-package", "--manager", "yum", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "yum", "--action", "upgrade"],
                "autoremove": ["monitoring-package", "--manager", "yum", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "yum", "--action", "clean"]},
+               "clean": ["monitoring-package", "--manager", "yum", "--action", "clean"],
+               "fix-broken": ["monitoring-package", "--manager", "yum", "--action", "fix-broken"]},
     "zypper": {"update": ["monitoring-package", "--manager", "zypper", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "zypper", "--action", "upgrade"],
                "autoremove": ["monitoring-package", "--manager", "zypper", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "zypper", "--action", "clean"]},
+               "clean": ["monitoring-package", "--manager", "zypper", "--action", "clean"],
+               "fix-broken": ["monitoring-package", "--manager", "zypper", "--action", "fix-broken"]},
     "pacman": {"update": ["monitoring-package", "--manager", "pacman", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "pacman", "--action", "upgrade"],
                "autoremove": ["monitoring-package", "--manager", "pacman", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "pacman", "--action", "clean"]},
+               "clean": ["monitoring-package", "--manager", "pacman", "--action", "clean"],
+               "fix-broken": ["monitoring-package", "--manager", "pacman", "--action", "fix-broken"]},
     "apk":    {"update": ["monitoring-package", "--manager", "apk", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "apk", "--action", "upgrade"],
                "autoremove": ["monitoring-package", "--manager", "apk", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "apk", "--action", "clean"]},
+               "clean": ["monitoring-package", "--manager", "apk", "--action", "clean"],
+               "fix-broken": ["monitoring-package", "--manager", "apk", "--action", "fix-broken"]},
 }
+
+# Package managers keep global locks and must never be driven concurrently by
+# two browser requests (for example, Upgrade and Fix Broken from two tabs).
+# The lock is shared with the diagnostics fix-all endpoint.
+PACKAGE_MUTATION_LOCK = threading.Lock()
 
 # Every action /api/fix knows how to run. Anything outside this set is a 400 so
 # the UI can never report success for an operation that did not execute.
@@ -57,6 +68,21 @@ FIX_ALIASES = {"vacuum-journal": "clear-logs", "clear-cache": "clean"}
 _updatable_cache = {"data": None, "ts": 0}
 _updatable_lock = threading.Lock()
 _UPDATABLE_TTL = 300  # 5 minutes
+
+
+def _dpkg_audit():
+    """Return ``(available, healthy, detail)`` for Debian package state.
+
+    ``dpkg --audit`` normally exits zero even when it prints packages that are
+    unpacked, half-installed, or awaiting configuration. Looking only for the
+    word ``error`` therefore misses exactly the state left by an interrupted
+    unpack (including ``coreutils: half-installed``).
+    """
+    if not which("dpkg"):
+        return False, True, ""
+    code, out, err = run(["dpkg", "--audit"], timeout=30)
+    detail = "\n".join(part.strip() for part in (out or "", err or "") if part and part.strip())
+    return True, code == 0 and not detail, detail
 
 
 def _updatable_packages():

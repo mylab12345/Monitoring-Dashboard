@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
@@ -200,6 +201,47 @@ class InputValidation(unittest.TestCase):
 
 
 @unittest.skipIf(app_mod is None, f"flask/psutil not available: {IMPORT_ERROR}")
+class MaintenanceBackend(unittest.TestCase):
+    """Maintenance must use the package helper and report real outcomes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = app_mod.app.test_client()
+
+    def test_failed_package_helper_is_not_reported_as_success(self):
+        from monitor import fixes
+        with patch.object(fixes, "_pkg_manager", return_value="apt"), \
+             patch.object(fixes, "run_privileged", return_value=(30, "", "read-only")):
+            response = self.client.post("/api/fix", json={"action": "upgrade"})
+        self.assertEqual(response.status_code, 500)
+        body = response.get_json()
+        self.assertEqual(body["exit_code"], 30)
+        self.assertIn("read-only", body["error"])
+        self.assertNotIn("result", body)
+
+    def test_fix_broken_has_a_command_for_every_supported_manager(self):
+        from monitor import packages
+        for manager in ("apt", "dnf", "yum", "zypper", "pacman", "apk"):
+            self.assertEqual(
+                packages.FIX_COMMANDS[manager]["fix-broken"][0],
+                "monitoring-package",
+            )
+            self.assertEqual(
+                packages.FIX_COMMANDS[manager]["fix-broken"][2],
+                manager,
+            )
+
+    def test_dpkg_audit_detects_half_installed_output_without_error_word(self):
+        from monitor import packages
+        with patch.object(packages, "which", return_value=True), \
+             patch.object(packages, "run", return_value=(0, "coreutils\n  half-installed", "")):
+            available, healthy, detail = packages._dpkg_audit()
+        self.assertTrue(available)
+        self.assertFalse(healthy)
+        self.assertIn("half-installed", detail)
+
+
+@unittest.skipIf(app_mod is None, f"flask/psutil not available: {IMPORT_ERROR}")
 class TokenAuth(unittest.TestCase):
     """MONITORING_TOKEN gates every /api route (tested in a fresh interpreter
     because the token is read at import time)."""
@@ -351,6 +393,7 @@ class RepoConsistency(unittest.TestCase):
             txt = fh.read()
         self.assertIn("User=monitoring", txt)
         self.assertIn("ProtectSystem=full", txt)
+        self.assertIn("ReadWritePaths=/usr /etc /boot /efi", txt)
         self.assertNotIn("NoNewPrivileges=true", txt)  # would break sudo helpers
         self.assertNotIn("RestrictSUIDSGID=true", txt)
 
@@ -405,6 +448,11 @@ class UpgradeSafety(unittest.TestCase):
 
     def test_updater_backs_up_monitor_for_rollback(self):
         self.assertIn('"$TARGET/monitor"', self._text("update.sh"))
+
+    def test_installed_updater_downloads_sources_before_installing_helpers(self):
+        txt = self._text("update.sh")
+        self.assertLess(txt.index('if [ "$SRC" = "$TARGET" ]'),
+                        txt.index("install_privileges\nmkdir"))
 
     def test_app_entrypoint_is_defensive(self):
         """If monitor/ is missing (e.g. an old update.sh ran), app.py must print

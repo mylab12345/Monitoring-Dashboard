@@ -45,7 +45,10 @@ def api_service_action():
 
     # Route systemd mutations through the whitelisted helper only.
     code, out, err = run_privileged("monitoring-systemctl", [action, name], timeout=30)
-    if code != 0 and (err or out) and "Created symlink" not in (err or out):
-        return jsonify({"error": escape(((err or out).strip()[:300]))}), 500
-    _audit("service-action", action=action, unit=name)
+    if code != 0:
+        detail = ((err or "") + (out or "")).strip()[:300] or "helper failed"
+        _audit("service-action", action=action, unit=name,
+               outcome="failed", exit_code=code)
+        return jsonify({"error": escape(detail), "exit_code": code}), 500
+    _audit("service-action", action=action, unit=name, outcome="success")
     return jsonify({"result": f"{action} {escape(name)}: ok"})

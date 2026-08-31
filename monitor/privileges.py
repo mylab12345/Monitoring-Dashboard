@@ -5,7 +5,7 @@ import pwd
 
 from flask import Blueprint, jsonify
 
-from .commands import PASSWORDLESS_SUDO, privileged_tool, run
+from .commands import PASSWORDLESS_SUDO, mount_status, privileged_tool, run
 from .common import SUDOERS_FILE, _cached, PRIVILEGE_DIR
 
 bp = Blueprint("privileges", __name__)
@@ -60,6 +60,35 @@ def _privilege_status():
             "path": privileged_tool(helper),
             "status": _check_sudo_helper(helper),
         })
+
+    # A sudo rule can be correct while a systemd mount namespace still makes
+    # apt/dpkg fail with "Read-only file system". Report that separately from
+    # ordinary Unix permissions so the operator can tell which fix is needed.
+    try:
+        from .packages import _pkg_manager
+        manager = _pkg_manager()
+    except Exception:
+        manager = None
+    package_paths = [mount_status(path) for path in
+                     ("/usr", "/etc", "/var", "/boot", "/efi")]
+    known_paths = [item for item in package_paths if item["exists"] and item["known"]]
+    package_helper = next((h for h in report["helpers"]
+                           if h["name"] == "monitoring-package"), None)
+    report["maintenance"] = {
+        "package_manager": manager,
+        "package_helper_status": package_helper["status"] if package_helper else "missing",
+        "package_write_paths": package_paths,
+        "package_write_ready": (
+            False if any(item["read_only"] for item in known_paths)
+            else True if len(known_paths) == sum(item["exists"] for item in package_paths)
+            else None
+        ),
+        "package_write_note": (
+            "A required package path is mounted read-only. This is a mount-policy "
+            "issue, not a chmod issue; install the updated service unit and restart it."
+            if any(item["read_only"] for item in known_paths) else ""
+        ),
+    }
     return report
 
 

@@ -153,14 +153,6 @@ fi
 # delegated installer mirror the update invocation, so --token/--bind survive.
 log "Installation found: $TARGET"
 
-# --- Ensure service account, groups and privilege helpers -----------------------
-log "Ensuring service account $MONITORING_USER…"
-create_service_account
-SUPP_GROUPS="$(add_supplementary_groups)"
-install_privileges
-mkdir -p "$LOG_DIR"
-chown "$MONITORING_USER:$MONITORING_GROUP" "$LOG_DIR" 2>/dev/null || chown "$MONITORING_USER" "$LOG_DIR" 2>/dev/null || true
-
 # If sources ARE the installed copy (e.g. `monitoring update`), there is nothing
 # local to sync — pull the latest from GitHub instead.
 if [ "$SRC" = "$TARGET" ]; then
@@ -172,6 +164,14 @@ if [ "$SRC" = "$TARGET" ]; then
   [ -n "$SRC" ] || die "Archive does not contain app.py"
   NEW_VERSION="$(cat "$SRC/VERSION" 2>/dev/null || echo '?')"
 fi
+
+# --- Ensure service account, groups and privilege helpers -----------------------
+log "Ensuring service account $MONITORING_USER…"
+create_service_account
+SUPP_GROUPS="$(add_supplementary_groups)"
+install_privileges
+mkdir -p "$LOG_DIR"
+chown "$MONITORING_USER:$MONITORING_GROUP" "$LOG_DIR" 2>/dev/null || chown "$MONITORING_USER" "$LOG_DIR" 2>/dev/null || true
 
 OLD_VERSION="$(cat "$TARGET/VERSION" 2>/dev/null || echo '?')"
 log "Updating version: v${OLD_VERSION} → v${NEW_VERSION}"

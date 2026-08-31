@@ -26,6 +26,15 @@ StateDirectory=monitoring
 # set"). ProtectSystem=full/ProtectHome/PrivateTmp do not imply it and keep
 # the code and home directory read-only for the service account.
 ProtectSystem=full
+# ProtectSystem=full also makes /usr, /etc and boot filesystems read-only in
+# the service mount namespace. That is correct for the dashboard process, but
+# it also applies to its passwordless-sudo package helper: apt/dpkg must be
+# able to replace files such as /usr/bin/[ and update /etc and /boot. These
+# are explicit mount-namespace exceptions, not Unix permissions for the
+# monitoring user; only the root-owned, argument-validating helper can use
+# root privileges to write them. /var remains writable under ProtectSystem=full
+# for package databases, caches and logs.
+ReadWritePaths=/usr /etc /boot /efi
 ProtectHome=read-only
 PrivateTmp=true
 # Supplementary groups are granted via usermod during install, not here.
