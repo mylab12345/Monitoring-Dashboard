@@ -125,8 +125,11 @@ def _check_write_paths(action):
         "Monitoring service namespace, install the updated monitoring.service "
         "(it grants ReadWritePaths=/usr /etc /boot /efi to this helper), then "
         "run systemctl daemon-reload and restart monitoring before retrying. "
-        "If the host itself is mounted read-only, repair/remount that "
-        "filesystem first; do not chmod /usr.", file=sys.stderr)
+        "The dashboard can do this for you: open the Maintenance card and run "
+        "'Repair service mount namespace' (it performs these steps through "
+        "the monitoring service account). If the host itself is mounted "
+        "read-only, repair/remount that filesystem first; do not chmod /usr.",
+        file=sys.stderr)
     return False
 
 

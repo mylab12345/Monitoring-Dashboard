@@ -73,7 +73,7 @@ class ApiBaseline(unittest.TestCase):
         for path in ("/api/health", "/api/version", "/api/status", "/api/systeminfo",
                      "/api/history", "/api/processes", "/api/services", "/api/disks",
                      "/api/network", "/api/ports", "/api/logs", "/api/checks",
-                     "/api/troubleshooting", "/api/privileges"):
+                     "/api/troubleshooting", "/api/privileges", "/api/self-repair"):
             r = self._get(path)
             json.loads(r.get_data())
 
@@ -356,13 +356,135 @@ class HelperValidation(unittest.TestCase):
     def test_zombie_clean_no_args(self):
         self.assertEqual(self._helper("monitoring-zombie-clean", "extra").returncode, 2)
 
+    def test_self_repair_validation(self):
+        self.assertEqual(self._helper("monitoring-self-repair", "--apply", "extra").returncode, 2)
+        self.assertEqual(self._helper("monitoring-self-repair", "--bogus").returncode, 2)
+        self.assertEqual(self._helper("monitoring-self-repair").returncode, 2)
+
     def test_all_helpers_check(self):
-        for name in ("monitoring-systemctl", "monitoring-package", "monitoring-journal-vacuum",
+        for name in ("monitoring-systemctl", "monitoring-self-repair", "monitoring-package", "monitoring-journal-vacuum",
                      "monitoring-clean-old-logs", "monitoring-vm", "monitoring-vm-config",
                      "monitoring-qemu", "monitoring-kill", "monitoring-zombie-clean",
                      "monitoring-privilege-check"):
             r = self._helper(name, "--check")
             self.assertEqual(r.returncode, 0, f"{name} --check failed: {r.stderr}")
+
+
+class SelfRepairUnit(unittest.TestCase):
+    """Pure unit-patching logic of the monitoring-self-repair helper.
+
+    The helper must surgically add ReadWritePaths=/usr /etc /boot /efi to the
+    installed unit without touching anything else, and its --check must answer
+    with a stable JSON contract without mutating the system.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(REPO, "privileged", "monitoring-self-repair")
+        loader = importlib.machinery.SourceFileLoader("monitoring_self_repair", path)
+        spec = importlib.util.spec_from_loader("monitoring_self_repair", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        cls.mod = mod
+
+    def test_has_rwp_detects_required_paths(self):
+        m = self.mod
+        good = "[Service]\nProtectSystem=full\nReadWritePaths=/usr /etc /boot /efi\n[Install]\nWantedBy=multi-user.target\n"
+        self.assertTrue(m._unit_has_rwp(good))
+        self.assertFalse(m._unit_has_rwp("[Service]\nReadWritePaths=/usr /etc\n"))
+        # systemd accumulates repeated lines: the union must satisfy all paths.
+        self.assertTrue(m._unit_has_rwp("[Service]\nReadWritePaths=/usr /etc\nReadWritePaths=/boot /efi\n"))
+        # a commented-out directive does not count
+        self.assertFalse(m._unit_has_rwp("[Service]\n# ReadWritePaths=/usr /etc /boot /efi\n"))
+        # case-insensitive key, spaces around '='
+        self.assertTrue(m._unit_has_rwp("[Service]\nReadWritePaths = /usr /etc /boot /efi\n"))
+
+    def test_insert_rwp_places_directive_and_preserves_content(self):
+        m = self.mod
+        content = ("[Unit]\nDescription=Monitoring\n[Service]\nUser=monitoring\n"
+                   "ProtectSystem=full\nEnvironment=PYTHONDONTWRITEBYTECODE=1\n"
+                   "[Install]\nWantedBy=multi-user.target\n")
+        patched = m._insert_rwp(content)
+        self.assertIsNotNone(patched)
+        self.assertIn(m.RWP_DIRECTIVE, patched)
+        self.assertTrue(m._unit_has_rwp(patched))
+        # operator settings survive the patch untouched
+        self.assertIn("User=monitoring", patched)
+        self.assertIn("PYTHONDONTWRITEBYTECODE=1", patched)
+        self.assertIn("WantedBy=multi-user.target", patched)
+        # idempotent
+        self.assertEqual(m._insert_rwp(patched), patched)
+
+    def test_insert_rwp_without_service_section_refuses(self):
+        self.assertIsNone(self.mod._insert_rwp("[Unit]\nDescription=x\n"))
+
+    def test_check_returns_json_contract(self):
+        r = subprocess.run(
+            [sys.executable, os.path.join(REPO, "privileged", "monitoring-self-repair"), "--check"],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        for key in ("systemd", "systemd_run", "unit_path", "unit_exists",
+                    "unit_recognized", "unit_needs_patch", "service_active",
+                    "service_stale", "namespace_read_only", "blocked",
+                    "actionable", "message"):
+            self.assertIn(key, data)
+        self.assertIsInstance(data["namespace_read_only"], list)
+
+
+@unittest.skipIf(not APP_AVAILABLE, SKIP_REASON)
+class SelfRepairApi(unittest.TestCase):
+    """Dashboard endpoints for the mount-namespace self-repair."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.client = app_mod.app.test_client()
+
+    def test_status_endpoint_contract(self):
+        r = self.client.get("/api/self-repair")
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        for key in ("helper", "helper_path", "unit_path", "app_read_only_paths",
+                    "blocked", "actionable"):
+            self.assertIn(key, body)
+
+    def test_apply_requires_installed_helper(self):
+        # In the test environment the helper is not installed in the privilege
+        # directory, so the mutation must be refused safely, not half-run.
+        # (Order-independent: the rate-limit test may already consume the POST
+        # budget for this minute, so a 429 is equally acceptable.)
+        r = self.client.post("/api/self-repair", json={})
+        self.assertIn(r.status_code, (503, 429))
+        if r.status_code == 503:
+            self.assertIn("error", r.get_json())
+
+    def test_apply_rate_limited(self):
+        codes = [self.client.post("/api/self-repair", json={}).status_code
+                 for _ in range(7)]
+        self.assertGreaterEqual(codes.count(429), 2,
+                                "api/self-repair POST should be rate-limited")
+
+
+class CacheClear(unittest.TestCase):
+    """_cache_clear() must drop a cached entry so post-mutation status checks
+    (e.g. /api/self-repair after a repair) see fresh data immediately."""
+
+    def test_cache_clear_removes_entry(self):
+        from monitor import common
+        calls = {"n": 0}
+
+        def fn():
+            calls["n"] += 1
+            return calls["n"]
+
+        common._cache_clear("test-key")  # idempotent when absent
+        self.assertEqual(common._cached("test-key", 30, fn), 1)
+        self.assertEqual(common._cached("test-key", 30, fn), 1)  # cached
+        common._cache_clear("test-key")
+        self.assertEqual(common._cached("test-key", 30, fn), 2)  # recomputed
+        common._cache_clear("test-key")  # clearing again must not raise
 
 
 class RepoConsistency(unittest.TestCase):
