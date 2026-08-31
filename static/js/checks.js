@@ -57,6 +57,7 @@ const FIX_META={
   autoremove:{icon:'trash',label:'Autoremove',desc:'Remove unused packages'},
   clean:{icon:'sparkles',label:'Clean Cache',desc:'Clear package caches'},
   'fix-broken':{icon:'wrench',label:'Fix Broken',desc:'Repair packages'},
+  'remount-rw':{icon:'unlock',label:'Remount RW',desc:'Remount read-only system filesystems read-write'},
   'clear-logs':{icon:'terminal',label:'Clear Logs',desc:'Vacuum the journal'}
 };
 function renderFixButtons(){

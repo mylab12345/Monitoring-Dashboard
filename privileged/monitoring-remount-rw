@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""monitoring-remount-rw - remount read-only system filesystems read-write.
+
+The dashboard's "Remount RW" maintenance action (and the diagnostics fix for
+the "Filesystem Read-Only" issue) runs this helper through passwordless sudo.
+
+A read-only root filesystem is exactly what produces failures like:
+
+    dpkg: error processing archive coreutils_...deb (--unpack):
+    unable to create '/usr/bin/[.dpkg-new': Read-only file system
+
+which then leave packages half-installed. Remounting read-write restores the
+write permission the package manager needs.
+
+Safety bounds
+-------------
+Only block filesystems (ext2/ext3/ext4/xfs/btrfs/f2fs, plus overlay for
+container roots) that are CURRENTLY mounted read-only at /, /usr or /var are
+remounted. Pseudo filesystems (proc, sysfs, tmpfs), snapshot mounts
+(squashfs) and intentionally read-only partitions such as /boot or the EFI
+partition are never touched. After each remount the helper re-checks the
+mount flags so a silent failure can never be reported as success.
+
+Exit codes:
+  0  all relevant filesystems are writable (or nothing to do)
+  2  invalid arguments
+  3  one or more filesystems could NOT be remounted read-write
+"""
+import os
+import shutil
+import subprocess
+import sys
+
+ALLOWED_MOUNTPOINTS = {"/", "/usr", "/var"}
+ALLOWED_FSTYPES = {"ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "overlay"}
+
+
+def _unescape_mount(mount):
+    return (mount.replace("\\040", " ").replace("\\011", "\t")
+            .replace("\\012", "\n").replace("\\134", "\\"))
+
+
+def _readonly_system_mounts(mounts_text):
+    """(device, mountpoint, fstype) for allowed mounts currently read-only."""
+    out = []
+    for line in mounts_text.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        dev, mount, fstype, opts = (parts[0], _unescape_mount(parts[1]),
+                                    parts[2], parts[3])
+        if mount not in ALLOWED_MOUNTPOINTS:
+            continue
+        if fstype not in ALLOWED_FSTYPES:
+            continue
+        if "ro" in opts.split(","):
+            out.append((dev, mount, fstype))
+    return out
+
+
+def _writable(mount):
+    """Root-proof writability check (mount flags + access())."""
+    try:
+        if os.statvfs(mount).f_flag & os.ST_RDONLY:
+            return False
+        return os.access(mount, os.W_OK)
+    except OSError:
+        return False
+
+
+def main(argv):
+    if "--check" in argv or argv and argv[0] == "--check":
+        print("monitoring-remount-rw: ok")
+        return 0
+    if argv:
+        print("usage: monitoring-remount-rw [--check]", file=sys.stderr)
+        return 2
+
+    try:
+        with open("/proc/mounts") as fh:
+            mounts_text = fh.read()
+    except OSError:
+        mounts_text = ""
+
+    candidates = _readonly_system_mounts(mounts_text)
+    if not candidates:
+        print("monitoring-remount-rw: no read-only system filesystems to remount")
+        return 0
+
+    mount_bin = shutil.which("mount")
+    if not mount_bin:
+        print("monitoring-remount-rw: 'mount' executable not found", file=sys.stderr)
+        return 3
+
+    failed = []
+    for dev, mount, fstype in candidates:
+        r = subprocess.run([mount_bin, "-o", "remount,rw", "--", mount],
+                           shell=False, capture_output=True, text=True)
+        if r.returncode == 0 and _writable(mount):
+            print(f"monitoring-remount-rw: {mount} ({dev}, {fstype}) "
+                  "remounted read-write")
+        else:
+            failed.append(mount)
+            detail = (r.stderr or r.stdout or "unknown error").strip()
+            print(f"monitoring-remount-rw: FAILED to remount {mount} "
+                  f"read-write: {detail}", file=sys.stderr)
+    if failed:
+        print("monitoring-remount-rw: %d filesystem(s) still read-only: %s"
+              % (len(failed), ", ".join(failed)), file=sys.stderr)
+        print("monitoring-remount-rw: check 'dmesg' / the journal for I/O "
+              "errors and run fsck on the underlying device; a disk that "
+              "keeps going read-only may be failing.", file=sys.stderr)
+        return 3
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -11,10 +11,12 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from .commands import PASSWORDLESS_SUDO, run, run_lines, run_privileged, which
+from .commands import PASSWORDLESS_SUDO, readonly_mounts, run, run_lines, run_privileged, which
 from .common import MY_PID, _audit, _cached
 from .metrics import _cpu_model, _pretty_distro, _read_temp_c
-from .packages import FIX_COMMANDS, _pkg_manager, _updatable_packages
+from .packages import (FIX_COMMANDS, _pkg_manager,
+                       _updatable_packages, describe_fix_rc, dpkg_broken_status,
+                       invalidate_updatable_cache)
 from .security import rate_limit
 
 bp = Blueprint("diagnostics", __name__)
@@ -140,6 +142,28 @@ def _diag_scan():
 
     # -------------------------------------------------- 1. Disk & storage
     try:
+        # A read-only system filesystem breaks package operations with
+        # "Read-only file system" errors (and can strand packages as
+        # half-installed) — flag it before anything else.
+        ro_mounts = readonly_mounts()
+        if ro_mounts:
+            ro_txt = ", ".join(f"{m} ({fstype})" for _, m, fstype in ro_mounts)
+            put("critical", _diag_issue(
+                "filesystem_readonly", "Filesystem Read-Only",
+                f"System filesystem(s) mounted read-only: {ro_txt}.",
+                "disk", "critical", "disk", fix="fix-readonly-fs",
+                evidence=[_diag_ev("Read-only mounts", ro_txt,
+                                   "grep ' ro ' /proc/mounts")],
+                impact="Package installs/upgrades fail with 'Read-only file system' and can leave packages half-installed; services that write state (journal, logs, databases) also fail.",
+                recommended_fix={
+                    "id": "fix-readonly-fs",
+                    "label": "Remount filesystem read-write",
+                    "description": "Attempts 'mount -o remount,rw' on the read-only system filesystems and verifies the result. If it fails, check dmesg/journal for I/O errors and run fsck on the underlying device.",
+                    "risk": "medium",
+                    "commands": ["mount -o remount,rw /"],
+                },
+                verify=[_diag_ev("Re-check mount options", "rw",
+                                 "grep ' ro ' /proc/mounts")]))
         du = psutil.disk_usage("/")
         total_gb, used_gb, free_gb = du.total / 1024**3, du.used / 1024**3, du.free / 1024**3
         pct = round(du.percent, 1)
@@ -407,18 +431,29 @@ def _diag_scan():
 
     # -------------------------------------------------- 6. Packages
     mgr = _pkg_manager()
-    code, out, err = run(["dpkg", "--audit"]) if which("dpkg") else (-1, "", "")
-    if (out or err) and ("error" in (out + err).lower()):
+    broken = dpkg_broken_status()
+    broken_names = broken["half_installed"] + broken["unpacked"]
+    if broken["available"] and (broken_names or broken["audit"].strip()):
+        names = broken_names[:8]
+        detail = f"{len(broken_names)} package(s) in a broken state"
+        if names:
+            detail += f": {', '.join(names)}"
+        if not broken_names and broken["audit"].strip():
+            detail += " (dpkg audit reports issues)"
         put("critical", _diag_issue(
             "broken_packages", "Broken Packages",
-            "Package database has inconsistencies (dpkg reports errors).",
+            detail,
             "packages", "critical", "package", fix="fix-broken-packages",
-            evidence=[_diag_ev("dpkg audit", (out or err).strip().splitlines()[0][:160] if (out or err).strip() else "errors", "dpkg --audit")],
-            impact="Package installs, upgrades and removals can fail; broken dependencies can also break applications.",
+            evidence=[_diag_ev("dpkg audit",
+                               broken["audit"].splitlines()[0][:160] if broken["audit"].strip() else "clean",
+                               "dpkg --audit"),
+                      _diag_ev("Half-installed", ", ".join(broken["half_installed"]) or "none",
+                               "dpkg-query -W -f='${db:Status-Status} ${binary:Package}'")],
+            impact="Package installs, upgrades and removals can fail; half-installed packages (e.g. after an upgrade hit a read-only filesystem) are not repaired by 'dpkg --configure -a' alone and can also break applications.",
             recommended_fix={
                 "id": "fix-broken-packages",
                 "label": "Repair package database",
-                "description": "Reconfigures pending packages and installs missing dependencies (apt systems).",
+                "description": "Reconfigures pending packages, clears half-installed registrations and reinstalls the affected packages (apt systems).",
                 "risk": "medium",
                 "commands": ["dpkg --configure -a", "apt install -f -y"],
             },
@@ -688,10 +723,16 @@ def _verify_issue(iid):
             n = len([l for l in out.splitlines() if l.strip()])
             return res(n == 0, f"{n} failed service(s)", [_diag_ev("Failed units", str(n), "systemctl --failed")])
         if iid == "broken_packages":
-            _, out, err = run(["dpkg", "--audit"]) if which("dpkg") else (-1, "", "")
-            bad = "error" in (out + err).lower()
-            return res(not bad, "dpkg audit clean" if not bad else "dpkg reports errors",
-                       [_diag_ev("dpkg audit", "clean" if not bad else "errors", "dpkg --audit")])
+            b = dpkg_broken_status()
+            names = b["half_installed"] + b["unpacked"]
+            clean = not names and not b["audit"].strip()
+            return res(clean, "dpkg audit clean" if clean else f"{len(names)} broken package(s)",
+                       [_diag_ev("dpkg audit", "clean" if clean else "issues", "dpkg --audit")])
+        if iid == "filesystem_readonly":
+            ro = readonly_mounts()
+            ro_txt = ", ".join(m for _, m, _ in ro)
+            return res(not ro, "all system mounts writable" if not ro else "read-only: " + ro_txt,
+                       [_diag_ev("Read-only mounts", ro_txt or "none", "grep ' ro ' /proc/mounts")])
         if iid in ("many_updates", "pending_updates"):
             u = _updatable_packages()
             check_cmd = {
@@ -806,6 +847,16 @@ def api_troubleshooting_fix_all():
             raise ValueError("internal fix command mismatch")
         return helper_run(argv[0], argv[1:])
 
+    def finish_pkg_fix(fix_result, code, out, err, ok_text):
+        """Translate helper exit codes (read-only refusal etc.) and refresh
+        the cached update list so the dashboard reflects the new state."""
+        tail = (out or err or "").strip()
+        if code != 0 and not tail:
+            tail = describe_fix_rc(code) or f"Exit code {code}"
+        fix_result["output"] = (tail or ok_text).strip()[-500:]
+        invalidate_updatable_cache()
+        record_fix(fix_result, code)
+
     for fix in fixes_needed:
         fix_result = {"fix": fix, "output": ""}
         code = 0
@@ -814,8 +865,7 @@ def api_troubleshooting_fix_all():
                 cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("broken_packages", [])
                 if cmd:
                     code, out, err = helper_list("monitoring-package", cmd)
-                    fix_result["output"] = (out or err or "Done").strip()[-500:]
-                    record_fix(fix_result, code)
+                    finish_pkg_fix(fix_result, code, out, err, "Package database repaired")
                 else:
                     fix_result["output"] = f"No fix available for {mgr}"
                     results["skipped"].append(fix_result)
@@ -841,18 +891,24 @@ def api_troubleshooting_fix_all():
                 cmd = FIX_COMMANDS.get(mgr, {}).get("update", [])
                 if cmd:
                     code, out, err = helper_list("monitoring-package", cmd)
-                    fix_result["output"] = (out or err or "Done").strip()[-500:]
-                    record_fix(fix_result, code)
+                    finish_pkg_fix(fix_result, code, out, err, "Package lists updated")
+                else:
+                    fix_result["output"] = f"No update command available for {mgr}"
+                    results["skipped"].append(fix_result)
 
             elif fix == "upgrade-packages" and mgr:
                 cmd = FIX_COMMANDS.get(mgr, {}).get("upgrade", [])
                 if cmd:
                     code, out, err = helper_list("monitoring-package", cmd)
-                    fix_result["output"] = (out or err or "Upgrade complete").strip()[-500:]
-                    record_fix(fix_result, code)
+                    finish_pkg_fix(fix_result, code, out, err, "Upgrade complete")
                 else:
                     fix_result["output"] = f"No upgrade command available for {mgr}"
                     results["skipped"].append(fix_result)
+
+            elif fix == "fix-readonly-fs":
+                code, out, err = helper_run("monitoring-remount-rw", timeout=120)
+                fix_result["output"] = (out or err or "Remount complete").strip()[-500:]
+                record_fix(fix_result, code)
 
             elif fix == "restart-failed-services":
                 if which("systemctl"):

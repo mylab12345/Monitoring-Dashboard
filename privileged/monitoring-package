@@ -5,13 +5,66 @@ The monitoring service is granted sudo for this helper only. The helper maps
 an explicit (manager, action) pair to fixed argv lists. It never uses a shell
 and never accepts arbitrary package names from the service (with one
 exception: pacman autoremove enumerates orphans itself).
+
+Write preflight
+---------------
+Before ANY mutating action, the helper verifies that every filesystem path the
+package manager must write to is actually writable (mount flags + access()).
+Running apt/dpkg on a read-only filesystem is how a machine ends up with
+packages stuck "half-installed" (e.g. coreutils failing to unpack with
+"Read-only file system", after which `dpkg --configure -a` can no longer
+recover). The helper refuses to even start in that state and tells the
+operator to remount read-write (or use the dashboard's "Remount RW" action).
+
+The checked paths are fixed per manager and can be overridden for testing or
+unusual layouts with MONITORING_PACKAGE_PREFLIGHT_PATHS (colon-separated).
+
+Broken-package recovery (apt fix-broken)
+----------------------------------------
+`dpkg --configure -a` alone cannot repair a package stuck "half-installed".
+The apt fix-broken action therefore runs the full operator-grade sequence:
+
+  1. dpkg --audit
+  2. dpkg --configure -a                     (half-configured / unpacked)
+  3. enumerate half-installed packages       (dpkg-query, fallback dpkg -l)
+  4. for each: dpkg --remove --force-remove-reinstreq   (clears the broken
+     registration without deleting remaining files)
+  5. apt-get install -f -y                   (repair dependencies)
+  6. apt-get install --reinstall -y <pkg>    (restore the packages, bounded)
+
+Exit codes:
+  0    success (or --check OK)
+  2    invalid arguments — nothing was run
+  3    REFUSED: required filesystem paths are read-only (write preflight)
+  127  required executable not found
+  N    any other value is the package manager's own exit code
 """
+import os
+import re
 import shutil
 import subprocess
 import sys
 
 ACTIONS = {"update", "upgrade", "autoremove", "clean", "fix-broken"}
 MANAGERS = {"apt", "dnf", "yum", "zypper", "pacman", "apk"}
+
+RC_USAGE = 2
+RC_READONLY = 3
+
+# At most this many half-installed packages are auto-recovered per run; the
+# rest are reported so the operator can review them manually.
+MAX_RECOVER = 20
+
+# Paths that must be writable before a mutating action may run. Overridable
+# via MONITORING_PACKAGE_PREFLIGHT_PATHS (colon-separated).
+PREFLIGHT_PATHS = {
+    "apt": ["/usr", "/var/lib/dpkg", "/var/lib/apt", "/var/cache/apt"],
+    "dnf": ["/usr", "/var/lib/dnf", "/var/cache/dnf", "/var/lib/rpm"],
+    "yum": ["/usr", "/var/lib/yum", "/var/cache/yum", "/var/lib/rpm"],
+    "zypper": ["/usr", "/var/lib/zypp", "/var/cache/zypp", "/var/lib/rpm"],
+    "pacman": ["/usr", "/var/lib/pacman", "/var/cache/pacman"],
+    "apk": ["/usr", "/lib/apk", "/var/cache/apk"],
+}
 
 # Fixed, non-injectable command lists. The helper resolves the real binary
 # with shutil.which() from the existing PATH.
@@ -70,6 +123,151 @@ def _run(argv):
     return subprocess.run([exe] + argv[1:], shell=False).returncode
 
 
+def re_valid_pkg(pkg):
+    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+:-]*", pkg) is not None
+
+
+def _unescape_mount(mount):
+    return (mount.replace("\\040", " ").replace("\\011", "\t")
+            .replace("\\012", "\n").replace("\\134", "\\"))
+
+
+def _fs_readonly(path, mounts_text):
+    """True when `path` lives on a mount listed as read-only in mounts_text
+    (/proc/mounts format). Unknown paths (no matching mount) are not flagged,
+    so chroots/containers without /proc/mounts fall back to statvfs/access."""
+    best_mount = None
+    best_opts = ""
+    for line in mounts_text.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        mount = _unescape_mount(parts[1])
+        if path == mount or path.startswith(mount.rstrip("/") + "/"):
+            if best_mount is None or len(mount) > len(best_mount):
+                best_mount, best_opts = mount, parts[3]
+    if best_mount is None:
+        return False
+    return "ro" in best_opts.split(",")
+
+
+def _preflight_blocked(manager):
+    """Return the list of required paths that are not writable (read-only
+    mount, ST_RDONLY, or access(W_OK) denied). Empty list = all writable."""
+    paths = PREFLIGHT_PATHS.get(manager, [])
+    env_paths = os.environ.get("MONITORING_PACKAGE_PREFLIGHT_PATHS", "").strip()
+    if env_paths:
+        paths = [p for p in env_paths.split(":") if p]
+    try:
+        with open("/proc/mounts") as fh:
+            mounts_text = fh.read()
+    except OSError:
+        mounts_text = ""
+    blocked = []
+    for raw in paths:
+        p = os.path.abspath(raw)
+        if not os.path.exists(p):
+            continue
+        if _fs_readonly(p, mounts_text):
+            blocked.append(p)
+            continue
+        try:
+            if os.statvfs(p).f_flag & os.ST_RDONLY:
+                blocked.append(p)
+                continue
+        except OSError:
+            pass
+        if not os.access(p, os.W_OK):
+            blocked.append(p)
+    return blocked
+
+
+def _half_installed_packages():
+    """Names of packages dpkg reports as half-installed (prefer dpkg-query,
+    fall back to parsing `dpkg -l`)."""
+    names = []
+    exe = shutil.which("dpkg-query")
+    if exe:
+        r = subprocess.run(
+            [exe, "-W", "-f=${db:Status-Status} ${binary:Package}\n"],
+            shell=False, capture_output=True, text=True)
+        if r.returncode == 0:
+            for line in (r.stdout or "").splitlines():
+                parts = line.split(None, 1)
+                if len(parts) == 2 and parts[0] == "half-installed" and re_valid_pkg(parts[1]):
+                    names.append(parts[1])
+            return names
+    exe = shutil.which("dpkg")
+    if not exe:
+        return names
+    r = subprocess.run([exe, "-l"], shell=False, capture_output=True, text=True)
+    for line in (r.stdout or "").splitlines():
+        parts = line.split()
+        # dpkg -l status columns: desired char + status char; 'H' = half-installed.
+        if len(parts) >= 3 and line[:1] in ("i", "h") and line[1:2] == "H" and re_valid_pkg(parts[1]):
+            if parts[1] not in names:
+                names.append(parts[1])
+    return names
+
+
+def _apt_upgrade():
+    """apt upgrade with operator-grade safety: recover from interrupted
+    configurations first, and abort (instead of making things worse) when
+    packages are still half-installed."""
+    print("monitoring-package: dpkg --configure -a (recover from interrupted operations)")
+    rc = _run(["dpkg", "--configure", "-a"])
+    if rc != 0:
+        print(f"monitoring-package: dpkg --configure -a failed (exit code {rc}).",
+              file=sys.stderr)
+        print("monitoring-package: packages may be half-installed; run the "
+              "'Fix Broken' action first, then retry the upgrade.", file=sys.stderr)
+        return rc
+    return _run(BASE["apt"]["upgrade"])
+
+
+def _apt_fix_broken():
+    """Full recovery sequence for a broken dpkg database, including the
+    half-installed case `dpkg --configure -a` cannot handle."""
+    print("monitoring-package: dpkg --audit")
+    _run(["dpkg", "--audit"])
+
+    print("monitoring-package: dpkg --configure -a")
+    last = _run(["dpkg", "--configure", "-a"])
+
+    half = _half_installed_packages()
+    if half:
+        print("monitoring-package: half-installed packages found: " + ", ".join(half))
+        recover = half[:MAX_RECOVER]
+        for pkg in recover:
+            print(f"monitoring-package: clearing broken registration for {pkg} "
+                  "(dpkg --remove --force-remove-reinstreq)")
+            r = _run(["dpkg", "--remove", "--force-remove-reinstreq", pkg])
+            if r != 0:
+                last = r
+        r = _run(BASE["apt"]["fix-broken"])  # apt-get install -f -y
+        if r != 0:
+            last = r
+        for pkg in recover:
+            print(f"monitoring-package: reinstalling {pkg}")
+            r = _run(["apt-get", "install", "--reinstall", "-y", pkg])
+            if r != 0:
+                last = r
+        if len(half) > MAX_RECOVER:
+            rest = ", ".join(half[MAX_RECOVER:])
+            print(f"monitoring-package: {len(half) - MAX_RECOVER} more broken "
+                  f"package(s) were NOT auto-repaired: {rest}", file=sys.stderr)
+            if last == 0:
+                last = 1
+        return last
+
+    # Nothing half-installed: finish with a dependency repair (no-op on a
+    # healthy system) in case configure -a alone did not settle everything.
+    r = _run(BASE["apt"]["fix-broken"])
+    if r != 0:
+        last = r
+    return last
+
+
 def main(argv):
     if "--check" in argv or argv and argv[0] == "--check":
         print("monitoring-package: ok")
@@ -79,21 +277,35 @@ def main(argv):
         manager, action = argv[1], argv[3]
     else:
         print("usage: monitoring-package --manager <mgr> --action <action>", file=sys.stderr)
-        return 2
+        return RC_USAGE
 
     if manager not in MANAGERS:
         print(f"monitoring-package: invalid manager: {manager}", file=sys.stderr)
-        return 2
+        return RC_USAGE
     if action not in ACTIONS:
         print(f"monitoring-package: invalid action: {action}", file=sys.stderr)
-        return 2
+        return RC_USAGE
+
+    blocked = _preflight_blocked(manager)
+    if blocked:
+        print("monitoring-package: REFUSED - required filesystem paths are "
+              "read-only:", file=sys.stderr)
+        for p in blocked:
+            print(f"monitoring-package:   not writable: {p}", file=sys.stderr)
+        print("monitoring-package: the package manager cannot install, upgrade "
+              "or repair packages on a read-only filesystem; nothing was modified.",
+              file=sys.stderr)
+        print("monitoring-package: fix: remount the filesystem read-write "
+              "(sudo mount -o remount,rw <mountpoint>, or the dashboard's "
+              "'Remount RW' action), then retry.", file=sys.stderr)
+        return RC_READONLY
 
     # apt fix-broken is a two-step operation with no injection surface.
     if manager == "apt" and action == "fix-broken":
-        rc = _run(["dpkg", "--configure", "-a"])
-        if rc != 0:
-            return rc
-        return _run(BASE["apt"]["fix-broken"])
+        return _apt_fix_broken()
+
+    if manager == "apt" and action == "upgrade":
+        return _apt_upgrade()
 
     if manager == "pacman" and action == "autoremove":
         # Enumerate orphans read-only, filter them, then remove by name.
@@ -113,13 +325,8 @@ def main(argv):
     cmd = BASE.get(manager, {}).get(action)
     if cmd is None:
         print(f"monitoring-package: no command for {manager}/{action}", file=sys.stderr)
-        return 2
+        return RC_USAGE
     return _run(cmd)
-
-
-def re_valid_pkg(pkg):
-    import re
-    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", pkg) is not None
 
 
 if __name__ == "__main__":

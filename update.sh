@@ -153,16 +153,11 @@ fi
 # delegated installer mirror the update invocation, so --token/--bind survive.
 log "Installation found: $TARGET"
 
-# --- Ensure service account, groups and privilege helpers -----------------------
-log "Ensuring service account $MONITORING_USER…"
-create_service_account
-SUPP_GROUPS="$(add_supplementary_groups)"
-install_privileges
-mkdir -p "$LOG_DIR"
-chown "$MONITORING_USER:$MONITORING_GROUP" "$LOG_DIR" 2>/dev/null || chown "$MONITORING_USER" "$LOG_DIR" 2>/dev/null || true
-
 # If sources ARE the installed copy (e.g. `monitoring update`), there is nothing
-# local to sync — pull the latest from GitHub instead.
+# local to sync — pull the latest from GitHub FIRST, so the privileged helpers
+# and sudoers fragment installed below come from the NEW sources, not the old
+# installed copy. (An earlier version installed privileges before this pull,
+# which silently kept outdated helpers after an update.)
 if [ "$SRC" = "$TARGET" ]; then
   log "Running from the installed copy — pulling latest from GitHub…"
   TMP="$(mktemp -d /tmp/monitoring-update.XXXXXX)"
@@ -171,6 +166,25 @@ if [ "$SRC" = "$TARGET" ]; then
   SRC="$(find "$TMP" -maxdepth 2 -name app.py -printf '%h\n' | head -1)"
   [ -n "$SRC" ] || die "Archive does not contain app.py"
   NEW_VERSION="$(cat "$SRC/VERSION" 2>/dev/null || echo '?')"
+fi
+
+# --- Ensure service account, groups and privilege helpers -----------------------
+log "Ensuring service account $MONITORING_USER…"
+create_service_account
+SUPP_GROUPS="$(add_supplementary_groups)"
+install_privileges
+mkdir -p "$LOG_DIR"
+chown "$MONITORING_USER:$MONITORING_GROUP" "$LOG_DIR" 2>/dev/null || chown "$MONITORING_USER" "$LOG_DIR" 2>/dev/null || true
+
+# Best-effort proof that the service account can use its NOPASSWD rules after
+# the sudoers fragment was (re)installed — an update must never silently drop
+# the privileges the maintenance actions depend on.
+if command -v runuser >/dev/null 2>&1 && id "$MONITORING_USER" >/dev/null 2>&1; then
+  if runuser -u "$MONITORING_USER" -- sudo -n -l >/dev/null 2>&1; then
+    log "Service account passwordless sudo check: OK"
+  else
+    warn "Service account could not list passwordless sudo privileges (run: monitoring check-privileges)"
+  fi
 fi
 
 OLD_VERSION="$(cat "$TARGET/VERSION" 2>/dev/null || echo '?')"

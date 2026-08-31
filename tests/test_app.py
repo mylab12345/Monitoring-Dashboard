@@ -20,8 +20,10 @@ Covers every important bug fixed during the audit:
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -293,6 +295,109 @@ class HelperValidation(unittest.TestCase):
         self.assertEqual(self._helper("monitoring-package", "--manager", "apt", "--action", "explode").returncode, 2)
         self.assertEqual(self._helper("monitoring-package", "apt", "update").returncode, 2)
 
+    def test_package_readonly_detection_logic(self):
+        """_fs_readonly must flag a path whose longest matching mount is ro —
+        this is the guard that prevents dpkg 'Read-only file system' failures
+        from leaving packages half-installed (the coreutils incident)."""
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+        loader = SourceFileLoader(
+            "monitoring_package",
+            os.path.join(REPO, "privileged", "monitoring-package"))
+        spec = spec_from_loader(loader.name, loader)
+        mod = module_from_spec(spec)
+        loader.exec_module(mod)
+        mounts = ("/dev/sda1 / ext4 rw,relatime 0 0\n"
+                  "/dev/sdb1 /var ext4 ro,relatime 0 0\n")
+        self.assertFalse(mod._fs_readonly("/", mounts))
+        self.assertTrue(mod._fs_readonly("/var", mounts))
+        self.assertTrue(mod._fs_readonly("/var/lib/dpkg", mounts))
+        self.assertFalse(mod._fs_readonly("/tmp", mounts))
+        self.assertFalse(mod._fs_readonly("/", ""))
+
+    def test_package_preflight_refuses_readonly_mount(self):
+        """Running any package mutation against a read-only filesystem must be
+        refused with exit code 3 BEFORE touching the package manager."""
+        path = os.path.join(REPO, "privileged", "monitoring-package")
+        ro = None
+        try:
+            with open("/proc/mounts") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if (len(parts) >= 4 and "ro" in parts[3].split(",")
+                            and os.path.isdir(parts[1].replace("\\040", " "))):
+                        ro = parts[1].replace("\\040", " ")
+                        break
+        except OSError:
+            pass
+        if not ro:
+            self.skipTest("no read-only mount available to exercise the preflight")
+        env = dict(os.environ)
+        env["MONITORING_PACKAGE_PREFLIGHT_PATHS"] = ro
+        r = subprocess.run([sys.executable, path,
+                            "--manager", "apt", "--action", "update"],
+                           capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("read-only", (r.stdout + r.stderr).lower())
+
+    def test_remount_rw_usage_validation(self):
+        self.assertEqual(self._helper("monitoring-remount-rw", "extra").returncode, 2)
+
+    def test_fix_rc_translation_readonly(self):
+        """A read-only refusal (exit code 3) must be reported to the user with
+        the remount remediation, never as success."""
+        from monitor import packages as _pkgs
+        msg = _pkgs.describe_fix_rc(3)
+        self.assertIn("read-only", msg)
+        self.assertIn("remount,rw", msg)
+        self.assertIn("Remount RW", msg)
+        self.assertEqual(_pkgs.describe_fix_rc(0), "")
+        self.assertIn("Invalid helper invocation", _pkgs.describe_fix_rc(2))
+        self.assertIn("not found", _pkgs.describe_fix_rc(127))
+
+    def test_package_fix_broken_recovers_half_installed(self):
+        """Simulate the coreutils incident end-to-end with fake package
+        binaries: a package stuck half-installed must be deregistered and
+        reinstalled, in the right order (dpkg --configure -a alone cannot
+        repair that state)."""
+        tmp = tempfile.mkdtemp(prefix="monitoring-pkg-test-")
+        try:
+            log = os.path.join(tmp, "calls.log")
+
+            def fake(name, body):
+                path = os.path.join(tmp, name)
+                with open(path, "w") as fh:
+                    fh.write("#!/bin/sh\n%s\nexit 0\n" % body)
+                os.chmod(path, 0o755)
+                return path
+
+            fake("dpkg", "echo \"dpkg $*\" >> '%s'" % log)
+            fake("dpkg-query", "printf 'half-installed coreutils\\ninstalled libc6\\n'")
+            fake("apt-get", "echo \"apt-get $*\" >> '%s'" % log)
+            env = dict(os.environ)
+            env["PATH"] = tmp + os.pathsep + env.get("PATH", "")
+            env["MONITORING_PACKAGE_PREFLIGHT_PATHS"] = tmp  # writable dir
+            r = subprocess.run(
+                [sys.executable,
+                 os.path.join(REPO, "privileged", "monitoring-package"),
+                 "--manager", "apt", "--action", "fix-broken"],
+                capture_output=True, text=True, timeout=60, env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(log) as fh:
+                calls = fh.read()
+            self.assertIn("dpkg --audit", calls)
+            self.assertIn("dpkg --configure -a", calls)
+            self.assertIn("dpkg --remove --force-remove-reinstreq coreutils", calls)
+            self.assertIn("apt-get install -f -y -qq", calls)
+            self.assertIn("apt-get install --reinstall -y coreutils", calls)
+            # Deregistration must precede the reinstall that restores the package.
+            self.assertLess(calls.index("dpkg --remove --force-remove-reinstreq coreutils"),
+                            calls.index("apt-get install --reinstall -y coreutils"))
+            # The healthy package must not be touched.
+            self.assertNotIn("libc6", calls)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_clean_logs_range(self):
         self.assertEqual(self._helper("monitoring-clean-old-logs", "--min-age-days", "-5").returncode, 2)
         self.assertEqual(self._helper("monitoring-clean-old-logs", "--min-age-days", "99999").returncode, 2)
@@ -305,9 +410,10 @@ class HelperValidation(unittest.TestCase):
         self.assertEqual(self._helper("monitoring-zombie-clean", "extra").returncode, 2)
 
     def test_all_helpers_check(self):
-        for name in ("monitoring-systemctl", "monitoring-package", "monitoring-journal-vacuum",
-                     "monitoring-clean-old-logs", "monitoring-vm", "monitoring-vm-config",
-                     "monitoring-qemu", "monitoring-kill", "monitoring-zombie-clean",
+        for name in ("monitoring-systemctl", "monitoring-package", "monitoring-remount-rw",
+                     "monitoring-journal-vacuum", "monitoring-clean-old-logs",
+                     "monitoring-vm", "monitoring-vm-config", "monitoring-qemu",
+                     "monitoring-kill", "monitoring-zombie-clean",
                      "monitoring-privilege-check"):
             r = self._helper(name, "--check")
             self.assertEqual(r.returncode, 0, f"{name} --check failed: {r.stderr}")
@@ -368,6 +474,17 @@ class RepoConsistency(unittest.TestCase):
             ver = fh.read().strip()
         self.assertRegex(ver, r"^\d+\.\d+\.\d+$")
         self.assertGreaterEqual(tuple(int(x) for x in ver.split(".")), (2, 4, 0))
+
+    def test_sudoers_covers_every_privileged_helper(self):
+        """Every privileged helper must have an explicit sudoers grant, or the
+        maintenance action it backs fails at runtime with a permission error."""
+        with open(os.path.join(REPO, "sudoers", "monitoring")) as fh:
+            txt = fh.read()
+        for name in sorted(os.listdir(os.path.join(REPO, "privileged"))):
+            if not name.startswith("monitoring-") or name == "monitoring-privilege-check":
+                continue
+            self.assertIn("/usr/local/lib/monitoring/" + name, txt,
+                          f"sudoers/monitoring has no grant for {name}")
 
     def test_no_bytecode_or_stale_audit_in_git(self):
         out = subprocess.run(["git", "-C", REPO, "ls-files"], capture_output=True,
@@ -510,6 +627,19 @@ class FrontendIntegrity(unittest.TestCase):
         body = re.sub(wrappers, "", self.js, flags=re.S)
         bad = re.findall(r"\bfetch\s*\(\s*['\"`]/api/", body)
         self.assertEqual(bad, [], f"raw /api/ fetch without auth: {bad}")
+
+    def test_fix_buttons_match_backend_actions(self):
+        """Every Maintenance button the UI renders must map to a backend
+        action, so a click can never silently no-op (regression: the
+        vacuum-journal button posted an action the server did not implement)."""
+        from monitor import packages as _pkgs
+        meta = re.search(r"FIX_META=\{(.*?)\n\};", self.js, flags=re.S)
+        self.assertIsNotNone(meta, "FIX_META block not found in the frontend")
+        keys = re.findall(r"^  '([a-z-]+)':\{", meta.group(1), flags=re.M)
+        self.assertTrue(keys, "no fix buttons found in FIX_META")
+        for key in keys:
+            self.assertIn(key, _pkgs.FIX_ACTIONS,
+                          f"UI fix button '{key}' is not a backend action")
 
     def test_no_missing_element_ids(self):
         # Static ids from the HTML plus ids the JS creates dynamically (e.g.

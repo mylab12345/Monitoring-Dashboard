@@ -62,6 +62,7 @@ function toggleMatrixMode(){
 // treatment kill/service actions already receive.
 const QUICK_CONFIRM={
   'clean':'Clear the package manager caches?',
+  'remount-rw':'Remount read-only system filesystems as read-write? If this fails, the disk may have errors — check dmesg.',
   'clear-logs':'Vacuum the systemd journal and remove log files older than 7 days? This permanently deletes log history.'
 };
 async function runQuickAction(action){

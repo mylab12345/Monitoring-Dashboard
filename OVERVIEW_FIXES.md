@@ -151,3 +151,92 @@ the suites reproduce the original `SyntaxError` with every metric stuck at `--`.
 
 Note: Flask caches templates, so a server restart is required when swapping
 `templates/index.html` for before/after comparisons.
+
+---
+
+# Maintenance Actions — Read-Only Filesystem Guard & Broken-Package Recovery (v2.4.3)
+
+Field report: clicking **"Install available updates"** (the `upgrade-packages`
+fix) ran `apt-get upgrade` while a system filesystem was mounted read-only.
+dpkg died mid-unpack:
+
+```
+error processing archive coreutils_9.4-3ubuntu6.3_amd64.deb (--unpack):
+unable to create '/usr/bin/[.dpkg-new': Read-only file system
+```
+
+That stranded `coreutils` as **half-installed**, and the existing "Fix Broken"
+action (`dpkg --configure -a`) cannot repair that state:
+
+```
+package coreutils is not ready for configuration
+cannot configure (current status 'half-installed')
+```
+
+## Fixed
+
+### P0 — Upgrade ran blindly on a read-only filesystem
+
+`privileged/monitoring-package` now runs a **write preflight** before any
+mutating action (update/upgrade/autoremove/clean/fix-broken): every path the
+package manager must write to (`/usr`, `/var/lib/dpkg`, `/var/lib/apt`,
+`/var/cache/apt`; per-manager equivalents) is checked via mount flags
+(`/proc/mounts` ro detection) **and** `statvfs(ST_RDONLY)`/`access(W_OK)` —
+the flag check matters because `access(W_OK)` alone returns True for root.
+When a path is read-only the helper refuses with **exit code 3**, prints the
+offending paths and the remount instructions, and touches nothing.
+
+### P1 — "Fix Broken" could not repair half-installed packages
+
+The apt `fix-broken` action is now the full operator-grade sequence:
+`dpkg --audit` → `dpkg --configure -a` → enumerate half-installed packages
+(`dpkg-query -f='${db:Status-Status} ${binary:Package}'`, with a `dpkg -l`
+fallback) → `dpkg --remove --force-remove-reinstreq` per package (clears the
+broken registration without deleting remaining files) → `apt-get install -f`
+→ `apt-get install --reinstall` for each recovered package (bounded at 20 per
+run, the rest reported for manual review). The apt `upgrade` action also runs
+`dpkg --configure -a` first and aborts with guidance instead of compounding
+the breakage.
+
+### P2 — No way to grant the missing permission from the dashboard
+
+New privileged helper **`monitoring-remount-rw`** (whitelisted in
+`sudoers/monitoring`, reported by `/api/privileges` and `monitoring
+check-privileges`) remounts read-only block filesystems at `/`, `/usr`,
+`/var` read-write, re-verifies the mount flags afterwards, and refuses to
+touch pseudo filesystems, snapshot mounts or `/boot`/EFI. Exposed as the
+**"Remount RW"** maintenance button and as the one-click fix for the new
+critical **"Filesystem Read-Only"** diagnostic issue (with post-fix
+verification).
+
+### P3 — Backend misreported failures and went stale
+
+- `/api/fix` and `/api/troubleshooting/fix-all` now translate helper exit
+  codes: a read-only refusal (rc 3) is reported as a failure with the
+  offending mounts and the exact `mount -o remount,rw …` command — never as
+  "Completed".
+- Every package mutation invalidates the cached updatable-package list, so
+  `/api/updates`, `/api/checks` and the Diagnose tab reflect the new state
+  immediately instead of up to 5 minutes later.
+- Broken-package detection now uses `dpkg --audit` **plus** the
+  half-installed/unpacked state scan, and `/api/checks` gains a **"Disk
+  Writable"** health check.
+
+### P4 — `update.sh` deployed helpers from stale sources
+
+When run from the installed copy (`monitoring update`), `update.sh` installed
+the privileged helpers and sudoers fragment **before** pulling the new
+sources from GitHub, so updated helpers were silently kept old. The pull now
+happens first, and the updater re-verifies the service account's passwordless
+sudo after reinstalling the sudoers fragment.
+
+## Verification
+
+- `tests/run_all.sh`: helper validation includes the new exit-code-3
+  preflight (exercised against a real read-only mount from `/proc/mounts`
+  when one exists), `_fs_readonly` unit tests, remount-helper usage
+  validation, sudoers-coverage checks for every privileged helper, and a
+  FIX_META ↔ `FIX_ACTIONS` sync test.
+- `monitoring-package --manager apt --action fix-broken` verified as a no-op
+  on a healthy dpkg database; preflight verified to return rc 3 against a
+  read-only mount without invoking the package manager.

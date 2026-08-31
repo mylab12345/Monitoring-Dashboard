@@ -13,6 +13,7 @@ bp = Blueprint("privileges", __name__)
 _PRIVILEGE_HELPERS = [
     "monitoring-systemctl",
     "monitoring-package",
+    "monitoring-remount-rw",
     "monitoring-journal-vacuum",
     "monitoring-clean-old-logs",
     "monitoring-vm",

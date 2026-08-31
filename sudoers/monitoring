@@ -15,6 +15,7 @@
 
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-systemctl
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-package
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-remount-rw
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-journal-vacuum
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-clean-old-logs
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm

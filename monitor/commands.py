@@ -144,3 +144,37 @@ def sanitize_int(value, default=0, min_val=None, max_val=None):
         return result
     except (TypeError, ValueError):
         return default
+
+
+def readonly_mounts():
+    """(device, mountpoint, fstype) tuples for /, /usr and /var mounts that
+    are currently mounted read-only (parsed from /proc/mounts)."""
+    try:
+        with open("/proc/mounts") as fh:
+            text = fh.read()
+    except OSError:
+        return []
+    result = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        mount = (parts[1].replace("\\040", " ").replace("\\011", "\t")
+                 .replace("\\012", "\n").replace("\\134", "\\"))
+        if mount not in ("/", "/usr", "/var"):
+            continue
+        if "ro" in parts[3].split(","):
+            result.append((parts[0], mount, parts[2]))
+    return result
+
+
+def path_writable(path):
+    """Best-effort writability probe that also detects read-only mounts —
+    os.access(W_OK) alone reports True for root on many setups."""
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return False
+    if st.f_flag & os.ST_RDONLY:
+        return False
+    return os.access(path, os.W_OK)

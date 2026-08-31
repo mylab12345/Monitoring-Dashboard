@@ -1,10 +1,11 @@
 """Package-manager detection, fix command maps, and updatable-package listing."""
+import re
 import threading
 import time
 
 from flask import Blueprint, jsonify
 
-from .commands import run, which
+from .commands import readonly_mounts, run, which
 
 bp = Blueprint("packages", __name__)
 
@@ -49,10 +50,15 @@ FIX_COMMANDS = {
 # Every action /api/fix knows how to run. Anything outside this set is a 400 so
 # the UI can never report success for an operation that did not execute.
 FIX_ACTIONS = frozenset({"update", "upgrade", "autoremove", "clean",
-                         "fix-broken", "clear-logs"})
+                         "fix-broken", "clear-logs", "remount-rw"})
 
 # UI wording -> canonical action name.
-FIX_ALIASES = {"vacuum-journal": "clear-logs", "clear-cache": "clean"}
+FIX_ALIASES = {"vacuum-journal": "clear-logs", "clear-cache": "clean",
+               "fix-readonly-fs": "remount-rw"}
+
+# Exit code the monitoring-package helper returns when its write preflight
+# refused to run because required filesystem paths are read-only.
+FIX_RC_READONLY = 3
 
 _updatable_cache = {"data": None, "ts": 0}
 _updatable_lock = threading.Lock()
@@ -112,6 +118,82 @@ def _updatable_packages_uncached():
     _updatable_cache["data"] = result
     _updatable_cache["ts"] = time.time()
     return result
+
+
+def invalidate_updatable_cache():
+    """Drop the cached updatable-package list so /api/updates, /api/checks and
+    the troubleshooting scan re-query the package manager immediately after a
+    maintenance action (update/upgrade/fix-broken) changed the state."""
+    with _updatable_lock:
+        _updatable_cache["data"] = None
+        _updatable_cache["ts"] = 0
+
+
+_PKG_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+:-]*")
+
+
+def dpkg_broken_status():
+    """Report dpkg database health: packages half-installed (failed unpack),
+    packages unpacked (awaiting configuration) and the raw `dpkg --audit`
+    text. Healthy = available, empty lists and empty audit output."""
+    status = {"available": False, "audit": "", "half_installed": [], "unpacked": []}
+    if not which("dpkg"):
+        return status
+    status["available"] = True
+    try:
+        _, out, err = run(["dpkg", "--audit"], timeout=30)
+        status["audit"] = ((out or "") + (err or "")).strip()
+    except Exception:
+        status["audit"] = ""
+    try:
+        _, out, _ = run(["dpkg-query", "-W",
+                         "-f=${db:Status-Status} ${binary:Package}\n"], timeout=30)
+        for line in (out or "").splitlines():
+            parts = line.split(None, 1)
+            if len(parts) != 2 or not _PKG_NAME_RE.fullmatch(parts[1].strip()):
+                continue
+            if parts[0] == "half-installed":
+                status["half_installed"].append(parts[1].strip())
+            elif parts[0] == "unpacked":
+                status["unpacked"].append(parts[1].strip())
+    except Exception:
+        pass
+    # Fallback for older dpkg without db:Status-Status support.
+    if not status["half_installed"] and not status["unpacked"]:
+        try:
+            _, out, _ = run(["dpkg", "-l"], timeout=30)
+            for line in (out or "").splitlines():
+                parts = line.split()
+                if len(parts) >= 3 and line[:1] in ("i", "h") and line[1:2] == "H" \
+                        and _PKG_NAME_RE.fullmatch(parts[1]):
+                    status["half_installed"].append(parts[1])
+        except Exception:
+            pass
+    return status
+
+
+def describe_fix_rc(rc):
+    """Human explanation of a monitoring-package / monitoring-remount-rw
+    helper exit code (empty string when nothing extra needs saying)."""
+    if rc == 0:
+        return ""
+    if rc == FIX_RC_READONLY:
+        ro = readonly_mounts()
+        mounts = ", ".join(m for _, m, _ in ro) or "/"
+        if ", " in mounts:
+            mount_cmd = "sudo mount -o remount,rw <mountpoint>  (for each listed)"
+        else:
+            mount_cmd = f"sudo mount -o remount,rw {mounts}"
+        return ("Refused: required filesystem paths are read-only ({0}). "
+                "This is a permission/mount problem, not a package problem — "
+                "nothing was modified. Remount the filesystem read-write "
+                "({1}) or use the 'Remount RW' maintenance action, then "
+                "retry.").format(mounts, mount_cmd)
+    if rc == 2:
+        return "Invalid helper invocation (internal error — nothing was run)."
+    if rc == 127:
+        return "Required package-manager executable not found."
+    return ""
 
 
 @bp.route("/api/updates")

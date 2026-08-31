@@ -94,8 +94,8 @@ service.
 **Overview**
 - Live CPU / RAM / Disk / Swap metrics with ring gauges, sparkline history, load average, temperature, battery, uptime
 - **Resource timeline** — CPU/RAM/throughput area chart with hover tooltip and 5m/15m/30m/1h ranges, backed by a server-side metrics ring buffer (charts survive page reloads)
-- System health checks: disk usage, pending updates, broken packages, failed services, kernel errors, zombie processes
-- One-click safe fixes: update, upgrade, autoremove, clean cache, fix broken, clear logs — package-manager aware (apt/dnf/yum/zypper/pacman/apk)
+- System health checks: disk usage, pending updates, broken packages, filesystem writability, failed services, kernel errors, zombie processes
+- One-click safe fixes: update, upgrade, autoremove, clean cache, fix broken, remount read-only filesystems, clear logs — package-manager aware (apt/dnf/yum/zypper/pacman/apk), with a write-preflight that refuses to run on a read-only filesystem and half-installed package recovery for apt
 - Mounted disks overview + listening ports + system info banner (CPU model, kernel, uptime, live network rate)
 
 **Alerts & Activity** — local threshold alerting (CPU/RAM/disk/temperature with warn & critical levels), alert bell with live breach count, full alert history, and an audit trail of every action taken from the console (stored in your browser only)
@@ -124,6 +124,30 @@ monitoring update          # run the updater from the installed copy
 monitoring open            # open the dashboard in your browser
 monitoring check-privileges # report the service account, groups and sudo grants
 ```
+
+### 🔧 Maintenance actions & the "Read-only file system" guard
+
+Every maintenance button runs through whitelisted privileged helpers under
+passwordless sudo (`/etc/sudoers.d/monitoring` — absolute paths, no `ALL`).
+The package actions (`update`, `upgrade`, `autoremove`, `clean`, `fix-broken`)
+first verify that `/usr`, `/var/lib/dpkg`, `/var/lib/apt` and
+`/var/cache/apt` are writable. If a system filesystem is mounted read-only
+the action is **refused before touching anything** and the dashboard reports
+the mount and the fix:
+
+```bash
+sudo mount -o remount,rw /      # or use the one-click "Remount RW" action
+```
+
+This prevents the classic failure where `apt-get upgrade` dies mid-unpack
+(`unable to create '/usr/bin/[.dpkg-new': Read-only file system`) and strands
+packages as **half-installed**. If that state already exists, the **Fix
+Broken** action now runs the full recovery: `dpkg --configure -a`, then
+clears broken registrations with `dpkg --remove --force-remove-reinstreq` and
+reinstalls the affected packages — `dpkg --configure -a` alone cannot repair
+half-installed packages. A new **"Disk Writable"** health check and a
+**"Filesystem Read-Only"** critical diagnostic make the condition visible on
+the Overview and Diagnose tabs.
 
 ## 📦 Layout
 

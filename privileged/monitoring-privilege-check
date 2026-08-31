@@ -24,6 +24,7 @@ PRIV_DIR = os.environ.get("MONITORING_PRIVILEGE_DIR", "/usr/local/lib/monitoring
 HELPERS = [
     "monitoring-systemctl",
     "monitoring-package",
+    "monitoring-remount-rw",
     "monitoring-journal-vacuum",
     "monitoring-clean-old-logs",
     "monitoring-vm",

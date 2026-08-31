@@ -4,10 +4,10 @@ import socket
 
 from flask import Blueprint, jsonify
 
-from .commands import run, which
+from .commands import readonly_mounts, run, which
 from .common import _cached, _int_or
 from .metrics import _cpu_model, _pretty_distro
-from .packages import _updatable_packages
+from .packages import _updatable_packages, dpkg_broken_status
 
 bp = Blueprint("system", __name__)
 
@@ -50,9 +50,18 @@ def _build_checks():
     results.append({"name": "Pending Updates", "status": "warn" if updates["count"] > 0 else "ok",
                     "detail": f"{updates['count']} packages upgradable ({updates['manager'] or 'n/a'})"})
     if which("dpkg"):
-        code, out, err = run(["dpkg", "--audit"])
-        broken = "found" if "error" in (out + err).lower() else "none"
-        results.append({"name": "Broken Packages", "status": "warn" if broken != "none" else "ok", "detail": broken})
+        broken = dpkg_broken_status()
+        n_broken = len(broken["half_installed"]) + len(broken["unpacked"])
+        audit_bad = bool(broken["audit"].strip())
+        detail = (f"{n_broken} broken" if n_broken
+                  else ("dpkg audit issues" if audit_bad else "none"))
+        results.append({"name": "Broken Packages",
+                        "status": "warn" if (n_broken or audit_bad) else "ok",
+                        "detail": detail})
+    ro = readonly_mounts()
+    results.append({"name": "Disk Writable",
+                    "status": "warn" if ro else "ok",
+                    "detail": ("read-only: " + ", ".join(m for _, m, _ in ro)) if ro else "rw"})
     failed = "0"
     if which("systemctl"):
         code, out, err = run(["systemctl", "--failed", "--no-pager", "--quiet"])
