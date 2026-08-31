@@ -467,6 +467,26 @@ class SelfRepairApi(unittest.TestCase):
                                 "api/self-repair POST should be rate-limited")
 
 
+class CacheClear(unittest.TestCase):
+    """_cache_clear() must drop a cached entry so post-mutation status checks
+    (e.g. /api/self-repair after a repair) see fresh data immediately."""
+
+    def test_cache_clear_removes_entry(self):
+        from monitor import common
+        calls = {"n": 0}
+
+        def fn():
+            calls["n"] += 1
+            return calls["n"]
+
+        common._cache_clear("test-key")  # idempotent when absent
+        self.assertEqual(common._cached("test-key", 30, fn), 1)
+        self.assertEqual(common._cached("test-key", 30, fn), 1)  # cached
+        common._cache_clear("test-key")
+        self.assertEqual(common._cached("test-key", 30, fn), 2)  # recomputed
+        common._cache_clear("test-key")  # clearing again must not raise
+
+
 class RepoConsistency(unittest.TestCase):
     """Docs/scripts must reference the real repo name — the GitHub repository
     is `mylab12345/Monitoring-Dashboard`. Both the `Montoring` typo AND the

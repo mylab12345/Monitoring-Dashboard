@@ -15,7 +15,7 @@ from flask import Blueprint, jsonify
 
 from .commands import (PASSWORDLESS_SUDO, mount_status, privileged_tool,
                        run_privileged)
-from .common import _audit, _cached
+from .common import _audit, _cache_clear, _cached
 from .security import rate_limit
 
 bp = Blueprint("selfrepair", __name__)
@@ -108,6 +108,9 @@ def api_self_repair_apply():
     code, out, err = run_privileged(HELPER, ["--apply"], timeout=120)
     message = ((out or "") + (err or "")).strip()
     if code == 0:
+        # The mounted namespace/unit changed; drop the cached status so the
+        # UI's post-repair check sees the fresh state immediately.
+        _cache_clear("self-repair")
         _audit("self-repair", outcome="ok" if "restart" not in message
                else "restart-scheduled")
         return jsonify({"result": message[:600] or "Done", "exit_code": code})

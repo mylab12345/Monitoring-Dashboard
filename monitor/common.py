@@ -88,6 +88,12 @@ def _cached(key, ttl, fn):
     return result
 
 
+def _cache_clear(key):
+    """Drop one cached entry (used after a mutation that changes its data)."""
+    with _resp_lock:
+        _resp_cache.pop(key, None)
+
+
 # Feature modules that failed to load at startup. Surfaced by /api/health so
 # an operator can see graceful degradation instead of a hard crash.
 LOAD_ERRORS = []
