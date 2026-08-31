@@ -6,7 +6,7 @@
 #  openSUSE, Arch/Manjaro, Alpine, ...
 #
 #  Global one-liner (downloads latest from GitHub, then installs):
-#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/install.sh | sudo bash
+#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring-Dashboard/main/install.sh | sudo bash
 #
 #  Local (from a checkout of this repo):
 #      sudo bash install.sh
@@ -20,13 +20,13 @@
 #      --home DIR      install location             (default /opt/monitoring)
 #      --no-vm         skip libvirt/qemu tooling
 #      --no-start      install but do not start the service
-#      --repo R        GitHub repo for remote mode  (default mylab12345/Monitoring)
+#      --repo R        GitHub repo for remote mode  (default mylab12345/Monitoring-Dashboard)
 #      --branch B      GitHub branch for remote mode (default main)
 # ============================================================================
 set -euo pipefail
 
 # --- Defaults (overridable via flags / env) ---------------------------------
-REPO="${REPO:-mylab12345/Monitoring}"
+REPO="${REPO:-mylab12345/Monitoring-Dashboard}"
 BRANCH="${BRANCH:-main}"
 MONITORING_HOME="${MONITORING_HOME:-/opt/monitoring}"
 PORT="${MONITORING_PORT:-8050}"
@@ -195,12 +195,24 @@ if [ -f "$0" ] && [ -s "$0" ]; then
   fi
 fi
 if [ -z "$SRC" ]; then
+  # Download to a file first, then extract — piping straight into `tar` turns a
+  # 404/network error into a misleading "gzip: unexpected end of file".
   TMP="$(mktemp -d /tmp/monitoring-install.XXXXXX)"
+  url="https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
+  archive="$TMP/sources.tar.gz"
   log "Source: downloading ${REPO}@${BRANCH} from GitHub…"
-  curl -fsSL "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz" | tar -xz -C "$TMP" \
-    || die "Could not download sources. Check your internet or clone the repo and run install.sh locally."
+  code="$(curl -fL -o "$archive" -w '%{http_code}' "$url" 2>/dev/null)" || {
+    rm -rf "$TMP"
+    die "Could not download sources (HTTP ${code:-no response}) from:
+  $url
+Check your internet connection, or verify REPO/BRANCH (got '${REPO}'/'${BRANCH}').
+Alternatively clone the repo and run install.sh locally."
+  }
+  [ -s "$archive" ] || { rm -rf "$TMP"; die "Downloaded archive is empty (HTTP ${code:-?}) from: $url"; }
+  tar -xzf "$archive" -C "$TMP" \
+    || { rm -rf "$TMP"; die "Downloaded archive is not a valid tar.gz (corrupt download from: $url)."; }
   SRC="$(find "$TMP" -maxdepth 2 -name app.py -printf '%h\n' | head -1)"
-  [ -n "$SRC" ] || die "Downloaded archive does not contain app.py"
+  [ -n "$SRC" ] || { rm -rf "$TMP"; die "Downloaded archive does not contain app.py — is ${REPO}@${BRANCH} the monitoring repo?"; }
   log "Source extracted: $SRC"
 fi
 

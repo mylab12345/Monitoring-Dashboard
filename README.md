@@ -11,7 +11,7 @@ Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rock
 The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **creates a dedicated non-login system account `monitoring`**, installs only the explicitly whitelisted sudo helpers in `/etc/sudoers.d/monitoring` (validated with `visudo`), **installs the app** to `/opt/monitoring`, registers it as a **system service running as `monitoring`**, installs the **desktop app** (menu shortcut + autostart) and adds a **`monitoring` CLI**:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring-Dashboard/main/install.sh | sudo bash
 ```
 
 Or from a local checkout:

@@ -12,7 +12,9 @@ Covers every important bug fixed during the audit:
   * command-injection / input-validation rejections
   * security headers + JSON error handlers
   * privileged helper argument validation
-  * repo-name consistency (README/update.sh use "Monitoring", not "Montoring")
+  * repo-name consistency (README/install.sh/update.sh use the real
+    "mylab12345/Monitoring-Dashboard", not "Montoring" or the 404-ing
+    truncated "mylab12345/Monitoring")
   * frontend integrity (all inline handlers defined, spinRefresh present,
     every /api/ request goes through the authenticated fetch helpers)
   * uninstaller removes the desktop launcher
@@ -33,12 +35,20 @@ try:
     import app as app_mod
 except Exception as exc:  # pragma: no cover
     app_mod = None
-    IMPORT_ERROR = exc
+    IMPORT_ERROR = str(exc)
 else:
     IMPORT_ERROR = None
 
+# app.py catches missing flask/psutil and leaves `app` as None (the import
+# itself still succeeds). The Flask-backed tests must be skipped in BOTH cases
+# so a dependency-less checkout reports clean skips instead of setUpClass
+# errors / AttributeError: 'NoneType' has no attribute 'test_client'.
+APP_AVAILABLE = app_mod is not None and getattr(app_mod, "app", None) is not None
+SKIP_REASON = "flask/psutil not available: {}".format(
+    IMPORT_ERROR or getattr(app_mod, "IMPORT_ERROR", None) or "app failed to initialise")
 
-@unittest.skipIf(app_mod is None, f"flask/psutil not available: {IMPORT_ERROR}")
+
+@unittest.skipIf(not APP_AVAILABLE, SKIP_REASON)
 class ApiBaseline(unittest.TestCase):
     """All read endpoints must answer 200 (the dashboard depends on them)."""
 
@@ -84,7 +94,7 @@ class ApiBaseline(unittest.TestCase):
         self.assertEqual(r.headers.get("Referrer-Policy"), "no-referrer")
 
 
-@unittest.skipIf(app_mod is None, f"flask/psutil not available: {IMPORT_ERROR}")
+@unittest.skipIf(not APP_AVAILABLE, SKIP_REASON)
 class RateLimitRegression(unittest.TestCase):
     """The dashboard polls /api/status every few seconds; the old global
     '50 per hour' default throttled it (reproduced: 70 calls -> 20x 429)."""
@@ -98,7 +108,7 @@ class RateLimitRegression(unittest.TestCase):
         self.assertNotIn(429, codes, f"/api/status got throttled: {codes.count(429)}x 429")
 
 
-@unittest.skipIf(app_mod is None, f"flask/psutil not available: {IMPORT_ERROR}")
+@unittest.skipIf(not APP_AVAILABLE, SKIP_REASON)
 class InputValidation(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -200,7 +210,7 @@ class InputValidation(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
 
 
-@unittest.skipIf(app_mod is None, f"flask/psutil not available: {IMPORT_ERROR}")
+@unittest.skipIf(not APP_AVAILABLE, SKIP_REASON)
 class MaintenanceBackend(unittest.TestCase):
     """Maintenance must use the package helper and report real outcomes."""
 
@@ -241,7 +251,7 @@ class MaintenanceBackend(unittest.TestCase):
         self.assertIn("half-installed", detail)
 
 
-@unittest.skipIf(app_mod is None, f"flask/psutil not available: {IMPORT_ERROR}")
+@unittest.skipIf(not APP_AVAILABLE, SKIP_REASON)
 class TokenAuth(unittest.TestCase):
     """MONITORING_TOKEN gates every /api route (tested in a fresh interpreter
     because the token is read at import time)."""
@@ -357,31 +367,47 @@ class HelperValidation(unittest.TestCase):
 
 class RepoConsistency(unittest.TestCase):
     """Docs/scripts must reference the real repo name — the GitHub repository
-    is `mylab12345/Monitoring`; the old `Montoring` typo 404s the documented
-    one-liners (raw URLs are case-sensitive)."""
+    is `mylab12345/Monitoring-Dashboard`. Both the `Montoring` typo AND the
+    truncated `mylab12345/Monitoring` 404 the documented one-liners and the
+    updater's archive download (URLs are case-sensitive and must match the
+    real repository name exactly)."""
+
+    # "mylab12345/Monitoring" not immediately followed by "-Dashboard" — i.e.
+    # the truncated repo name. The negative lookahead keeps the correct
+    # "...Monitoring-Dashboard" reference from matching.
+    WRONG_REPO = re.compile(r"mylab12345/Monitoring(?!-Dashboard)")
 
     def test_repo_name_in_update_sh(self):
         with open(os.path.join(REPO, "update.sh")) as fh:
             txt = fh.read()
-        self.assertIn("mylab12345/Monitoring", txt)
+        self.assertIn("mylab12345/Monitoring-Dashboard", txt)
         self.assertNotIn("Montoring", txt)
+        self.assertNotRegex(txt, self.WRONG_REPO,
+                           "update.sh references the wrong/truncated repo name (404s)")
 
     def test_repo_name_in_readme(self):
         with open(os.path.join(REPO, "README.md")) as fh:
             txt = fh.read()
-        self.assertIn("raw.githubusercontent.com/mylab12345/Monitoring", txt)
+        self.assertIn("raw.githubusercontent.com/mylab12345/Monitoring-Dashboard", txt)
         self.assertNotIn("Montoring", txt)
+        self.assertNotRegex(txt, self.WRONG_REPO,
+                           "README references the wrong/truncated repo name (404s)")
 
     def test_install_sh_repo_name(self):
         with open(os.path.join(REPO, "install.sh")) as fh:
             txt = fh.read()
-        self.assertIn("REPO=\"${REPO:-mylab12345/Monitoring}\"", txt)
+        self.assertIn('REPO="${REPO:-mylab12345/Monitoring-Dashboard}"', txt)
         self.assertNotIn("Montoring", txt)
+        self.assertNotRegex(txt, self.WRONG_REPO,
+                           "install.sh references the wrong/truncated repo name (404s)")
 
     def test_monitoring_service_repo(self):
         with open(os.path.join(REPO, "monitoring.service")) as fh:
             txt = fh.read()
+        self.assertIn("https://github.com/mylab12345/Monitoring-Dashboard", txt)
         self.assertNotIn("Montoring", txt)
+        self.assertNotRegex(txt, self.WRONG_REPO,
+                           "monitoring.service references the wrong/truncated repo name")
 
     def test_uninstaller_removes_launcher(self):
         with open(os.path.join(REPO, "uninstall.sh")) as fh:

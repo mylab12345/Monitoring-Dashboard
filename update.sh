@@ -8,7 +8,7 @@
 #  Usage:
 #      sudo ./update.sh                # install changes from THIS checkout
 #      sudo ./update.sh --remote      # pull latest from GitHub and install
-#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring/main/update.sh | sudo bash
+#      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring-Dashboard/main/update.sh | sudo bash
 #                                     # same as --remote
 #
 #  What it does:
@@ -21,7 +21,7 @@
 # ============================================================================
 set -euo pipefail
 
-REPO="${REPO:-mylab12345/Monitoring}"
+REPO="${REPO:-mylab12345/Monitoring-Dashboard}"
 BRANCH="${BRANCH:-main}"
 MODE="local"
 FORCE=0
@@ -37,6 +37,41 @@ NOLOGIN="$(command -v nologin || echo /usr/sbin/nologin)"
 log()  { printf '\033[1;32m[update]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[update]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[update]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Download the ${REPO}@${BRANCH} source archive and extract it into a fresh
+# temp dir. We download to a file FIRST and only extract once we know the
+# fetch succeeded — piping straight into `tar` turns a 404/network error into a
+# misleading "gzip: unexpected end of file / tar: Child returned status 1".
+# On success sets the globals SRC (extracted source dir) and TMP (temp root).
+fetch_sources() {
+  TMP="$(mktemp -d /tmp/monitoring-update.XXXXXX)"
+  local url="https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
+  local archive="$TMP/sources.tar.gz"
+  log "Downloading latest ${REPO}@${BRANCH}…"
+  local code
+  code="$(curl -fL -o "$archive" -w '%{http_code}' "$url" 2>/dev/null)" || {
+    rm -rf "$TMP"
+    die "Download from GitHub failed (HTTP ${code:-no response}) for:
+  $url
+Check internet connectivity, or verify the repo/branch (got REPO='${REPO}', BRANCH='${BRANCH}').
+You can also run update.sh from a local checkout instead of --remote."
+  }
+  if [ ! -s "$archive" ]; then
+    rm -rf "$TMP"
+    die "Downloaded archive is empty (HTTP ${code:-?}) from:
+  $url
+Check internet connectivity or run update.sh from a local checkout."
+  fi
+  if ! tar -xzf "$archive" -C "$TMP"; then
+    rm -rf "$TMP"
+    die "Downloaded archive is not a valid tar.gz (corrupt download from: $url)."
+  fi
+  SRC="$(find "$TMP" -maxdepth 2 -name app.py -printf '%h\n' | head -1)"
+  if [ -z "$SRC" ]; then
+    rm -rf "$TMP"
+    die "Archive does not contain app.py — is ${REPO}@${BRANCH} the monitoring repo?"
+  fi
+}
 
 create_service_account() {
   if ! getent group "$MONITORING_GROUP" >/dev/null 2>&1; then
@@ -125,12 +160,7 @@ if [ -f "$0" ] && [ -s "$0" ]; then
   fi
 fi
 if [ "$MODE" = "remote" ] || [ -z "$SRC" ]; then
-  TMP="$(mktemp -d /tmp/monitoring-update.XXXXXX)"
-  log "Downloading latest ${REPO}@${BRANCH}…"
-  curl -fsSL "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz" | tar -xz -C "$TMP" \
-    || die "Download failed. Check internet connectivity or run update.sh from a local checkout."
-  SRC="$(find "$TMP" -maxdepth 2 -name app.py -printf '%h\n' | head -1)"
-  [ -n "$SRC" ] || die "Archive does not contain app.py"
+  fetch_sources
 fi
 NEW_VERSION="$(cat "$SRC/VERSION" 2>/dev/null || echo '?')"
 
@@ -157,11 +187,7 @@ log "Installation found: $TARGET"
 # local to sync — pull the latest from GitHub instead.
 if [ "$SRC" = "$TARGET" ]; then
   log "Running from the installed copy — pulling latest from GitHub…"
-  TMP="$(mktemp -d /tmp/monitoring-update.XXXXXX)"
-  curl -fsSL "https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz" | tar -xz -C "$TMP" \
-    || die "Download failed. Check internet connectivity or run update.sh from a local checkout."
-  SRC="$(find "$TMP" -maxdepth 2 -name app.py -printf '%h\n' | head -1)"
-  [ -n "$SRC" ] || die "Archive does not contain app.py"
+  fetch_sources
   NEW_VERSION="$(cat "$SRC/VERSION" 2>/dev/null || echo '?')"
 fi
 
