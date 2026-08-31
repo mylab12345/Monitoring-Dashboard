@@ -5,13 +5,22 @@ The monitoring service is granted sudo for this helper only. The helper maps
 an explicit (manager, action) pair to fixed argv lists. It never uses a shell
 and never accepts arbitrary package names from the service (with one
 exception: pacman autoremove enumerates orphans itself).
+
+The systemd unit intentionally keeps the dashboard process locked down while
+allowing the package helper's mount namespace to write the paths a real
+package transaction needs. If an older unit still presents /usr or /etc as
+read-only, fail with an actionable message instead of letting dpkg produce a
+misleading half-installed package state.
 """
+import os
+import re
 import shutil
 import subprocess
 import sys
 
 ACTIONS = {"update", "upgrade", "autoremove", "clean", "fix-broken"}
 MANAGERS = {"apt", "dnf", "yum", "zypper", "pacman", "apk"}
+READ_ONLY_EXIT = 78  # sysexits EX_CONFIG
 
 # Fixed, non-injectable command lists. The helper resolves the real binary
 # with shutil.which() from the existing PATH.
@@ -21,7 +30,7 @@ BASE = {
         "upgrade": ["apt-get", "upgrade", "-y", "-qq"],
         "autoremove": ["apt-get", "autoremove", "-y", "-qq"],
         "clean": ["apt-get", "clean"],
-        "fix-broken": ["apt-get", "install", "-f", "-y", "-qq"],
+        "fix-broken": ["apt-get", "install", "--fix-broken", "-y", "-qq"],
     },
     "dnf": {
         "update": ["dnf", "makecache", "--quiet"],
@@ -40,6 +49,8 @@ BASE = {
     "zypper": {
         "update": ["zypper", "refresh"],
         "upgrade": ["zypper", "update", "-y", "--quiet"],
+        # zypper has no portable no-argument autoremove operation. ``clean``
+        # is the safe package-cache maintenance equivalent for this action.
         "autoremove": ["zypper", "clean"],
         "clean": ["zypper", "clean"],
         "fix-broken": ["zypper", "dist-upgrade", "-y", "--quiet"],
@@ -60,14 +71,141 @@ BASE = {
     },
 }
 
+# Package installs/upgrades need to write more than a single cache directory.
+# These are checked before any mutating command so a stale systemd sandbox
+# cannot leave dpkg half-installed. Missing optional mounts are ignored.
+WRITE_PATHS = {
+    "update": ("/var",),
+    "clean": ("/var",),
+    "upgrade": ("/usr", "/etc", "/var", "/boot", "/efi"),
+    "autoremove": ("/usr", "/etc", "/var", "/boot", "/efi"),
+    "fix-broken": ("/usr", "/etc", "/var", "/boot", "/efi"),
+}
 
-def _run(argv):
-    """Resolve argv[0] through PATH and run without a shell."""
+
+def _command_env():
+    """Use non-interactive package-manager defaults without trusting input."""
+    env = dict(os.environ)
+    env["DEBIAN_FRONTEND"] = "noninteractive"
+    env.setdefault("NEEDRESTART_MODE", "a")
+    return env
+
+
+def _mount_is_read_only(path):
+    """Return True/False, or None when mount flags cannot be inspected."""
+    if not os.path.exists(path):
+        return False
+    findmnt = shutil.which("findmnt")
+    if not findmnt:
+        return None
+    try:
+        result = subprocess.run(
+            [findmnt, "--noheadings", "--output", "OPTIONS", "--target", path],
+            shell=False, capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    options = {part.strip() for part in (result.stdout or "").strip().split(",")}
+    return "ro" in options
+
+
+def _check_write_paths(action):
+    """Explain a read-only mount before apt/dpkg can corrupt its state."""
+    blocked = [path for path in WRITE_PATHS.get(action, ())
+               if _mount_is_read_only(path) is True]
+    if not blocked:
+        return True
+    print(
+        "monitoring-package: required filesystem is read-only: "
+        + ", ".join(blocked), file=sys.stderr)
+    print(
+        "This is a mount policy, not a file permission. If this is the "
+        "Monitoring service namespace, install the updated monitoring.service "
+        "(it grants ReadWritePaths=/usr /etc /boot /efi to this helper), then "
+        "run systemctl daemon-reload and restart monitoring before retrying. "
+        "If the host itself is mounted read-only, repair/remount that "
+        "filesystem first; do not chmod /usr.", file=sys.stderr)
+    return False
+
+
+def _resolve(argv):
     exe = shutil.which(argv[0])
     if not exe:
         print(f"monitoring-package: executable not found: {argv[0]}", file=sys.stderr)
+        return None
+    return [exe] + argv[1:]
+
+
+def _run(argv):
+    """Resolve argv[0] through PATH and run without a shell."""
+    cmd = _resolve(argv)
+    if not cmd:
         return 127
-    return subprocess.run([exe] + argv[1:], shell=False).returncode
+    try:
+        return subprocess.run(cmd, shell=False, env=_command_env()).returncode
+    except OSError as exc:
+        print(f"monitoring-package: could not execute {argv[0]}: {exc}",
+              file=sys.stderr)
+        return 126
+    except subprocess.SubprocessError as exc:
+        print(f"monitoring-package: command failed to start: {exc}",
+              file=sys.stderr)
+        return 126
+
+
+def _run_apt_fix_broken():
+    """Repair interrupted dpkg transactions even when the first configure fails.
+
+    An interrupted unpack commonly leaves a package in ``half-installed``
+    state. Running only ``dpkg --configure -a`` can fail before apt gets a
+    chance to repair dependencies, so always run the fix-dependency pass and a
+    final configure attempt. A later successful pass clears an earlier
+    dependency error; a remaining non-zero status is returned to the API.
+    """
+    configure_before = _run(["dpkg", "--configure", "-a"])
+    fix_dependencies = _run(BASE["apt"]["fix-broken"])
+    configure_after = _run(["dpkg", "--configure", "-a"])
+    if configure_after != 0:
+        return configure_after
+    if fix_dependencies != 0:
+        return fix_dependencies
+    return configure_before if configure_before != 0 else 0
+
+
+def _pacman_autoremove():
+    """Enumerate and remove pacman orphans without a shell or user argv."""
+    pacman = _resolve(["pacman"])
+    if not pacman:
+        return 127
+    try:
+        query = subprocess.run(
+            pacman + ["-Qdtq"], shell=False, capture_output=True, text=True,
+            env=_command_env(), timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"monitoring-package: pacman orphan query failed: {exc}",
+              file=sys.stderr)
+        return 126
+    orphans = []
+    for line in (query.stdout or "").splitlines():
+        pkg = line.strip()
+        if pkg and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", pkg):
+            orphans.append(pkg)
+    if query.returncode != 0 and not orphans:
+        return query.returncode
+    if not orphans:
+        return 0
+    try:
+        return subprocess.run(
+            pacman + ["-Rns", "--noconfirm"] + orphans,
+            shell=False, env=_command_env(),
+        ).returncode
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"monitoring-package: pacman orphan removal failed: {exc}",
+              file=sys.stderr)
+        return 126
 
 
 def main(argv):
@@ -78,7 +216,8 @@ def main(argv):
     if len(argv) == 4 and argv[0] == "--manager" and argv[2] == "--action":
         manager, action = argv[1], argv[3]
     else:
-        print("usage: monitoring-package --manager <mgr> --action <action>", file=sys.stderr)
+        print("usage: monitoring-package --manager <mgr> --action <action>",
+              file=sys.stderr)
         return 2
 
     if manager not in MANAGERS:
@@ -87,39 +226,21 @@ def main(argv):
     if action not in ACTIONS:
         print(f"monitoring-package: invalid action: {action}", file=sys.stderr)
         return 2
+    if not _check_write_paths(action):
+        return READ_ONLY_EXIT
 
-    # apt fix-broken is a two-step operation with no injection surface.
+    # apt fix-broken is a three-pass operation with no injection surface.
     if manager == "apt" and action == "fix-broken":
-        rc = _run(["dpkg", "--configure", "-a"])
-        if rc != 0:
-            return rc
-        return _run(BASE["apt"]["fix-broken"])
+        return _run_apt_fix_broken()
 
     if manager == "pacman" and action == "autoremove":
-        # Enumerate orphans read-only, filter them, then remove by name.
-        r = subprocess.run([shutil.which("pacman") or "pacman", "-Qdtq"],
-                           shell=False, capture_output=True, text=True)
-        orphans = []
-        for line in (r.stdout or "").splitlines():
-            pkg = line.strip()
-            if pkg and re_valid_pkg(pkg):
-                orphans.append(pkg)
-        if not orphans:
-            return 0
-        return subprocess.run([shutil.which("pacman") or "pacman",
-                               "-Rns", "--noconfirm"] + orphans,
-                              shell=False).returncode
+        return _pacman_autoremove()
 
     cmd = BASE.get(manager, {}).get(action)
     if cmd is None:
         print(f"monitoring-package: no command for {manager}/{action}", file=sys.stderr)
         return 2
     return _run(cmd)
-
-
-def re_valid_pkg(pkg):
-    import re
-    return re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", pkg) is not None
 
 
 if __name__ == "__main__":

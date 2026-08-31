@@ -94,6 +94,38 @@ def which(binary):
     return shutil.which(binary) is not None
 
 
+def mount_status(path):
+    """Report whether a filesystem target is mounted read-only.
+
+    This is deliberately a mount check, not an ``os.access`` check: the
+    service account is expected not to have ordinary write permission to
+    system directories, while its validated sudo package helper must be able
+    to write them inside the service mount namespace.
+    """
+    result = {"path": path, "exists": os.path.exists(path),
+              "read_only": False, "known": True, "options": ""}
+    if not result["exists"]:
+        return result
+    findmnt = shutil.which("findmnt")
+    if not findmnt:
+        result["known"] = False
+        return result
+    try:
+        proc = subprocess.run(
+            [findmnt, "--noheadings", "--output", "OPTIONS", "--target", path],
+            shell=False, capture_output=True, text=True, timeout=5,
+        )
+        options = (proc.stdout or "").strip()
+        result["options"] = options
+        if proc.returncode != 0 or not options:
+            result["known"] = False
+        else:
+            result["read_only"] = "ro" in {part.strip() for part in options.split(",")}
+    except (OSError, subprocess.SubprocessError):
+        result["known"] = False
+    return result
+
+
 def safe_name(name):
     """Validate identifiers (unit names, VM names, container names...)."""
     return bool(name) and re.fullmatch(r"[A-Za-z0-9_@.\-: _\[\]]{1,120}", name) is not None

@@ -14,7 +14,8 @@ from flask import Blueprint, jsonify, request
 from .commands import PASSWORDLESS_SUDO, run, run_lines, run_privileged, which
 from .common import MY_PID, _audit, _cached
 from .metrics import _cpu_model, _pretty_distro, _read_temp_c
-from .packages import FIX_COMMANDS, _pkg_manager, _updatable_packages
+from .packages import (FIX_COMMANDS, PACKAGE_MUTATION_LOCK, _dpkg_audit,
+                       _pkg_manager, _updatable_packages)
 from .security import rate_limit
 
 bp = Blueprint("diagnostics", __name__)
@@ -407,22 +408,25 @@ def _diag_scan():
 
     # -------------------------------------------------- 6. Packages
     mgr = _pkg_manager()
-    code, out, err = run(["dpkg", "--audit"]) if which("dpkg") else (-1, "", "")
-    if (out or err) and ("error" in (out + err).lower()):
+    dpkg_available, dpkg_healthy, dpkg_detail = _dpkg_audit()
+    if dpkg_available and not dpkg_healthy:
+        detail_lines = dpkg_detail.splitlines()
+        evidence_value = "\n".join(detail_lines[:3])[:480] or "dpkg reported incomplete package state"
         put("critical", _diag_issue(
             "broken_packages", "Broken Packages",
-            "Package database has inconsistencies (dpkg reports errors).",
+            "Package database has unpacked, half-installed, or unconfigured packages.",
             "packages", "critical", "package", fix="fix-broken-packages",
-            evidence=[_diag_ev("dpkg audit", (out or err).strip().splitlines()[0][:160] if (out or err).strip() else "errors", "dpkg --audit")],
+            evidence=[_diag_ev("dpkg audit", evidence_value, "dpkg --audit")],
             impact="Package installs, upgrades and removals can fail; broken dependencies can also break applications.",
             recommended_fix={
                 "id": "fix-broken-packages",
                 "label": "Repair package database",
-                "description": "Reconfigures pending packages and installs missing dependencies (apt systems).",
+                "description": f"Reconfigures pending packages and repairs dependencies with {mgr or 'the detected package manager'}.",
                 "risk": "medium",
-                "commands": ["dpkg --configure -a", "apt install -f -y"],
+                "commands": (["dpkg --configure -a", "apt install -f -y"]
+                             if mgr == "apt" else []),
             },
-            verify=[_diag_ev("Re-run dpkg audit", "no errors", "dpkg --audit")]))
+            verify=[_diag_ev("Re-run dpkg audit", "no pending package state", "dpkg --audit")]))
     updates = _updatable_packages()
     check_commands = {
         "apt": "apt list --upgradable",
@@ -688,10 +692,12 @@ def _verify_issue(iid):
             n = len([l for l in out.splitlines() if l.strip()])
             return res(n == 0, f"{n} failed service(s)", [_diag_ev("Failed units", str(n), "systemctl --failed")])
         if iid == "broken_packages":
-            _, out, err = run(["dpkg", "--audit"]) if which("dpkg") else (-1, "", "")
-            bad = "error" in (out + err).lower()
-            return res(not bad, "dpkg audit clean" if not bad else "dpkg reports errors",
-                       [_diag_ev("dpkg audit", "clean" if not bad else "errors", "dpkg --audit")])
+            available, healthy, detail = _dpkg_audit()
+            if not available:
+                return res(True, "dpkg is not installed on this host")
+            evidence = "clean" if healthy else (detail.splitlines()[0][:240] if detail else "incomplete package state")
+            return res(healthy, "dpkg audit clean" if healthy else "dpkg reports incomplete package state",
+                       [_diag_ev("dpkg audit", evidence, "dpkg --audit")])
         if iid in ("many_updates", "pending_updates"):
             u = _updatable_packages()
             check_cmd = {
@@ -804,6 +810,11 @@ def api_troubleshooting_fix_all():
     def helper_list(name, argv):
         if not argv or argv[0] != name:
             raise ValueError("internal fix command mismatch")
+        if name == "monitoring-package":
+            # Package databases use a host-wide lock. Keep the same lock as
+            # /api/fix so Diagnose Fix All cannot race an Overview action.
+            with PACKAGE_MUTATION_LOCK:
+                return helper_run(argv[0], argv[1:])
         return helper_run(argv[0], argv[1:])
 
     for fix in fixes_needed:

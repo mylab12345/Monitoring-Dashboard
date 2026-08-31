@@ -46,6 +46,31 @@ def _human_groups(gids):
     return names
 
 
+def _mount_status(path):
+    """Inspect mount flags without treating service-user permissions as errors."""
+    item = {"path": path, "exists": os.path.exists(path),
+            "read_only": False, "known": True, "options": ""}
+    if not item["exists"]:
+        return item
+    findmnt = shutil.which("findmnt")
+    if not findmnt:
+        item["known"] = False
+        return item
+    try:
+        result = subprocess.run(
+            [findmnt, "--noheadings", "--output", "OPTIONS", "--target", path],
+            shell=False, capture_output=True, text=True, timeout=5,
+        )
+        item["options"] = (result.stdout or "").strip()
+        if result.returncode != 0 or not item["options"]:
+            item["known"] = False
+        else:
+            item["read_only"] = "ro" in {part.strip() for part in item["options"].split(",")}
+    except (OSError, subprocess.SubprocessError):
+        item["known"] = False
+    return item
+
+
 def _sudo_check(helper):
     exe = os.path.join(PRIV_DIR, helper)
     if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
@@ -95,6 +120,18 @@ def main(argv):
             "path": os.path.join(PRIV_DIR, helper),
         })
 
+    package_paths = [_mount_status(path) for path in
+                     ("/usr", "/etc", "/var", "/boot", "/efi")]
+    known_paths = [item for item in package_paths if item["exists"] and item["known"]]
+    report["maintenance"] = {
+        "package_write_paths": package_paths,
+        "package_write_ready": (
+            False if any(item["read_only"] for item in known_paths)
+            else True if len(known_paths) == sum(item["exists"] for item in package_paths)
+            else None
+        ),
+    }
+
     if pretty:
         print(f"Monitoring service account: {report['user']} (uid {report['uid']})")
         print(f"Groups: {', '.join(report['groups']) or '(none)'}")
@@ -104,6 +141,14 @@ def main(argv):
         for h in report["helpers"]:
             status = "OK" if h["status"] == "ok" else h["status"]
             print(f"  {h['name']:<28} {status}")
+        write_ready = report["maintenance"]["package_write_ready"]
+        if write_ready is False:
+            print("Package maintenance filesystem: READ-ONLY (update the systemd "
+                  "unit; do not chmod /usr)")
+        elif write_ready is None:
+            print("Package maintenance filesystem: unknown (findmnt unavailable)")
+        else:
+            print("Package maintenance filesystem: writable")
         return 0
     print(json.dumps(report, indent=2))
     return 0
