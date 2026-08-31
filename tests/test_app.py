@@ -53,7 +53,10 @@ class ApiBaseline(unittest.TestCase):
     def test_index_page(self):
         html = self._get("/").get_data(as_text=True)
         self.assertIn("Monitoring", html)
-        self.assertIn("/api/status", html)
+        # The app script is now served as separate static/js/*.js files rather
+        # than an inline <script> block.
+        self.assertIn("/static/js/core.js", html)
+        self.assertIn("/static/js/bootstrap.js", html)
 
     def test_read_endpoints(self):
         for path in ("/api/health", "/api/version", "/api/status", "/api/systeminfo",
@@ -173,7 +176,7 @@ class InputValidation(unittest.TestCase):
 
         It posted `vacuum-journal`, which the server did not implement.
         """
-        import app as _a
+        from monitor import packages as _a
         self.assertEqual(_a.FIX_ALIASES.get("vacuum-journal"), "clear-logs")
         self.assertIn("clear-logs", _a.FIX_ACTIONS)
         r = self.client.post("/api/fix", json={"action": "vacuum-journal"})
@@ -373,28 +376,83 @@ class RepoConsistency(unittest.TestCase):
         self.assertNotIn("pip_audit_report.json", out)
 
 
+class UpgradeSafety(unittest.TestCase):
+    """A `git pull` / update from the old monolith must not silently break the
+    installed app.
+
+    The new `app.py` is a thin shim that imports the `monitor/` package and the
+    frontend lives in `static/js/`. If the installer/updater does not ship those
+    directories, the dashboard crashes on startup. These checks pin the copy
+    steps and the defensive-import guard so that regression is caught."""
+
+    def _text(self, name):
+        with open(os.path.join(REPO, name)) as fh:
+            return fh.read()
+
+    def test_installer_copies_monitor_package(self):
+        txt = self._text("install.sh")
+        self.assertIn('cp -rf "$SRC/monitor/."', txt)
+        self.assertIn("monitor/__init__.py", txt)
+
+    def test_updater_copies_monitor_package(self):
+        txt = self._text("update.sh")
+        self.assertIn('cp -rf "$SRC/monitor/."', txt)
+        self.assertIn("monitor/__init__.py", txt)
+
+    def test_installer_and_updater_copy_static_js_recursively(self):
+        for name in ("install.sh", "update.sh"):
+            self.assertIn('cp -rf "$SRC/static/."', self._text(name))
+
+    def test_updater_backs_up_monitor_for_rollback(self):
+        self.assertIn('"$TARGET/monitor"', self._text("update.sh"))
+
+    def test_app_entrypoint_is_defensive(self):
+        """If monitor/ is missing (e.g. an old update.sh ran), app.py must print
+        a clear, actionable message and exit, not raise a cryptic ImportError."""
+        txt = self._text("app.py")
+        self.assertIn("IMPORT_ERROR", txt)
+        self.assertIn("could not load the 'monitor/'", txt)
+        self.assertIn("create_app() if create_app is not None else None", txt)
+
+    def test_app_package_has_graceful_loader(self):
+        txt = self._text(os.path.join("monitor", "__init__.py"))
+        self.assertIn("LOAD_ERRORS", txt)
+        self.assertIn("register_blueprint", txt)
+
+
 class FrontendIntegrity(unittest.TestCase):
-    """Static checks on the single-page frontend (templates/index.html).
+    """Static checks on the frontend (templates/index.html + static/js/*.js).
 
     A missing helper here kills the whole dashboard (a previous release had
     no `spinRefresh` definition: every fetchJSON/postJSON call threw a
     ReferenceError, so the UI never rendered any data), so every check below
-    is a regression guard, not a style preference."""
+    is a regression guard, not a style preference.
+
+    The app script is now split across static/js/*.js (loaded in the order the
+    index.html <script src> tags list them), so a syntax error in one file no
+    longer aborts every other file — each is a separate parse unit."""
 
     @classmethod
     def setUpClass(cls):
         with open(os.path.join(REPO, "templates", "index.html")) as fh:
             cls.html = fh.read()
-        scripts = re.findall(r"<script[^>]*>(.*?)</script>", cls.html, re.S)
-        cls.js = scripts[-1] if scripts else ""
+        # Collect the JS files in the exact order the page loads them.
+        names = re.findall(r"url_for\('static',\s*filename='js/([^']+)'\)", cls.html)
+        cls.js_files = names
+        parts = []
+        for name in names:
+            with open(os.path.join(REPO, "static", "js", name)) as fh:
+                parts.append(fh.read())
+        cls.js = "\n".join(parts)
 
-    def test_inline_script_parses(self):
-        """The inline app script must be syntactically valid JavaScript.
+    def test_each_script_file_parses(self):
+        """Every individual JS file must be syntactically valid on its own.
 
         Regression: a duplicated tooltip loop left an orphaned `continue` and a
         stray brace in chartBoxEvents(). A syntax error aborts the whole script
         at parse time, so *every* tab rendered as empty skeletons with no data.
-        Static string checks cannot catch this — only a real parser can.
+        Because the files are separate parse units now, one broken file must
+        not invalidate the others — but each must still parse cleanly.
         """
         node = None
         for cand in ("node", "nodejs"):
@@ -407,17 +465,13 @@ class FrontendIntegrity(unittest.TestCase):
                 continue
         if node is None:
             self.skipTest("node not available to parse-check the frontend")
-        import tempfile
-        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
-            fh.write(self.js)
-            tmp = fh.name
-        try:
-            r = subprocess.run([node, "--check", tmp],
+        self.assertTrue(self.js_files, "no static/js files discovered")
+        for name in self.js_files:
+            path = os.path.join(REPO, "static", "js", name)
+            r = subprocess.run([node, "--check", path],
                                capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 0,
-                             f"templates/index.html inline JS is invalid:\n{r.stderr}")
-        finally:
-            os.unlink(tmp)
+                             f"static/js/{name} has a syntax error:\n{r.stderr}")
 
     def test_spinrefresh_is_defined(self):
         self.assertRegex(self.js, r"function\s+spinRefresh\s*\(")
@@ -458,7 +512,10 @@ class FrontendIntegrity(unittest.TestCase):
         self.assertEqual(bad, [], f"raw /api/ fetch without auth: {bad}")
 
     def test_no_missing_element_ids(self):
+        # Static ids from the HTML plus ids the JS creates dynamically (e.g.
+        # the command palette builds `id="palInput"`/`id="palList"` at runtime).
         ids = set(re.findall(r'id="([^"]+)"', self.html))
+        ids |= set(re.findall(r'id="([^"]+)"', self.js))
         used = set(re.findall(r"getElementById\(['\"]([^'\"]+)['\"]\)", self.js))
         used |= set(re.findall(r"\$\('#([A-Za-z0-9_-]+)'\)", self.js))
         used |= set(re.findall(r"\$\$\(\s*'#([A-Za-z0-9_-]+)", self.js))
@@ -477,7 +534,9 @@ class ScriptSyntax(unittest.TestCase):
     def test_python_syntax(self):
         helpers = [os.path.join("privileged", p) for p in
                    os.listdir(os.path.join(REPO, "privileged")) if p.endswith(".py")]
-        for f in ("app.py", "monitoring-app") + tuple(helpers):
+        modules = [os.path.join("monitor", p) for p in
+                   os.listdir(os.path.join(REPO, "monitor")) if p.endswith(".py")]
+        for f in ("app.py", "monitoring-app") + tuple(helpers) + tuple(modules):
             r = subprocess.run([sys.executable, "-m", "py_compile", os.path.join(REPO, f)],
                                capture_output=True, text=True, timeout=30)
             self.assertEqual(r.returncode, 0, f"{f}: {r.stderr}")
