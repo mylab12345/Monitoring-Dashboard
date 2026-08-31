@@ -719,6 +719,20 @@ select{
 .disk-head .meta{font-family:var(--font-mono);font-size:.64rem;color:var(--text-3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .disk-head .size{font-family:var(--font-mono);font-size:.64rem;color:var(--text-2);white-space:nowrap}
 
+/* Overview → Top Hogs rows (were inline styles on every row) */
+.hog-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:10px 0;border-bottom:1px solid var(--border)}
+.hog-row:last-child{border-bottom:0}
+.hog-info{min-width:0}
+.hog-name{font-family:var(--font-mono);font-weight:700;font-size:.8rem;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hog-meta{font-family:var(--font-mono);font-size:.64rem;color:var(--text-3);margin-top:2px}
+.hog-kill{width:26px;height:26px;flex-shrink:0}
+
+/* Overview → Quick Admin Actions toolbar (class existed with no rule) */
+.quick-toolbar{display:flex;align-items:center;gap:8px;margin:16px 0;flex-wrap:wrap}
+.quick-toolbar .qt-label{font-size:.78rem;font-weight:600;color:var(--text-3)}
+
 .empty-state{
   display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;
   padding:38px 20px;border:1px dashed var(--border-2);border-radius:var(--r-md);

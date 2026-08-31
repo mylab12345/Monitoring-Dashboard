@@ -197,7 +197,7 @@
             </div>
             <div class="metric-body">
               <div class="hero">
-                <span class="val" id="cpuVal">--</span><span class="unit">%</span>
+                <span class="val" id="cpuVal" aria-label="CPU usage percent">--</span><span class="unit">%</span>
                 <div class="note" id="cpuNote">freq · load</div>
               </div>
               <div class="ring-wrap">
@@ -208,7 +208,7 @@
                 <div class="pct" id="cpuPct">--%</div>
               </div>
             </div>
-            <canvas class="sparkline" id="cpuSpark" height="40"></canvas>
+            <canvas class="sparkline" id="cpuSpark" height="40" role="img" aria-label="CPU trend over the selected time range"></canvas>
           </article>
 
           <article class="card metric-card hoverable" style="--mc:#a78bfa;--mc-bg:rgba(167,139,250,.12);--mc-line:rgba(167,139,250,.28)">
@@ -222,7 +222,7 @@
             </div>
             <div class="metric-body">
               <div class="hero">
-                <span class="val" id="ramVal">--</span><span class="unit">%</span>
+                <span class="val" id="ramVal" aria-label="Memory usage percent">--</span><span class="unit">%</span>
                 <div class="note" id="ramNote">swap off</div>
               </div>
               <div class="ring-wrap">
@@ -233,7 +233,7 @@
                 <div class="pct" id="ramPct">--%</div>
               </div>
             </div>
-            <canvas class="sparkline" id="ramSpark" height="40"></canvas>
+            <canvas class="sparkline" id="ramSpark" height="40" role="img" aria-label="Memory trend over the selected time range"></canvas>
           </article>
 
           <article class="card metric-card hoverable" style="--mc:#34d399;--mc-bg:rgba(52,211,153,.12);--mc-line:rgba(52,211,153,.28)">
@@ -247,7 +247,7 @@
             </div>
             <div class="metric-body">
               <div class="hero">
-                <span class="val" id="diskVal">--</span><span class="unit">%</span>
+                <span class="val" id="diskVal" aria-label="Disk usage percent">--</span><span class="unit">%</span>
                 <div class="note" id="diskNote">root filesystem</div>
               </div>
               <div class="ring-wrap">
@@ -258,7 +258,7 @@
                 <div class="pct" id="diskPct">--%</div>
               </div>
             </div>
-            <canvas class="sparkline" id="diskSpark" height="40"></canvas>
+            <canvas class="sparkline" id="diskSpark" height="40" role="img" aria-label="Disk trend over the selected time range"></canvas>
           </article>
 
           <article class="card metric-card hoverable" style="--mc:#2dd4bf;--mc-bg:rgba(45,212,191,.12);--mc-line:rgba(45,212,191,.28)">
@@ -284,13 +284,13 @@
           </article>
         </div>
 
-        <div class="quick-toolbar" style="display:flex;align-items:center;gap:8px;margin:16px 0;flex-wrap:wrap">
-          <span class="dim" style="font-size:.78rem;font-weight:600">Quick Admin Actions:</span>
-          <button class="btn btn-sm" type="button" onclick="refreshAll()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg> Refresh All</button>
-          <button class="btn btn-sm" type="button" onclick="runQuickAction('clean')">🧹 Clean Cache</button>
-          <button class="btn btn-sm" type="button" onclick="runQuickAction('update')">🔄 Update Lists</button>
-          <button class="btn btn-sm" type="button" onclick="runQuickAction('vacuum-journal')">🗄️ Vacuum Journal</button>
-          <button class="btn btn-sm btn-primary" type="button" onclick="openPalette()">⌨️ Command Palette (⌘K)</button>
+        <div class="quick-toolbar" role="group" aria-label="Quick admin actions">
+          <span class="qt-label">Quick Admin Actions:</span>
+          <button class="btn btn-sm" type="button" onclick="refreshAll()" id="qaRefresh">Refresh All</button>
+          <button class="btn btn-sm" type="button" onclick="runQuickAction('clean')" id="qaClean">Clean Cache</button>
+          <button class="btn btn-sm" type="button" onclick="runQuickAction('update')" id="qaUpdate">Update Lists</button>
+          <button class="btn btn-sm" type="button" onclick="runQuickAction('clear-logs')" id="qaVacuum">Vacuum Journal</button>
+          <button class="btn btn-sm btn-primary" type="button" onclick="openPalette()" id="qaPalette">Command Palette</button>
         </div>
 
         <div class="grid g2-1" style="margin-top:16px">
@@ -317,7 +317,7 @@
               </div>
             </div>
             <div class="chart-box" id="chartBox">
-              <canvas id="mainChart"></canvas>
+              <canvas id="mainChart" role="img" aria-label="Resource timeline chart: CPU, memory, disk and network over time"></canvas>
               <div class="chart-tooltip" id="chartTip"></div>
               <div class="chart-empty" id="chartEmpty" hidden>Collecting samples…</div>
             </div>
@@ -331,7 +331,7 @@
                 <span class="badge" id="checksBadge">checking…</span>
                 <span class="badge ok" id="healthScoreBadge" style="margin-left:4px">Health: 100%</span>
               </div>
-              <button class="icon-btn" onclick="updateChecks()" title="Refresh checks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <button class="icon-btn" onclick="updateChecks()" title="Refresh health checks" aria-label="Refresh health checks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
             <div id="checksList"><div class="skel" style="height:200px"></div></div>
           </article>
@@ -360,7 +360,7 @@
                 Recent Activity
                 <span class="badge" id="activityBadge"></span>
               </div>
-              <button class="icon-btn" onclick="showTab('alerts')" title="View all activity"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+              <button class="icon-btn" onclick="showTab('alerts')" title="View all activity" aria-label="View all activity"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
             </div>
             <div id="activityMini"></div>
           </article>
@@ -373,7 +373,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
                 Mounted Disks
               </div>
-              <button class="icon-btn" onclick="loadDisks()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <button class="icon-btn" onclick="loadDisks()" title="Refresh mounted disks" aria-label="Refresh mounted disks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
             <div id="disksList"><div class="skel" style="height:120px"></div></div>
           </article>
@@ -385,7 +385,7 @@
                 Listening Ports
                 <span class="badge" id="portsCount"></span>
               </div>
-              <button class="icon-btn" onclick="loadPorts()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <button class="icon-btn" onclick="loadPorts()" title="Refresh listening ports" aria-label="Refresh listening ports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
             <div id="portsList"><div class="skel" style="height:120px"></div></div>
           </article>
@@ -397,7 +397,13 @@
                 Top Hogs
                 <span class="badge" id="overviewHogsCount">--</span>
               </div>
-              <button class="icon-btn" onclick="loadOverviewHogs()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+                <div class="segmented" id="hogsSortSeg" role="group" aria-label="Sort top processes">
+                  <button class="seg-btn active" data-k="cpu" onclick="setHogsSort('cpu')">CPU</button>
+                  <button class="seg-btn" data-k="mem" onclick="setHogsSort('mem')">MEM</button>
+                </div>
+                <button class="icon-btn" onclick="loadOverviewHogs()" title="Refresh top processes" aria-label="Refresh top processes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              </div>
             </div>
             <div id="overviewHogsList"><div class="skel" style="height:120px"></div></div>
           </article>
@@ -1046,7 +1052,15 @@ async function postJSON(url,body){
       if(await promptApiToken())return postJSON(url,body);
       return {error:'Authentication required'};
     }
-    return await r.json();
+    const text=await r.text();
+    let data=null;
+    try{data=text?JSON.parse(text):null;}catch(e){
+      return {error:'API returned invalid JSON (HTTP '+r.status+')'};
+    }
+    // Surface HTTP failures as {error} even when the body omits the key, so
+    // callers that only test `j.error` cannot mistake a 4xx/5xx for success.
+    if(!r.ok)return {error:(data&&data.error)||('Request failed (HTTP '+r.status+')')};
+    return data||{};
   }catch(e){return {error:'request failed'};}
   finally{clearTimeout(timeout);busy--;spinRefresh();}
 }
@@ -1309,32 +1323,72 @@ function toggleMatrixMode(){
   }
   drawMainChart();
 }
+// Actions that delete data / mutate packages get a confirmation, matching the
+// treatment kill/service actions already receive.
+const QUICK_CONFIRM={
+  'clean':'Clear the package manager caches?',
+  'clear-logs':'Vacuum the systemd journal and remove log files older than 7 days? This permanently deletes log history.'
+};
 async function runQuickAction(action){
-  toast('Running: '+action+'…','info');
-  logActivity('fix','Quick action: '+action);
+  const label=(FIX_META[action]&&FIX_META[action].label)||action;
+  if(QUICK_CONFIRM[action]){
+    const ok=await confirmDlg(label,QUICK_CONFIRM[action],true);
+    if(!ok)return;
+  }
+  toast('Running: '+label+'…','info');
   const j=await postJSON('/api/fix',{action});
-  if(j&&j.error)toast('Action failed: '+j.error,'err');
-  else{toast('Completed: '+action,'ok');updateChecks();updateStatus();}
+  if(j&&j.error){
+    toast('Action failed: '+j.error,'err');
+    logActivity('fix','Quick action failed: '+label,false);
+    return;
+  }
+  toast('Completed: '+label,'ok');
+  logActivity('fix','Quick action: '+label);
+  updateChecks();updateStatus();
+}
+// Overview "Top Hogs" — sortable by CPU or memory. The API already returns a
+// union of the top-CPU and top-memory processes, so both views are free.
+let hogsSort=(localStorage.getItem('monitoring:hogsSort')==='mem')?'mem':'cpu';
+function setHogsSort(k){
+  hogsSort=(k==='mem')?'mem':'cpu';
+  try{localStorage.setItem('monitoring:hogsSort',hogsSort);}catch(e){}
+  $$('#hogsSortSeg .seg-btn').forEach(b=>{
+    const on=b.dataset.k===hogsSort;
+    b.classList.toggle('active',on);
+    b.setAttribute('aria-pressed',on?'true':'false');
+  });
+  loadOverviewHogs();
 }
 async function loadOverviewHogs(){
   const el=$('#overviewHogsList');
   const badge=$('#overviewHogsCount');
   if(!el)return;
   try{
-    const d=await fetchJSON('/api/processes?limit=6');
-    if(!d||!d.processes){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('cpu',20)+'</div><strong>Process data unavailable</strong></div>';return;}
-    const procs=d.processes.sort((a,b)=>b.cpu-a.cpu).slice(0,5);
-    if(badge)badge.textContent=procs.length+' top';
+    const d=await fetchJSON('/api/processes?limit=5');
+    if(!d||!d.processes){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('cpu',20)+'</div><strong>Process data unavailable</strong></div><button class="btn btn-sm" style="margin-top:10px" onclick="loadOverviewHogs()">'+icon('refresh',13)+' Retry</button>';return;}
+    const key=hogsSort;
+    const procs=d.processes.slice().sort((a,b)=>(b[key]||0)-(a[key]||0)).slice(0,5);
+    if(badge)badge.textContent='by '+(key==='mem'?'memory':'CPU');
+    const em=(on,txt)=>on?'<b style="color:var(--text)">'+txt+'</b>':txt;
     el.innerHTML=procs.map(p=>`
-      <div class="disk-row" style="display:flex;align-items:center;justify-content:space-between">
-        <div>
-          <div style="font-family:var(--font-mono);font-weight:700;font-size:.8rem">${esc(p.name)} <span class="dim" style="font-size:.68rem">(${p.pid})</span></div>
-          <div class="meta" style="font-family:var(--font-mono);font-size:.64rem;color:var(--text-3)">CPU: ${p.cpu}% · RAM: ${p.mem}%</div>
+      <div class="hog-row">
+        <div class="hog-info">
+          <div class="hog-name">${esc(p.name)} <span class="dim" style="font-size:.68rem">(${p.pid})</span></div>
+          <div class="hog-meta">${em(key==='cpu','CPU: '+p.cpu+'%')} · ${em(key==='mem','RAM: '+p.mem+'%')}</div>
         </div>
-        <button class="icon-btn danger" style="width:26px;height:26px" title="Kill PID ${p.pid}" onclick="killProcess(${p.pid},'${jsq(p.name)}')">${icon('x',12)}</button>
+        <button class="icon-btn danger hog-kill" data-pid="${p.pid}" data-name="${esc(p.name)}"
+                title="Kill ${esc(p.name)} (PID ${p.pid})" aria-label="Kill ${esc(p.name)} (PID ${p.pid})">${icon('x',12)}</button>
       </div>`).join('');
+    // Bind via JS rather than an inline onclick: process names are attacker-
+    // controlled and entity-escaping is undone by the HTML parser before the
+    // JS parser sees the attribute.
+    $$('#overviewHogsList .hog-kill').forEach(b=>b.addEventListener('click',()=>{
+      killProcess(+b.dataset.pid,b.dataset.name);
+    }));
   }catch(e){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('cpu',20)+'</div><strong>Failed to load processes</strong></div>';
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('cpu',20)+'</div><strong>Failed to load processes</strong>'
+      +'<span class="dim">'+esc(e&&e.message||'request failed')+'</span></div>'
+      +'<button class="btn btn-sm" style="margin-top:10px" onclick="loadOverviewHogs()">'+icon('refresh',13)+' Retry</button>';
   }
 }
 async function loadHistory(){
@@ -1453,6 +1507,7 @@ function chartBoxEvents(){
   };
   box.addEventListener('mousemove',e=>{
     if(!histData.length)return;
+    const mouseX=e.clientX-cv.getBoundingClientRect().left;
     chartHover=idxFromEvent(e);
     drawMainChart();
     if(chartHover==null){tip.style.opacity=0;return;}
@@ -1465,12 +1520,9 @@ function chartBoxEvents(){
       if(!meta)continue;
       html+='<div class="tt-row"><i style="background:'+meta.color+'"></i>'+meta.label+'<b>'+meta.fmt(meta.get(s))+'</b></div>';
     }
-      if(!chartCfg.series[k])continue;
-      const meta=SERIES_META[k];
-      html+='<div class="tt-row"><i style="background:'+meta.color+'"></i>'+meta.label+'<b>'+meta.fmt(meta.get(s))+'</b></div>';
-    }
     tip.innerHTML=html;
     tip.style.opacity=1;
+    positionTip(mouseX);
   });
   box.addEventListener('mouseleave',()=>{chartHover=null;tip.style.opacity=0;drawMainChart();});
 }
@@ -1497,6 +1549,10 @@ function setRing(id,pct){
 }
 function animNum(el,to,dec){
   if(!el)return;
+  // Default to 1 decimal: `undefined` made toFixed() round to whole numbers,
+  // so a 7.4% reading rendered as "7" while its delta chip said "+0.4".
+  if(dec==null)dec=1;
+  if(!isFinite(to))to=0;
   const from=parseFloat(el.dataset.v||0)||0;
   if(REDUCED||Math.abs(to-from)<0.05){el.textContent=to.toFixed(dec);el.dataset.v=to;return;}
   const t0=performance.now(),dur=650;
@@ -1658,6 +1714,29 @@ function checkAlerts(d){
     }else if(!level&&prev){
       delete activeAlerts[r.k];
       recordAlert('ok',r.k,r.label+' back to normal ('+r.v.toFixed(1)+r.unit+')',r.v);
+    }
+  });
+  refreshAlertBadge();
+}
+// Non-root filesystems were never alerted on: /api/status only reports "/".
+// Keyed per mount so each volume latches independently.
+function checkDiskAlerts(disks){
+  if(!S.alerts||!Array.isArray(disks))return;
+  disks.forEach(dk=>{
+    if(dk.mount==='/')return;                 // already covered by checkAlerts
+    const v=dk.percent;
+    if(typeof v!=='number'||isNaN(v))return;
+    const key='mount:'+dk.mount;
+    const level=v>=S.th.diskCrit?'crit':v>=S.th.diskWarn?'warn':null;
+    const prev=activeAlerts[key]||null;
+    if(level&&level!==prev){
+      activeAlerts[key]=level;
+      const msg='Disk '+dk.mount+' '+v.toFixed(1)+'% ≥ '+(level==='crit'?S.th.diskCrit:S.th.diskWarn)+'% threshold';
+      recordAlert(level,'disk',msg,v);
+      toast(msg,level==='crit'?'err':'info');
+    }else if(!level&&prev){
+      delete activeAlerts[key];
+      recordAlert('ok','disk','Disk '+dk.mount+' back to normal ('+v.toFixed(1)+'%)',v);
     }
   });
   refreshAlertBadge();
@@ -2326,9 +2405,19 @@ function checkIcon(name){
 async function updateChecks(){
   const list=$('#checksList');
   const data=await fetchJSON('/api/checks');
-  if(!data||data.error||!Array.isArray(data)){list.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('alert',22)+'</div><strong>Checks unavailable</strong></div>';return;}
-  const warns=data.filter(c=>c.status==='warn'||c.status==='fail').length;
+  if(!data||data.error||!Array.isArray(data)){
+    list.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('alert',22)+'</div><strong>Checks unavailable</strong>'
+      +'<span class="dim">'+esc((data&&data.error)||'the API did not respond')+'</span>'
+      +'<button class="btn btn-sm" style="margin-top:10px" onclick="updateChecks()">'+icon('refresh',13)+' Retry</button></div>';
+    const hb0=$('#healthScoreBadge');
+    if(hb0){hb0.textContent='Health: --';hb0.className='badge';}
+    const cb0=$('#checksBadge');
+    if(cb0){cb0.textContent='unavailable';cb0.className='badge';}
+    return;
+  }
+  const issues=data.filter(c=>c.status==='warn'||c.status==='fail').length;
   const fails=data.filter(c=>c.status==='fail').length;
+  const warns=issues-fails;              // warn-only, so failures are not charged twice
   const score=Math.max(0,100-Math.round((warns*20)+(fails*40)));
   const hb=$('#healthScoreBadge');
   if(hb){
@@ -2336,8 +2425,13 @@ async function updateChecks(){
     hb.className='badge '+(score>=90?'ok':score>=70?'warn':'fail');
   }
   const badge=$('#checksBadge');
-  badge.textContent=warns?warns+(warns===1?' issue':' issues'):'all clear';
-  badge.className='badge '+(warns?'warn':'ok');
+  // Distinguish hard failures from warnings instead of lumping both into
+  // an amber "N issues" pill.
+  const parts=[];
+  if(warns)parts.push(warns+(warns===1?' warning':' warnings'));
+  if(fails)parts.push(fails+(fails===1?' failure':' failures'));
+  badge.textContent=parts.length?parts.join(' · '):'all clear';
+  badge.className='badge '+(fails?'fail':warns?'warn':'ok');
   list.innerHTML=data.map(c=>`
     <div class="check-row ${c.status}">
       <div class="check-icon">${icon(checkIcon(c.name),15)}</div>
@@ -2349,7 +2443,7 @@ async function updateChecks(){
       <span class="pill ${c.status==='ok'?'ok':c.status==='fail'?'fail':'warn'}">${c.status}</span>
     </div>`).join('');
   const dot=$('#dotOverview');
-  if(dot){dot.hidden=warns===0;dot.textContent=warns;}
+  if(dot){dot.hidden=issues===0;dot.textContent=issues;}
 }
 
 // ================================================================
@@ -2373,6 +2467,10 @@ function renderFixButtons(){
 async function runFix(action,btn){
   const term=$('#fixTerminal'),out=$('#fixResult');
   const meta=FIX_META[action]||{icon:'wrench',desc:action};
+  if(QUICK_CONFIRM[action]){
+    const ok=await confirmDlg(meta.label||action,QUICK_CONFIRM[action],true);
+    if(!ok)return;
+  }
   const old=btn?btn.innerHTML:null;
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner">'+icon('refresh',15)+'</span><span>Running…</span>';}
   term.hidden=false;
@@ -2390,9 +2488,30 @@ async function runFix(action,btn){
 // ================================================================
 // Disks / ports / network
 // ================================================================
+// Worst non-root mount, so a full /home or /var is not hidden behind a
+// comfortable-looking root percentage on the Disk card.
+let worstMount=null;
+function updateDiskNote(){
+  const note=$('#diskNote');
+  if(!note)return;
+  // Only call out another mount when it is actually at or above the warn
+  // threshold — otherwise the note is just noise on a healthy machine.
+  if(worstMount&&worstMount.mount!=='/'&&worstMount.percent>=S.th.diskWarn){
+    note.innerHTML='root filesystem · <b>'+esc(worstMount.mount)+'</b> '+worstMount.percent+'%';
+    note.title=worstMount.mount+' is at '+worstMount.percent+'%';
+  }else{
+    note.textContent='root filesystem';
+    note.removeAttribute('title');
+  }
+}
 async function loadDisks(){
   const d=await fetchJSON('/api/disks');
   const el=$('#disksList');
+  if(d&&Array.isArray(d.disks)&&d.disks.length){
+    worstMount=d.disks.slice().sort((a,b)=>b.percent-a.percent)[0];
+    updateDiskNote();
+    checkDiskAlerts(d.disks);
+  }
   if(!el)return;
   if(!d||!d.disks){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('disk',22)+'</div><strong>Disk data unavailable</strong><span class="dim">'+(d&&d.error?esc(d.error):'the API did not respond')+'</span><button class="btn btn-sm" style="margin-top:10px" onclick="loadDisks()">'+icon('refresh',13)+' Retry</button></div>';return;}
   if(!d.disks.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('disk',22)+'</div><strong>No mounted filesystems</strong></div>';return;}
@@ -2407,22 +2526,42 @@ async function loadDisks(){
       <div class="progress-track"><div class="progress-fill ${statusClass(k.percent)}" style="width:${Math.min(100,k.percent)}%"></div></div>
     </div>`).join('');
 }
-let portsData=[];
+let portsData=[],portsError=null;
 async function loadPorts(){
   const d=await fetchJSON('/api/ports');
-  portsData=(d&&d.ports)||[];
-  if(d&&d.error)console.error('ports:',d.error);
+  // Distinguish "API failed" from "genuinely nothing listening" — both used to
+  // render the same reassuring empty state.
+  portsError=(!d||d.error||!Array.isArray(d.ports))
+    ? ((d&&d.error)||'the API did not respond') : null;
+  portsData=(d&&Array.isArray(d.ports))?d.ports:[];
   const count=$('#portsCount'),count2=$('#portsCount2');
-  const txt=portsData.length?portsData.length+' open':'';
-  if(count)count.textContent=txt;
-  if(count2)count2.textContent=txt;
+  const txt=portsError?'error':(portsData.length?portsData.length+' open':'');
+  if(count){count.textContent=txt;count.className='badge'+(portsError?' fail':'');}
+  if(count2){count2.textContent=txt;count2.className='badge'+(portsError?' fail':'');}
   renderPortsOverview();renderPortsTable();
 }
 function protoLabel(p){return p&&p.endsWith('6')?p.slice(0,-1).toUpperCase()+'/6':(p||'').toUpperCase();}
-function cleanProc(s){return (s||'').replace(/users:\(\(\"/,'').replace(/\"\)\)/,'').replace(/\"/g,'');}
+// `ss` reports listeners as: users:(("python",pid=1415,fd=9),("x",pid=2,fd=3))
+// Parse every ("name",pid=N) pair into "name (pid)". The old two-replace
+// version left a dangling "))" and leaked fd numbers into the Ports card.
+function cleanProc(s){
+  if(!s)return '';
+  const seen=new Set(),out=[];
+  const re=/\("([^"]+)",pid=(\d+)/g;
+  let m;
+  while((m=re.exec(s))!==null){
+    const k=m[1]+'/'+m[2];
+    if(seen.has(k))continue;
+    seen.add(k);
+    out.push(m[1]+' ('+m[2]+')');
+  }
+  // Fall back to a light cleanup if the ss output format ever changes.
+  return out.length?out.join(', '):s.replace(/^users:\(\(/,'').replace(/\)\)$/,'').replace(/"/g,'');
+}
 function renderPortsOverview(){
   const el=$('#portsList');
   if(!el)return;
+  if(portsError){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('globe',22)+'</div><strong>Port data unavailable</strong><span class="dim">'+esc(portsError)+'</span><button class="btn btn-sm" style="margin-top:10px" onclick="loadPorts()">'+icon('refresh',13)+' Retry</button></div>';return;}
   if(!portsData.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('globe',22)+'</div><strong>No listening ports</strong><span class="dim">Nothing accepting connections right now.</span></div>';return;}
   el.innerHTML=portsData.slice(0,7).map(p=>`
     <div class="check-row">
@@ -2435,6 +2574,7 @@ function renderPortsOverview(){
 function renderPortsTable(){
   const tb=$('#portsRows');
   if(!tb)return;
+  if(portsError){tb.innerHTML='<tr><td colspan="4" class="dim">Port data unavailable — '+esc(portsError)+'</td></tr>';return;}
   if(!portsData.length){tb.innerHTML='<tr><td colspan="4" class="dim">No listening ports</td></tr>';return;}
   tb.innerHTML=portsData.map(p=>'<tr>'
     +'<td><span class="pill neutral" style="min-width:56px;justify-content:center">'+esc(protoLabel(p.proto))+'</span></td>'
@@ -2947,7 +3087,17 @@ document.addEventListener('keydown',e=>{
   }
 });
 function tickClock(){$('#clock').textContent=nowTime();}
-window.addEventListener('resize',()=>{drawMainChart();drawSparks();});
+// Guarded timers skip while hidden, so data was stale until the next tick after
+// returning. Refresh immediately when the tab becomes visible again.
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden)refreshCurrent();
+});
+// Coalesce resize redraws into one frame instead of redrawing per event.
+let resizeRaf=0;
+window.addEventListener('resize',()=>{
+  if(resizeRaf)cancelAnimationFrame(resizeRaf);
+  resizeRaf=requestAnimationFrame(()=>{resizeRaf=0;drawMainChart();drawSparks();});
+});
 
 // ================================================================
 // Init
@@ -2955,6 +3105,14 @@ window.addEventListener('resize',()=>{drawMainChart();drawSparks();});
 (async()=>{
   $('#palKbd').textContent=MOD+' K';
   $('#palKbd2').textContent=MOD+' K';
+  // Quick Admin Actions: use the shared SVG icon set (was emoji, which render
+  // inconsistently and carry no accessible name) and a platform-correct hint.
+  [['#qaRefresh','refresh','Refresh All'],['#qaClean','sparkles','Clean Cache'],
+   ['#qaUpdate','up','Update Lists'],['#qaVacuum','trash','Vacuum Journal'],
+   ['#qaPalette','keyboard','Command Palette ('+MOD+' K)']].forEach(([sel,ic,label])=>{
+    const b=$(sel);
+    if(b)b.innerHTML=icon(ic,13)+' <span>'+esc(label)+'</span>';
+  });
   $('#kCtrlK').textContent=IS_MAC?'⌘':MOD;
   $('#kCtrlN').textContent=IS_MAC?'⌘':MOD;
   $('#kCtrlT').textContent=IS_MAC?'⌘':MOD;
@@ -2977,13 +3135,18 @@ renderDiagHistory();
 chartBoxEvents();
 $('#logWrap').checked=!!S.logWrap;
 toggleLogWrap(); // apply wrap setting
+// Load the Overview (the default tab) only. The other tabs fetch on first
+// visit via TAB_LOADERS — booting all of them fired ~11 requests up front,
+// most for panels the user could not see.
 updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();loadOverviewHogs();
-loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
 restartTimers();
-setInterval(updateChecks,60000);
+// /api/checks shells out to apt/dpkg/systemctl/journalctl — the most expensive
+// endpoint here. It was the only timer without a visibility guard, so it kept
+// running on backgrounded tabs indefinitely.
+setInterval(()=>{if(!document.hidden)updateChecks();},60000);
 setInterval(()=>{if(!document.hidden)loadDisks();},30000);
 setInterval(()=>{if(!document.hidden)loadOverviewHogs();},15000);
-setInterval(()=>{if(!document.hidden&&$('#procAuto').checked)loadProcesses();},5000);
+setInterval(()=>{if(!document.hidden&&$('#procAuto').checked&&$('#tab-processes').classList.contains('active'))loadProcesses();},5000);
 setInterval(()=>{if(!document.hidden&&$('#logAuto').checked&&$('#tab-logs').classList.contains('active'))loadLogs();},5000);
 setInterval(tickClock,1000);
 
