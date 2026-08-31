@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify
 
 from .commands import PASSWORDLESS_SUDO, mount_status, privileged_tool, run
 from .common import SUDOERS_FILE, _cached, PRIVILEGE_DIR
+from .security import rate_limit
 
 bp = Blueprint("privileges", __name__)
 
@@ -94,6 +95,7 @@ def _privilege_status():
 
 
 @bp.route("/api/privileges")
+@rate_limit("60 per minute")
 def api_privileges():
     try:
         return jsonify(_cached("privileges", 30, _privilege_status))

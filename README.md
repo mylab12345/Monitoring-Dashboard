@@ -20,7 +20,7 @@ Or from a local checkout:
 sudo bash install.sh
 ```
 
-Options: `--port N` (default 8050), `--bind ADDR` (default 0.0.0.0), `--token TOKEN` (or `auto` to generate one — see Security below), `--home DIR` (default /opt/monitoring), `--no-vm` (skip libvirt tooling), `--no-start`.
+Options: `--port N` (default 8050), `--bind ADDR` (default 127.0.0.1), `--token TOKEN` (or `auto` to generate one — see Security below), `--home DIR` (default /opt/monitoring), `--no-vm` (skip libvirt tooling), `--no-start`.
 
 When done, open **http://localhost:8050** — or launch it like a normal app (next section).
 
@@ -34,10 +34,9 @@ shell with a GUI:
   (or set `MONITORING_TOKEN` in `/etc/monitoring.env`). Every `/api/*` request
   then requires `Authorization: Bearer <token>`; the UI asks for the token the
   first time it loads. The token survives re-installs and updates.
-- **Bind address:** default is `0.0.0.0`. For a single-user machine use
-  `sudo bash install.sh --bind 127.0.0.1` so the dashboard is only reachable
-  from localhost. The installer only opens the firewall port when you bind to
-  a non-loopback address, and warns loudly if you do so without a token.
+- **Bind address:** default is `127.0.0.1` (localhost only, secure by default). For LAN access use
+  `sudo bash install.sh --bind 0.0.0.0 --token <strong-password>` so the dashboard is protected. The installer only opens the firewall port when you bind to
+  a non-loopback address **and** a token is set, and warns loudly if you try to expose without a token.
 - **Privilege model:** the service runs as a dedicated non-login `monitoring`
   account. Privileged operations (systemd, packages, journal vacuum, kill,
   libvirt/qemu) go through whitelisted, argument-validating helper commands
@@ -178,7 +177,7 @@ import, an undefined helper) aborted **everything** — this actually shipped on
 
 ## 🔐 Notes
 
-- The service runs as the dedicated **non-login system account `monitoring`**, never as root. It binds `0.0.0.0:8050`, so only expose it to networks you trust. There is **no login by design**: this is a single-user, standalone console — keep it on localhost or a trusted LAN.
+- The service runs as the dedicated **non-login system account `monitoring`**, never as root. It binds `127.0.0.1:8050` by default (localhost only), so only expose it to networks you trust with `--bind 0.0.0.0 --token`. There is **no login by design**: this is a single-user, standalone console — keep it on localhost or a trusted LAN.
 - Elevated operations are limited to specific helper scripts under `/usr/local/lib/monitoring` authorised by `/etc/sudoers.d/monitoring` with `NOPASSWD` and **absolute paths only**. There is **no `sudo ALL`**, and the helpers validate every argument and never use a shell.
 - Read-only information (journals, logs, libvirt list/detail, `ss`, `df`, `/proc`/`/sys`) is obtained through group access (`systemd-journal`, `adm`, `libvirt`, `docker`, `kvm`) instead of root. The installer adds those groups only when they exist on the host.
 - Package upgrades are the exception that needs controlled system writes. The service keeps `ProtectSystem=full`, but explicitly grants the root-only package helper `ReadWritePaths=/usr /etc /boot /efi`; `/var` remains writable for package databases and caches. This is a mount-namespace rule, **not** a request to chmod `/usr` or make the `monitoring` account root.

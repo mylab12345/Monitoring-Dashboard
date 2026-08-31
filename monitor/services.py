@@ -10,6 +10,7 @@ bp = Blueprint("services", __name__)
 
 
 @bp.route("/api/services")
+@rate_limit("60 per minute")
 def api_services():
     if not which("systemctl"):
         return jsonify({"available": False, "services": []})

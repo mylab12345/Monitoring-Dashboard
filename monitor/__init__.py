@@ -48,6 +48,14 @@ def create_app():
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["PERMANENT_SESSION_LIFETIME"] = 3600
 
+    # ProxyFix: handle X-Forwarded-For / X-Forwarded-Proto when behind reverse proxy
+    # This ensures client IPs are correct for rate limiting and logging.
+    try:
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+    except ImportError:
+        pass
+
     register_security(app)
 
     # Start the background metrics sampler once (idempotent).

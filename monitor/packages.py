@@ -1,10 +1,12 @@
 """Package-manager detection, fix command maps, and updatable-package listing."""
+import re
 import threading
 import time
 
 from flask import Blueprint, jsonify
 
 from .commands import run, which
+from .security import rate_limit
 
 bp = Blueprint("packages", __name__)
 
@@ -108,30 +110,57 @@ def _updatable_packages_uncached():
             _, out, _ = run(["apt", "list", "--upgradable"], timeout=30)
             for line in out.splitlines():
                 if "/" in line and " " in line:
+                    # Skip header line
+                    if line.startswith("Listing"):
+                        continue
                     name = line.split("/")[0].strip()
+                    # Validate name is sane
+                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._-]*", name):
+                        continue
                     ver = line.split()[1] if len(line.split()) > 1 else ""
                     pkgs.append({"name": name, "version": ver})
         elif mgr in ("dnf", "yum"):
             _, out, _ = run([mgr, "check-update", "-q"], timeout=60)
             for line in out.splitlines():
                 parts = line.split()
-                if len(parts) >= 3 and not line.startswith(("Last metadata", "Loaded plugins")):
-                    pkgs.append({"name": parts[0], "version": parts[1]})
+                if len(parts) >= 3 and not line.startswith(("Last metadata", "Loaded plugins", "Security:", " ")):
+                    # First token should be pkg name
+                    if "." in parts[0] or "-" in parts[0]:
+                        pkgs.append({"name": parts[0], "version": parts[1]})
         elif mgr == "pacman":
             _, out, _ = run(["pacman", "-Qu", "--quiet"], timeout=30)
-            pkgs = [{"name": l.strip(), "version": ""} for l in out.splitlines() if l.strip()]
+            pkgs = [{"name": l.strip(), "version": ""} for l in out.splitlines() if l.strip() and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", l.strip())]
         elif mgr == "apk":
             _, out, _ = run(["apk", "version", "-l", "<"], timeout=30)
             for line in out.splitlines()[1:]:
                 parts = line.split()
-                if parts:
+                if parts and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", parts[0]):
                     pkgs.append({"name": parts[0], "version": parts[1] if len(parts) > 1 else ""})
         elif mgr == "zypper":
-            _, out, _ = run(["zypper", "-q", "list-updates"], timeout=60)
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) >= 3 and parts[0] in ("v",):
-                    pkgs.append({"name": parts[2], "version": parts[3] if len(parts) > 3 else ""})
+            # zypper list-updates can output table or XML; try to parse robustly
+            # Try with --xmlout first for structured parsing, fallback to text
+            _, out_xml, _ = run(["zypper", "--xmlout", "list-updates"], timeout=60)
+            if out_xml and "<update-list>" in out_xml:
+                # XML parsing without external deps: regex for <update name=
+                for m in re.finditer(r'name="([^"]+)"\s+.*?\s+edition="([^"]+)"', out_xml):
+                    pkgs.append({"name": m.group(1), "version": m.group(2)})
+            else:
+                _, out, _ = run(["zypper", "-q", "list-updates"], timeout=60)
+                for line in out.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith(("S |", "--", "Repository")):
+                        continue
+                    # Format: v | repo | Name | Current Version | Available Version | Arch
+                    # or without S column
+                    parts = [p.strip() for p in line.split("|")]
+                    if len(parts) >= 5:
+                        # parts[2] is Name when S column present, else parts[0]
+                        name_idx = 2 if len(parts) >= 6 else 0
+                        ver_idx = 4 if len(parts) >= 6 else 2
+                        name = parts[name_idx] if len(parts) > name_idx else ""
+                        ver = parts[ver_idx] if len(parts) > ver_idx else ""
+                        if name and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name):
+                            pkgs.append({"name": name, "version": ver})
     except Exception:
         pass
     result = {"manager": mgr, "count": len(pkgs), "packages": pkgs[:200]}
@@ -141,5 +170,6 @@ def _updatable_packages_uncached():
 
 
 @bp.route("/api/updates")
+@rate_limit("60 per minute")
 def api_updates():
     return jsonify(_updatable_packages())

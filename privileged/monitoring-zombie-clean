@@ -12,6 +12,9 @@ import sys
 
 PROC = "/proc"
 
+# Critical system processes that should never be signaled
+CRITICAL_COMM = {"systemd", "init", "sshd", "dbus-daemon", "dbus-broker"}
+
 
 def _stat_fields(pid):
     try:
@@ -21,11 +24,20 @@ def _stat_fields(pid):
         match = re.match(r"^(\d+)\s+\((.*)\)\s+(.*)$", data)
         if not match:
             return None
+        comm = match.group(2)
         rest = match.group(3).split()
         # state field is rest[0], ppid is rest[1] (the 4th field overall)
-        return {"state": rest[0], "ppid": int(rest[1])}
+        return {"comm": comm, "state": rest[0], "ppid": int(rest[1])}
     except Exception:
         return None
+
+
+def _comm_of(pid):
+    try:
+        with open(f"{PROC}/{pid}/comm", "r") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
 
 
 def main(argv):
@@ -43,6 +55,9 @@ def main(argv):
         print("monitoring-zombie-clean: cannot list /proc", file=sys.stderr)
         return 1
 
+    self_pid = os.getpid()
+    parent_pid = os.getppid()
+
     for entry in entries:
         if not entry.isdigit():
             continue
@@ -53,12 +68,23 @@ def main(argv):
         if not info or info.get("state") != "Z":
             continue
         ppid = info.get("ppid", 0)
-        # Never signal init/systemd or this helper itself.
-        if ppid <= 1 or ppid == os.getpid():
+        # Never signal init/systemd or this helper itself or its parent.
+        if ppid <= 1 or ppid == self_pid or ppid == parent_pid:
+            continue
+        # Avoid critical system daemons
+        parent_comm = _comm_of(ppid)
+        if parent_comm in CRITICAL_COMM:
+            continue
+        # Additional safety: don't kill if parent is kernel thread (ppid 2 is kthreadd, but we already skip <=1, check 2)
+        if ppid == 2:
             continue
         try:
             os.kill(ppid, signal.SIGTERM)
             killed.append(ppid)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
         except Exception:
             pass
     print(f"monitoring-zombie-clean: reaped parents {len(killed)}")

@@ -12,6 +12,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from .common import APP_VERSION, _cached, _int_or
+from .security import rate_limit
 
 bp = Blueprint("metrics", __name__)
 
@@ -19,6 +20,7 @@ HISTORY_MAX = 1800  # 60 min @ 2s
 _HISTORY = {"samples": [], "lock": threading.Lock()}
 _last_cpu = {"value": 0.0}
 _sampler_started = False
+_cpu_primed = False
 
 
 def _read_temp_c():
@@ -27,8 +29,11 @@ def _read_temp_c():
         import psutil
         temps = psutil.sensors_temperatures() if hasattr(psutil, "sensors_temperatures") else {}
         for _, entries in (temps or {}).items():
-            if entries and entries[0].current:
-                return round(entries[0].current, 1)
+            if entries:
+                # Check current is not None (0 is valid, but None means unavailable)
+                cur = getattr(entries[0], "current", None)
+                if cur is not None:
+                    return round(float(cur), 1)
     except Exception:
         pass
     try:
@@ -38,9 +43,24 @@ def _read_temp_c():
         return None
 
 
+def _prime_cpu():
+    """Prime psutil cpu_percent so first real reading is not 0.0."""
+    global _cpu_primed
+    if _cpu_primed:
+        return
+    try:
+        import psutil
+        psutil.cpu_percent(interval=None)
+        _cpu_primed = True
+    except Exception:
+        pass
+
+
 def _sampler_loop():
     import psutil
     psutil.cpu_percent(interval=None)  # prime
+    global _cpu_primed
+    _cpu_primed = True
     prev_net = None
     while True:
         try:
@@ -79,10 +99,12 @@ def start_sampler():
     if _sampler_started:
         return
     _sampler_started = True
+    _prime_cpu()
     threading.Thread(target=_sampler_loop, daemon=True, name="monitoring-sampler").start()
 
 
 @bp.route("/api/history")
+@rate_limit("120 per minute")
 def api_history():
     """Return recent metric samples. ?points=N (default 150, max 1800)."""
     points = min(max(_int_or(request.args.get("points", 150), 150), 10), HISTORY_MAX)
@@ -135,7 +157,18 @@ def _battery():
 def _build_status():
     try:
         import psutil
-        cpu = _last_cpu["value"] or psutil.cpu_percent(interval=None)
+        _prime_cpu()
+        # On first call cpu_percent returns 0.0; try to get a quick blocking sample if needed
+        cpu = _last_cpu["value"]
+        if cpu == 0.0 and not _HISTORY["samples"]:
+            # First request after startup: take a short blocking sample (0.1s) to avoid showing 0%
+            try:
+                cpu = psutil.cpu_percent(interval=0.1)
+                _last_cpu["value"] = cpu
+            except Exception:
+                cpu = psutil.cpu_percent(interval=None)
+        else:
+            cpu = cpu or psutil.cpu_percent(interval=None)
         mem = psutil.virtual_memory()
         swap = psutil.swap_memory()
         disk = psutil.disk_usage("/")
@@ -148,8 +181,10 @@ def _build_status():
             if temps:
                 for _, entries in temps.items():
                     if entries:
-                        temp = f"{entries[0].current:.1f}°C"
-                        break
+                        cur = getattr(entries[0], "current", None)
+                        if cur is not None:
+                            temp = f"{float(cur):.1f}°C"
+                            break
         except Exception:
             pass
         if temp == "N/A":
@@ -201,6 +236,7 @@ def _build_status():
 
 
 @bp.route("/api/status")
+@rate_limit("120 per minute")
 def api_status():
     data = _cached("_status", 2, _build_status)
     if isinstance(data, dict) and "error" in data:

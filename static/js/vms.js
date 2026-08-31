@@ -8,7 +8,6 @@ async function loadVMs(){
   }
   container.innerHTML='<div class="grid g2">'+vms.map(vm=>{
     const up=vm.state==='running'||vm.state==='paused';
-    const n=jsq(vm.name);
     return `
     <div class="card hoverable" style="padding:16px 18px;background:var(--surface-2)">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -24,16 +23,26 @@ async function loadVMs(){
         </div>
         <div class="btn-group" style="margin:0">
           ${(up
-            ?`<button class="btn btn-sm" onclick="vmAction('${n}','reboot')">${icon('restart',12)}Reboot</button>
-              <button class="btn btn-sm" onclick="vmAction('${n}','shutdown')">${icon('power',12)}Shutdown</button>
-              <button class="btn btn-sm btn-danger" onclick="vmAction('${n}','destroy')">${icon('stop',12)}Force Off</button>`
-            :`<button class="btn btn-sm btn-primary" onclick="vmAction('${n}','start')">${icon('play',12)}Start</button>`)}
-          <button class="btn btn-sm" onclick="openResizeModal('${n}')">${icon('resize',12)}Resize Disk</button>
-          <button class="btn btn-sm" onclick="openConfigModal('${n}',${esc(vm.vcpus)},'${esc(vm.mem)}')">${icon('gear',12)}Configure</button>
+            ?`<button class="btn btn-sm vm-action" data-name="${esc(vm.name)}" data-action="reboot">${icon('restart',12)}Reboot</button>
+              <button class="btn btn-sm vm-action" data-name="${esc(vm.name)}" data-action="shutdown">${icon('power',12)}Shutdown</button>
+              <button class="btn btn-sm btn-danger vm-action" data-name="${esc(vm.name)}" data-action="destroy">${icon('stop',12)}Force Off</button>`
+            :`<button class="btn btn-sm btn-primary vm-action" data-name="${esc(vm.name)}" data-action="start">${icon('play',12)}Start</button>`)}
+          <button class="btn btn-sm vm-resize" data-name="${esc(vm.name)}">${icon('resize',12)}Resize Disk</button>
+          <button class="btn btn-sm vm-config" data-name="${esc(vm.name)}" data-vcpus="${esc(vm.vcpus)}" data-mem="${esc(vm.mem)}">${icon('gear',12)}Configure</button>
         </div>
       </div>
     </div>`;
   }).join('')+'</div>';
+  // Bind via data attributes to avoid inline JS injection via VM names
+  $$('#vmList .vm-action').forEach(b=>{
+    b.addEventListener('click',()=>vmAction(b.dataset.name,b.dataset.action));
+  });
+  $$('#vmList .vm-resize').forEach(b=>{
+    b.addEventListener('click',()=>openResizeModal(b.dataset.name));
+  });
+  $$('#vmList .vm-config').forEach(b=>{
+    b.addEventListener('click',()=>openConfigModal(b.dataset.name,b.dataset.vcpus,b.dataset.mem));
+  });
 }
 async function vmAction(name,action){
   if(action==='destroy'&&!await confirmDlg('Force off VM','Force power-off “'+name+'”? Unsaved data in the guest will be lost.',true))return;

@@ -24,8 +24,14 @@ start_pre() {
     if [ ! -x "$command" ]; then
         command="$(command -v python3)"
     fi
+    # Load full environment (port, bind, token, server, etc.)
+    if [ -f /etc/monitoring.env ]; then
+        # shellcheck source=/dev/null
+        . /etc/monitoring.env
+        export MONITORING_PORT MONITORING_BIND MONITORING_TOKEN MONITORING_SERVER MONITORING_HOME MONITORING_LOG_FILE MONITORING_PRIVILEGE_DIR PYBIN
+    fi
     export MONITORING_PORT="${MONITORING_PORT:-8050}"
-    [ -f /etc/monitoring.env ] && . /etc/monitoring.env && export MONITORING_PORT
+    export MONITORING_BIND="${MONITORING_BIND:-127.0.0.1}"
     mkdir -p /var/log/monitoring
     chown monitoring:monitoring /var/log/monitoring 2>/dev/null || chown monitoring /var/log/monitoring 2>/dev/null || true
 }

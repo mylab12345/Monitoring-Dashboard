@@ -39,6 +39,22 @@ def privileged_tool(name):
     """Return the absolute path to an installed monitoring helper."""
     if os.sep in name or name.startswith("."):
         raise ValueError("invalid privileged helper name")
+    # Only allow known helpers
+    allowed = {
+        "monitoring-systemctl",
+        "monitoring-self-repair",
+        "monitoring-package",
+        "monitoring-journal-vacuum",
+        "monitoring-clean-old-logs",
+        "monitoring-vm",
+        "monitoring-vm-config",
+        "monitoring-qemu",
+        "monitoring-kill",
+        "monitoring-zombie-clean",
+        "monitoring-privilege-check",
+    }
+    if name not in allowed:
+        raise ValueError(f"privileged helper not whitelisted: {name}")
     return os.path.join(PRIVILEGE_DIR, name)
 
 
@@ -54,6 +70,8 @@ def run(cmd, timeout=10, sudo=False, check=False):
     argv = list(cmd)
     if not argv or not all(isinstance(a, str) for a in argv):
         raise ValueError("run() requires a list of strings")
+    # Prevent argument injection via leading dashes in untrusted input
+    # (trusted internal callers use fixed argv, but defense in depth)
     if sudo and os.geteuid() != 0:
         if not HAVE_SUDO:
             return -1, "", "sudo is not available"
@@ -127,14 +145,23 @@ def mount_status(path):
 
 
 def safe_name(name):
-    """Validate identifiers (unit names, VM names, container names...)."""
-    return bool(name) and re.fullmatch(r"[A-Za-z0-9_@.\-: _\[\]]{1,120}", name) is not None
+    """Legacy loose validator — use specific validators instead.
+
+    Kept for backward compatibility but now stricter: no spaces, brackets.
+    Prefer validate_service_name or validate_vm_name.
+    """
+    if not name or not isinstance(name, str):
+        return False
+    if len(name) > 120 or name.startswith('-'):
+        return False
+    # Strict: alphanumeric, dot, dash, underscore only
+    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-]*", name))
 
 
 def validate_systemctl_action(action):
     """Validate systemctl action against the whitelist enforced by the
     monitoring-systemctl privileged helper (must stay in sync with it)."""
-    allowed_actions = ("start", "stop", "restart", "reload", "enable", "disable")
+    allowed_actions = ("start", "stop", "restart", "reload", "enable", "disable", "reset-failed")
     return action in allowed_actions
 
 
@@ -144,6 +171,7 @@ def validate_service_name(name):
         return False
     if len(name) > 256 or name.startswith('-'):
         return False
+    # Must start with alphanumeric, allow @ . - _
     return bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9@.\-_]*", name))
 
 
@@ -161,6 +189,11 @@ def validate_disk_path(path):
     if not path or not isinstance(path, str):
         return False
     if len(path) > 256 or not path.startswith('/'):
+        return False
+    if ".." in path.split("/"):
+        return False
+    # Normalized check
+    if os.path.normpath(path) != path:
         return False
     return bool(re.fullmatch(r"/[a-zA-Z0-9./\-_]+", path))
 

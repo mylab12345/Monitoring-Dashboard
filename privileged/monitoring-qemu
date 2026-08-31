@@ -5,6 +5,7 @@ The helper only resizes a disk path that `virsh domblklist` reports for the
 given domain, so a compromised service cannot use qemu-img to modify arbitrary
 files. No shell is used.
 """
+import os
 import re
 import shutil
 import subprocess
@@ -19,18 +20,37 @@ def dom_blk_paths(domname):
     virsh = shutil.which("virsh")
     if not virsh:
         return []
-    r = subprocess.run([virsh, "-c", "qemu:///system", "domblklist", "--details", domname],
-                       shell=False, capture_output=True, text=True, timeout=20)
-    if r.returncode != 0:
-        return []
-    paths = []
-    for line in (r.stdout or "").splitlines():
-        parts = line.split()
-        # --details output: Target  Source  Capacity  Allocation  ...
-        for part in parts:
-            if part.startswith("/") and PATH_RE.match(part) is not None:
-                paths.append(part)
-    return paths
+    # Try detailed list first, fallback to simple
+    for args in (
+        [virsh, "-c", "qemu:///system", "domblklist", "--details", domname],
+        [virsh, "-c", "qemu:///system", "domblklist", domname],
+    ):
+        try:
+            r = subprocess.run(args, shell=False, capture_output=True, text=True, timeout=20)
+        except Exception:
+            continue
+        if r.returncode != 0:
+            continue
+        paths = []
+        for line in (r.stdout or "").splitlines():
+            line = line.strip()
+            if not line or line.startswith(("Target", "----", "Type", "Capacity", "Source")):
+                continue
+            parts = line.split()
+            # For --details: Type Device Target Source ...
+            # For simple: Target Source
+            # Source is the path we need
+            for part in parts:
+                # Heuristic: path containing / and ending with known disk extensions or containing /var/lib or /home or /srv
+                if part.startswith("/") and len(part) <= MAX_PATH and PATH_RE.match(part):
+                    # Ensure it's a real path, not just a flag
+                    if "." in os.path.basename(part) or "/" in part:
+                        # Avoid false positives like "/" alone
+                        if part != "/" and os.path.isabs(part):
+                            paths.append(part)
+        if paths:
+            return list(set(paths))
+    return []
 
 
 def main(argv):
@@ -55,6 +75,15 @@ def main(argv):
     if PATH_RE.match(disk_path) is None:
         print("monitoring-qemu: invalid disk path", file=sys.stderr)
         return 2
+    # Prevent path traversal via .. components
+    if ".." in disk_path.split("/"):
+        print("monitoring-qemu: invalid disk path (traversal)", file=sys.stderr)
+        return 2
+    # Ensure path is absolute and normalized
+    norm = os.path.normpath(disk_path)
+    if norm != disk_path:
+        print("monitoring-qemu: invalid disk path (not normalized)", file=sys.stderr)
+        return 2
     try:
         size_gb = int(size_arg)
     except ValueError:
@@ -69,14 +98,40 @@ def main(argv):
     if disk_path not in allowed:
         print("monitoring-qemu: disk path is not attached to the named domain",
               file=sys.stderr)
+        if allowed:
+            print(f"monitoring-qemu: allowed paths: {', '.join(allowed[:5])}", file=sys.stderr)
         return 2
+
+    # Verify file exists and is not a symlink to outside allowed area
+    try:
+        if not os.path.exists(disk_path):
+            print("monitoring-qemu: disk file does not exist", file=sys.stderr)
+            return 2
+        # Check realpath still inside allowed list or same file
+        real = os.path.realpath(disk_path)
+        if real != disk_path and real not in allowed:
+            # If symlink, ensure its target is also allowed
+            if real not in allowed:
+                print("monitoring-qemu: disk symlink target not allowed", file=sys.stderr)
+                return 2
+    except Exception:
+        pass
 
     qemu_img = shutil.which("qemu-img")
     if not qemu_img:
         print("monitoring-qemu: qemu-img not found", file=sys.stderr)
         return 127
-    return subprocess.run([qemu_img, "resize", disk_path, f"{size_gb}G"],
-                          shell=False).returncode
+    try:
+        result = subprocess.run([qemu_img, "resize", disk_path, f"{size_gb}G"],
+                              shell=False, capture_output=True, text=True, timeout=60)
+        if result.stdout:
+            print(result.stdout.strip())
+        if result.stderr:
+            print(result.stderr.strip(), file=sys.stderr)
+        return result.returncode
+    except Exception as e:
+        print(f"monitoring-qemu: execution failed: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
