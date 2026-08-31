@@ -347,6 +347,10 @@
             </div>
             <p class="dim" style="font-size:.76rem">Safe, package-manager aware operations. Output is captured below.</p>
             <div class="fix-grid" id="fixGrid"></div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px">
+              <button class="btn btn-sm" id="repairMountBtn" onclick="repairMountManual()" disabled>Repair service mount namespace</button>
+              <span class="dim small" id="repairMountStatus">checking…</span>
+            </div>
             <div class="terminal" id="fixTerminal" hidden>
               <div class="tbar"><i></i><i></i><i></i><span>monitoring fix</span></div>
               <pre id="fixResult"></pre>

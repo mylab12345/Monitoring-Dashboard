@@ -1,0 +1,453 @@
+#!/usr/bin/env python3
+"""monitoring-self-repair - repair the service mount namespace for package ops.
+
+The monitoring service runs with ProtectSystem=full, which makes /usr, /etc
+and /boot read-only inside the service's mount namespace. The validated
+package helper (monitoring-package) refuses to run apt/dpkg (or dnf/rpm,
+pacman, ...) while those paths are read-only so an interrupted transaction can
+never leave half-installed packages. Older monitoring.service units did not
+grant ReadWritePaths=/usr /etc /boot /efi, so package operations fail with
+"required filesystem is read-only".
+
+This helper performs the remediation that error message describes - install
+the updated unit (surgical patch, preserving operator settings), daemon-reload
+and restart monitoring - using only the whitelisted sudo granted to the
+monitoring service account. It never invokes a shell and accepts no user
+input.
+
+When /etc is read-only inside the current namespace (the broken-service
+case), the helper re-executes itself through a transient systemd-run unit:
+that unit runs in the host mount namespace, where the filesystem is writable,
+and outside the monitoring cgroup, so it can restart the service safely and
+verify the result.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+UNIT_PATH = "/etc/systemd/system/monitoring.service"
+PRIVILEGE_DIR = "/usr/local/lib/monitoring"
+REQUIRED_PATHS = ("/usr", "/etc", "/boot", "/efi")
+RWP_DIRECTIVE = "ReadWritePaths=/usr /etc /boot /efi"
+RESTART_DELAY_S = 2
+EX_READ_ONLY = 78  # sysexits EX_CONFIG (same value as monitoring-package)
+
+
+def _capture(argv, timeout=60):
+    """Run argv without a shell; return (returncode, stdout, stderr)."""
+    try:
+        r = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                           timeout=timeout, start_new_session=True)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+
+
+def _systemd_active():
+    return os.path.isdir("/run/systemd/system") and \
+        shutil.which("systemctl") is not None
+
+
+def _systemd_run_available():
+    return shutil.which("systemd-run") is not None
+
+
+def _service_active():
+    code, _, _ = _capture(["systemctl", "is-active", "--quiet", "monitoring"],
+                          timeout=10)
+    return code == 0
+
+
+def _systemctl_show(prop):
+    """Return one systemctl show property value ('' when unavailable)."""
+    code, out, _ = _capture(
+        ["systemctl", "show", "monitoring", "-p", prop, "--value"], timeout=10)
+    return out.strip() if code == 0 else ""
+
+
+def _unit_mtime():
+    try:
+        return os.path.getmtime(UNIT_PATH)
+    except OSError:
+        return None
+
+
+def _service_stale(unit_mtime):
+    """True when the running service predates the unit file (restart needed)."""
+    if unit_mtime is None:
+        return False
+    start_us = _systemctl_show("ActiveEnterTimestampMonotonic")
+    try:
+        start_us = int(start_us)
+    except (TypeError, ValueError):
+        return True  # cannot inspect -> assume a restart is required
+    if start_us <= 0:
+        return False  # service is not running
+    try:
+        with open("/proc/uptime") as fh:
+            uptime_s = float(fh.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return True
+    mtime_mono_us = (unit_mtime - (time.time() - uptime_s)) * 1_000_000
+    # 1s tolerance for clock/jitter between the two clock domains.
+    return mtime_mono_us > start_us + 1_000_000
+
+
+def _in_monitoring_cgroup():
+    """True when this process lives in the monitoring service's cgroup."""
+    try:
+        with open("/proc/self/cgroup") as fh:
+            return any("monitoring.service" in line for line in fh)
+    except OSError:
+        return False
+
+
+def _dir_writable(path):
+    """Real write probe. os.access() lies for root on read-only bind mounts."""
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".monitoring-write-test-", dir=path)
+        os.close(fd)
+        os.unlink(tmp)
+        return True
+    except OSError:
+        return False
+
+
+def _mount_ro(path):
+    """True when `path` sits on a read-only mount; False/None otherwise."""
+    if not os.path.exists(path):
+        return False
+    findmnt = shutil.which("findmnt")
+    if not findmnt:
+        return None
+    code, out, _ = _capture(
+        [findmnt, "--noheadings", "--output", "OPTIONS", "--target", path],
+        timeout=5)
+    if code != 0 or not out.strip():
+        return None
+    return "ro" in {p.strip() for p in out.strip().split(",")}
+
+
+def _self_path():
+    """Absolute path of this helper for the systemd-run escalation."""
+    if sys.argv and sys.argv[0]:
+        resolved = os.path.realpath(sys.argv[0])
+        if resolved.startswith(PRIVILEGE_DIR + os.sep) and os.path.isfile(resolved):
+            return resolved
+    fallback = os.path.join(PRIVILEGE_DIR, "monitoring-self-repair")
+    if os.path.isfile(fallback):
+        return fallback
+    return resolved if (sys.argv and sys.argv[0]) else fallback
+
+
+# ---- pure unit-file helpers (unit-testable, no side effects) ----------------
+
+def _service_lines(content):
+    """Yield (line_number, line) for lines inside the [Service] section."""
+    section = None
+    for i, line in enumerate(content.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            section = stripped[1:].rstrip("]").strip().lower()
+            continue
+        if section == "service":
+            yield i, line
+
+
+def _unit_has_rwp(content):
+    """True when ReadWritePaths lines cover every required path.
+
+    systemd accumulates repeated ReadWritePaths= lines, so the union of all
+    values in the [Service] section is what matters.
+    """
+    covered = set()
+    for _, line in _service_lines(content):
+        stripped = line.strip()
+        if not stripped.lower().startswith("readwritepaths"):
+            continue
+        key, _, values = stripped.partition("=")
+        if key.strip().lower() != "readwritepaths":
+            continue
+        covered |= {v for v in values.split() if v}
+    return all(p in covered for p in REQUIRED_PATHS)
+
+
+def _insert_rwp(content):
+    """Return content with the ReadWritePaths directive added, or None.
+
+    The directive is inserted right after ProtectSystem= inside [Service], or
+    at the end of the [Service] section when there is no ProtectSystem line.
+    Returns None when the unit has no [Service] section (refuse to guess).
+    """
+    if _unit_has_rwp(content):
+        return content
+    out = content.splitlines()
+    # Anchor after ProtectSystem= when present.
+    anchor = None
+    for i, line in enumerate(out):
+        if line.strip().lower().startswith("protectsystem="):
+            anchor = i + 1
+            break
+    if anchor is None:
+        section_idx = None
+        for i, line in enumerate(out):
+            if line.strip().lower() == "[service]":
+                section_idx = i
+                break
+        if section_idx is None:
+            return None
+        anchor = len(out)
+        for i in range(section_idx + 1, len(out)):
+            if out[i].strip().startswith("["):
+                anchor = i
+                break
+    out.insert(anchor, RWP_DIRECTIVE)
+    return "\n".join(out) + "\n"
+
+
+def _unit_recognized(content):
+    """Only ever patch the unit that actually runs the dashboard."""
+    return bool(content) and "app.py" in content
+
+
+# ---- --check: read-only status ----------------------------------------------
+
+def _check():
+    unit_mtime = _unit_mtime()
+    unit_exists = unit_mtime is not None
+    content = None
+    if unit_exists:
+        try:
+            with open(UNIT_PATH, encoding="utf-8") as fh:
+                content = fh.read()
+        except OSError:
+            content = None
+    recognized = _unit_recognized(content)
+    needs_patch = bool(content) and recognized and not _unit_has_rwp(content)
+    systemd = _systemd_active()
+    active = systemd and _service_active()
+    stale = active and _service_stale(unit_mtime)
+    ro_paths = [p for p in REQUIRED_PATHS if _mount_ro(p) is True]
+    blocked = bool(ro_paths)
+    message = []
+    if not systemd:
+        message.append(
+            "systemd is not running; this repair applies to systemd-managed "
+            "installs (run install.sh/update.sh on a systemd host)")
+    elif not unit_exists:
+        message.append("monitoring.service is not installed; run "
+                       "install.sh or update.sh first")
+    elif not recognized:
+        message.append(f"{UNIT_PATH} does not look like the monitoring "
+                       "dashboard unit; refusing to modify it")
+    else:
+        if needs_patch:
+            message.append("installed unit is missing "
+                           "ReadWritePaths=/usr /etc /boot /efi")
+        if blocked:
+            message.append("service mount namespace makes required package "
+                           "paths read-only")
+        if stale:
+            message.append("service started before the unit file was updated; "
+                           "a restart is needed")
+        if not needs_patch and not blocked and not stale:
+            message.append("service mount namespace is already correct")
+    return {
+        "systemd": systemd,
+        "systemd_run": _systemd_run_available(),
+        "unit_path": UNIT_PATH,
+        "unit_exists": unit_exists,
+        "unit_recognized": recognized,
+        "unit_needs_patch": needs_patch,
+        "service_active": active,
+        "service_stale": stale,
+        "namespace_read_only": ro_paths,
+        "in_service_context": _in_monitoring_cgroup(),
+        "writable": (_dir_writable(os.path.dirname(UNIT_PATH))
+                     if systemd else None),
+        "blocked": blocked,
+        "actionable": bool(systemd and unit_exists and recognized and
+                           (needs_patch or blocked or stale)),
+        "message": " ".join(message),
+    }
+
+
+# ---- --apply: mutate + reload + restart -------------------------------------
+
+def _patch_unit(content):
+    """Back up and atomically patch the unit; return (backup_path, error)."""
+    try:
+        backup = "{}.bak-{}".format(
+            UNIT_PATH, time.strftime("%Y%m%d-%H%M%S"))
+        shutil.copy2(UNIT_PATH, backup)
+        new_content = _insert_rwp(content)
+        if new_content is None:
+            return None, "unit has no [Service] section; refusing to patch"
+        fd, tmp = tempfile.mkstemp(prefix=".monitoring-unit-",
+                                   dir=os.path.dirname(UNIT_PATH))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(new_content)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, UNIT_PATH)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return backup, None
+    except OSError as exc:
+        return None, "could not write {}: {}".format(UNIT_PATH, exc)
+
+
+def _restore_backup(backup):
+    if backup and os.path.isfile(backup):
+        try:
+            shutil.copy2(backup, UNIT_PATH)
+            _capture(["systemctl", "daemon-reload"], timeout=30)
+        except OSError:
+            pass
+
+
+def _apply():
+    """Perform the remediation. Returns (exit_code, human message)."""
+    if not _systemd_active():
+        return 1, ("systemd is not running on this host; nothing to repair "
+                   "(this applies to systemd-managed installs)")
+    if not os.path.isfile(UNIT_PATH):
+        return 1, ("{} is not installed — run install.sh or update.sh "
+                   "first".format(UNIT_PATH))
+    try:
+        with open(UNIT_PATH, encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError as exc:
+        return 1, "could not read {}: {}".format(UNIT_PATH, exc)
+    if not _unit_recognized(content):
+        return 1, ("{} does not look like the monitoring dashboard unit; "
+                   "refusing to modify it".format(UNIT_PATH))
+
+    needs_patch = not _unit_has_rwp(content)
+    writable = _dir_writable(os.path.dirname(UNIT_PATH))
+    if not writable:
+        # Broken-service namespace: /etc is read-only even for root. Re-execute
+        # in the host mount namespace through a transient systemd unit, which
+        # is also outside the monitoring cgroup so it can restart the service.
+        if not _systemd_run_available():
+            return EX_READ_ONLY, (
+                "required filesystem is read-only in this service namespace "
+                "and systemd-run is not available. Install the updated "
+                "monitoring.service as root (sudo ./update.sh) or remount the "
+                "filesystem first; do not chmod /usr.")
+        code, out, err = _capture(
+            ["systemd-run", "--collect",
+             "--on-active", "{}s".format(RESTART_DELAY_S),
+             "--unit", "monitoring-self-repair-apply",
+             _self_path(), "--apply"],
+            timeout=20)
+        if code != 0:
+            return 1, ("could not schedule the repair outside the service "
+                       "namespace: {}".format((err or out or "").strip()))
+        return 0, ("service namespace is read-only; the repair (unit patch + "
+                   "daemon-reload + restart) is scheduled to run in the host "
+                   "namespace in ~{}s. The dashboard will restart "
+                   "briefly.".format(RESTART_DELAY_S))
+
+    # Writable context (host or already-fixed namespace).
+    in_service = _in_monitoring_cgroup()
+    backup = None
+    if needs_patch:
+        backup, err = _patch_unit(content)
+        if err:
+            return 1, err
+    unit_mtime = _unit_mtime()
+
+    code, out, err = _capture(["systemctl", "daemon-reload"], timeout=30)
+    if code != 0:
+        _restore_backup(backup)
+        return 1, ("systemctl daemon-reload failed: {}"
+                   .format((err or out or "").strip()))
+
+    # Never restart a working service on a broken unit: validate first. Very
+    # old systemd builds have no `systemctl verify` (Unknown command verb) —
+    # for those, fall back to the structural sanity of our own one-line patch
+    # (daemon-reload already re-reads and would have failed on a broken file).
+    vcode, vout, verr = _capture(["systemctl", "verify", "monitoring"],
+                                 timeout=30)
+    if vcode != 0 and "unknown command" not in (verr or "").lower():
+        _restore_backup(backup)
+        return 1, ("updated unit failed validation (systemctl verify): {}"
+                   .format((verr or vout or "").strip()[:400]))
+    try:
+        with open(UNIT_PATH, encoding="utf-8") as fh:
+            patched_content = fh.read()
+    except OSError as exc:
+        return 1, "could not re-read {}: {}".format(UNIT_PATH, exc)
+    if not (_unit_recognized(patched_content) and _unit_has_rwp(patched_content)):
+        _restore_backup(backup)
+        return 1, "updated unit did not survive the patch; restored the backup"
+
+    active = _service_active()
+    stale = active and _service_stale(unit_mtime)
+    blocked_now = any(_mount_ro(p) is True for p in REQUIRED_PATHS)
+    restart_needed = active and (bool(backup) or stale or blocked_now)
+    if not restart_needed:
+        if backup:
+            return 0, ("monitoring.service updated with "
+                       "ReadWritePaths=/usr /etc /boot /efi; no restart was "
+                       "needed (service is not running) — it will pick up the "
+                       "writable namespace when next started")
+        return 0, ("monitoring.service is already correct; package paths are "
+                   "writable (no restart was needed)")
+
+    if in_service:
+        # Defensive: never kill the process answering this request. The
+        # writable-namespace service case should not normally get here, but if
+        # it does, hand the restart to systemd so the response can complete.
+        if not _systemd_run_available():
+            return 1, "restart is needed but systemd-run is unavailable"
+        code, out, err = _capture(
+            ["systemd-run", "--collect",
+             "--on-active", "{}s".format(RESTART_DELAY_S),
+             "--unit", "monitoring-self-repair-apply",
+             _self_path(), "--apply"],
+            timeout=20)
+        if code != 0:
+            return 1, ("could not schedule the restart: {}"
+                       .format((err or out or "").strip()))
+        return 0, ("monitoring.service updated; restart scheduled in ~{}s — "
+                   "the dashboard will restart briefly."
+                   .format(RESTART_DELAY_S))
+
+    # Host/transient context: restart directly, then verify the result.
+    code, out, err = _capture(["systemctl", "restart", "monitoring"],
+                              timeout=120)
+    if code != 0:
+        return 1, ("systemctl restart monitoring failed: {}"
+                   .format((err or out or "").strip()[:400]))
+    rwp = _systemctl_show("ReadWritePaths")
+    if _service_active() and all(p in (rwp or "") for p in REQUIRED_PATHS):
+        return 0, ("monitoring.service restarted; ReadWritePaths now covers "
+                   "/usr /etc /boot /efi — package operations are writable")
+    return 1, ("monitoring.service restarted but the new namespace was not "
+               "confirmed (ReadWritePaths='{}')".format(rwp))
+
+
+def main(argv):
+    if "--check" in argv or (argv and argv[0] == "--check"):
+        print(json.dumps(_check(), indent=2))
+        return 0
+    if len(argv) == 1 and argv[0] == "--apply":
+        code, message = _apply()
+        print(message)
+        return code
+    print("usage: monitoring-self-repair --check | --apply", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

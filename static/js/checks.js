@@ -46,6 +46,7 @@ async function updateChecks(){
     </div>`).join('');
   const dot=$('#dotOverview');
   if(dot){dot.hidden=issues===0;dot.textContent=issues;}
+  refreshSelfRepair();
 }
 
 // ================================================================
@@ -82,9 +83,96 @@ async function runFix(action,btn){
   if(btn){btn.disabled=false;btn.innerHTML=old;}
   const res=(j&&(j.result||j.error))||'Done';
   out.innerHTML='<span class="dim">$ monitoring fix '+esc(action)+'</span>\n'+esc(res.length>600?res.slice(0,600)+'…':res);
-  if(j&&j.error){toast('Fix failed: '+j.error,'err');logActivity('fix','Fix failed: '+meta.label,false);}
+  if(j&&j.error){
+    toast('Fix failed: '+j.error,'err');
+    logActivity('fix','Fix failed: '+meta.label,false);
+    if(detectReadOnlyMount(j.error)){
+      const repaired=await offerSelfRepair(()=>runFix(action));
+      if(repaired)refreshSelfRepair();
+    }
+  }
   else{toast(meta.desc||('Completed: '+action));logActivity('fix','Fix completed: '+meta.label);}
   updateChecks();
+}
+
+// ================================================================
+// Service mount namespace self-repair
+// ================================================================
+// The monitoring service runs with ProtectSystem=full, so /usr, /etc and
+// /boot are read-only inside its mount namespace. Older monitoring.service
+// units lacked ReadWritePaths=/usr /etc /boot /efi, which makes every package
+// operation fail with "required filesystem is read-only". The dashboard can
+// repair this itself through the whitelisted monitoring-self-repair helper
+// (service-account sudo): it patches the unit, runs daemon-reload and
+// restarts the service, so no root shell is needed.
+function detectReadOnlyMount(text){
+  return /read[- ]?only/i.test(String(text||''))
+    && /(filesystem|file system|\/usr|\/etc)/i.test(String(text||''));
+}
+async function waitForApi(timeoutMs=30000,intervalMs=1500){
+  const t0=Date.now();
+  while(Date.now()-t0<timeoutMs){
+    try{const r=await apiFetch('/api/health');if(r.ok)return true;}catch(e){}
+    await new Promise(r=>setTimeout(r,intervalMs));
+  }
+  return false;
+}
+async function refreshSelfRepair(){
+  const btn=$('#repairMountBtn'),st=$('#repairMountStatus');
+  if(!btn&&!st)return;
+  let d=null;
+  try{d=await fetchJSON('/api/self-repair');}catch(e){}
+  if(!btn)return;
+  if(!d||d.error){btn.disabled=true;if(st)st.textContent='status unavailable';return;}
+  btn.disabled=!d.actionable;
+  if(st){
+    if(d.actionable){
+      const ro=(d.namespace_read_only||[]).join(' · ')||'/usr · /etc · /boot';
+      st.textContent='package paths are read-only in the service namespace ('+esc(ro)+') — repair recommended';
+    }else{
+      st.textContent=String(d.message||'mount namespace is correct').slice(0,110);
+    }
+  }
+}
+async function repairMountManual(){
+  const done=await offerSelfRepair(()=>updateChecks());
+  if(done)refreshSelfRepair();
+}
+async function offerSelfRepair(afterRepair){
+  let st=null;
+  try{st=await fetchJSON('/api/self-repair');}catch(e){}
+  if(!st||st.error){toast('Could not check service mount status','err');return false;}
+  if(!st.actionable){toast(st.message||'Service mount namespace is already correct','info');return false;}
+  const ok=await openModal({
+    title:'Repair monitoring service mount namespace',
+    text:'The dashboard runs with ProtectSystem=full, so /usr, /etc and /boot are read-only inside its namespace and package operations are blocked.',
+    html:'<div class="fix-preview">'
+      +'<div class="kv"><span>Action</span><strong>Patch monitoring.service + daemon-reload + restart</strong></div>'
+      +'<div class="kv"><span>Read-only paths</span><strong>'+esc(((st.namespace_read_only||[]).join(' · ')||'/usr · /etc · /boot'))+'</strong></div>'
+      +'<div class="kv"><span>Impact</span><strong>dashboard restarts for a few seconds</strong></div>'
+      +'</div>',
+    confirmText:'Repair & restart',cancelText:'Cancel',danger:true,icon:'wrench',
+    note:'Runs through the monitoring service account\'s whitelisted sudo helper — no root shell.'
+  });
+  if(!ok)return false;
+  toast('Repairing service mount namespace — the dashboard will restart briefly…','info');
+  logActivity('fix','Repair service mount namespace');
+  const j=await postJSON('/api/self-repair',{});
+  if(j&&j.error){
+    // A real error response (helper missing/denied). The restart may still be
+    // in flight if the connection dropped mid-request, so verify below.
+    toast('Repair request: '+String(j.error).slice(0,120),'err');
+  }
+  const up=await waitForApi();
+  if(!up){toast('Dashboard did not return after the restart — check: monitoring status','err');return false;}
+  const after=await fetchJSON('/api/self-repair');
+  if(after&&after.blocked){
+    toast('Repair did not clear the read-only mount: '+String(after.message||'see diagnostics').slice(0,120),'err');
+    return false;
+  }
+  toast('Service mount namespace repaired — package paths are writable','ok');
+  if(afterRepair)await afterRepair();
+  return true;
 }
 
 // ================================================================

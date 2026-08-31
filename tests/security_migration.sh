@@ -107,7 +107,7 @@ fi
 
 # 10. Privileged operations route through whitelisted helpers (app.py + monitor/)
 APP_SRC="$(find "$ROOT/monitor" -name '*.py' 2>/dev/null) $ROOT/app.py"
-for pat in 'monitoring-systemctl' 'monitoring-package' 'monitoring-vm' \
+for pat in 'monitoring-systemctl' 'monitoring-self-repair' 'monitoring-package' 'monitoring-vm' \
            'monitoring-qemu' 'monitoring-journal-vacuum' \
            'monitoring-clean-old-logs' 'monitoring-kill'; do
   if grep -q "$pat" $APP_SRC; then ok "app uses $pat helper"; else bad "app does not use $pat helper"; fi

@@ -357,6 +357,12 @@ async function applyDiagFix(id,fixId){
       diagFixOutcomes[id]={status:'failed',message:badEntry.output||'Fix failed'};
       toast('Fix failed: '+String(badEntry.output||'Unknown error').slice(0,120),'err');
       logActivity('fix','Diagnose fix failed: '+fixId,false);
+      if(detectReadOnlyMount(badEntry.output)){
+        // Package ops are blocked by the service's read-only mount namespace.
+        // Repair it through the service account, then retry this same fix.
+        const repaired=await offerSelfRepair(()=>applyDiagFix(id,fixId));
+        if(repaired){renderDiagFlow(id);loadTroubleshooting(true);return;}
+      }
     }else if(okEntry){
       diagFixOutcomes[id]={status:'applied',message:String(okEntry.output||'Fix applied').slice(0,200)};
       toast('Fix applied — verifying…','info');
@@ -430,6 +436,12 @@ async function fixAllIssues(){
       if(i)diagFixOutcomes[i.id]={status:'failed',message:String(f.output||'Fix failed').slice(0,200)};
     });
     renderFixResults(result,v);
+    if((result.failed||[]).some(f=>detectReadOnlyMount(f.output))){
+      // One or more fixes were blocked by the read-only service mount
+      // namespace; repair it through the service account, then re-run.
+      const repaired=await offerSelfRepair(()=>fixAllIssues());
+      if(repaired)return;
+    }
     const resolved=Object.values(v).filter(x=>x&&x.resolved).length;
     addDiagHistory({type:'fix-all',fixed:(result.fixed||[]).length,failed:(result.failed||[]).length,
       skipped:(result.skipped||[]).length,resolved,ok:(result.failed||[]).length===0});
