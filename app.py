@@ -1629,10 +1629,25 @@ FIX_COMMANDS = {
                "clean": ["monitoring-package", "--manager", "apk", "--action", "clean"]},
 }
 
+# Every action /api/fix knows how to run. Anything outside this set is a 400 so
+# the UI can never report success for an operation that did not execute.
+FIX_ACTIONS = frozenset({"update", "upgrade", "autoremove", "clean",
+                         "fix-broken", "clear-logs"})
+# UI wording -> canonical action name.
+FIX_ALIASES = {"vacuum-journal": "clear-logs", "clear-cache": "clean"}
+
 @app.route("/api/fix", methods=["POST"])
 @rate_limit("10 per minute")
 def api_fix():
     action = (request.json or {}).get("action", "")
+    # Accept a few friendly aliases so UI wording and API action names can
+    # differ without silently no-opping (the Overview "Vacuum Journal" button
+    # used to post an action the server did not implement).
+    action = FIX_ALIASES.get(action, action)
+    if action not in FIX_ACTIONS:
+        # Must be a real error: returning 200 {"result": "Unknown action"} made
+        # the UI report success for a privileged maintenance action that never ran.
+        return jsonify({"error": f"Unknown action: {escape(str(action))[:60]}"}), 400
     mgr = _pkg_manager()
     msg = ""
     _audit("fix", action=action, manager=mgr)
@@ -1663,8 +1678,6 @@ def api_fix():
         c1, o1, e1 = run_privileged("monitoring-journal-vacuum")
         c2, o2, e2 = run_privileged("monitoring-clean-old-logs", ["--min-age-days", "7"])
         msg = ((o1 or e1 or "") + (o2 or e2 or "")).strip() or "Logs cleared"
-    else:
-        msg = "Unknown action"
     return jsonify({"result": (msg or "Done")[:500]})
 
 # ------------------------------------------------------------------

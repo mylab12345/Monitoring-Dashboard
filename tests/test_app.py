@@ -149,9 +149,36 @@ class InputValidation(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
 
     def test_fix_unknown_action(self):
+        """Unknown actions must be a hard 400 with an `error` key.
+
+        Regression: this used to return 200 {"result": "Unknown action"}, and
+        the UI only inspects `error` — so a privileged maintenance action that
+        never ran was reported to the user as "Completed" and written to the
+        audit trail as a success.
+        """
         r = self.client.post("/api/fix", json={"action": "bogus"})
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("Unknown action", r.get_json()["result"])
+        self.assertEqual(r.status_code, 400)
+        body = r.get_json()
+        self.assertIn("error", body)
+        self.assertNotIn("result", body)
+        self.assertIn("Unknown action", body["error"])
+
+    def test_fix_rejects_missing_action(self):
+        r = self.client.post("/api/fix", json={})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("error", r.get_json())
+
+    def test_fix_vacuum_journal_alias(self):
+        """The Overview "Vacuum Journal" button must map to a real action.
+
+        It posted `vacuum-journal`, which the server did not implement.
+        """
+        import app as _a
+        self.assertEqual(_a.FIX_ALIASES.get("vacuum-journal"), "clear-logs")
+        self.assertIn("clear-logs", _a.FIX_ACTIONS)
+        r = self.client.post("/api/fix", json={"action": "vacuum-journal"})
+        self.assertNotEqual(r.status_code, 400)
+        self.assertNotIn("Unknown action", json.dumps(r.get_json()))
 
     def test_fix_all_empty_scan(self):
         r = self.client.post("/api/troubleshooting/fix-all", json={})
@@ -360,6 +387,37 @@ class FrontendIntegrity(unittest.TestCase):
             cls.html = fh.read()
         scripts = re.findall(r"<script[^>]*>(.*?)</script>", cls.html, re.S)
         cls.js = scripts[-1] if scripts else ""
+
+    def test_inline_script_parses(self):
+        """The inline app script must be syntactically valid JavaScript.
+
+        Regression: a duplicated tooltip loop left an orphaned `continue` and a
+        stray brace in chartBoxEvents(). A syntax error aborts the whole script
+        at parse time, so *every* tab rendered as empty skeletons with no data.
+        Static string checks cannot catch this — only a real parser can.
+        """
+        node = None
+        for cand in ("node", "nodejs"):
+            try:
+                if subprocess.run([cand, "--version"], capture_output=True,
+                                  timeout=15).returncode == 0:
+                    node = cand
+                    break
+            except (OSError, subprocess.SubprocessError):
+                continue
+        if node is None:
+            self.skipTest("node not available to parse-check the frontend")
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+            fh.write(self.js)
+            tmp = fh.name
+        try:
+            r = subprocess.run([node, "--check", tmp],
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0,
+                             f"templates/index.html inline JS is invalid:\n{r.stderr}")
+        finally:
+            os.unlink(tmp)
 
     def test_spinrefresh_is_defined(self):
         self.assertRegex(self.js, r"function\s+spinRefresh\s*\(")
