@@ -1940,14 +1940,26 @@ def api_disks():
     try:
         import psutil
         disks = []
+        seen_mounts = set()
+        seen_devices = set()
         for part in psutil.disk_partitions(all=False):
-            if part.mountpoint.startswith(("/snap", "/boot/efi")) and "squashfs" in (part.fstype or ""):
+            mount = part.mountpoint
+            device = part.device
+            # Deduplicate by mountpoint and device to ensure no-duplicates
+            if not mount or mount in seen_mounts:
                 continue
+            if device and device in seen_devices and mount != "/":
+                continue
+            if mount.startswith(("/snap", "/boot/efi")) and "squashfs" in (part.fstype or ""):
+                continue
+            seen_mounts.add(mount)
+            if device:
+                seen_devices.add(device)
             try:
-                u = psutil.disk_usage(part.mountpoint)
+                u = psutil.disk_usage(mount)
                 disks.append({
-                    "device": part.device,
-                    "mount": part.mountpoint,
+                    "device": device or "-",
+                    "mount": mount,
                     "fstype": part.fstype or "-",
                     "total_gb": round(u.total / 1024**3, 1),
                     "used_gb": round(u.used / 1024**3, 1),
@@ -1956,6 +1968,8 @@ def api_disks():
                 })
             except (PermissionError, OSError):
                 continue
+        # Sort disks: root '/' first, then by mountpoint alphabetically
+        disks.sort(key=lambda d: (0 if d["mount"] == "/" else 1, d["mount"]))
         return jsonify({"disks": disks})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
