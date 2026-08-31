@@ -284,6 +284,15 @@
           </article>
         </div>
 
+        <div class="quick-toolbar" style="display:flex;align-items:center;gap:8px;margin:16px 0;flex-wrap:wrap">
+          <span class="dim" style="font-size:.78rem;font-weight:600">Quick Admin Actions:</span>
+          <button class="btn btn-sm" type="button" onclick="refreshAll()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg> Refresh All</button>
+          <button class="btn btn-sm" type="button" onclick="runQuickAction('clean')">🧹 Clean Cache</button>
+          <button class="btn btn-sm" type="button" onclick="runQuickAction('update')">🔄 Update Lists</button>
+          <button class="btn btn-sm" type="button" onclick="runQuickAction('vacuum-journal')">🗄️ Vacuum Journal</button>
+          <button class="btn btn-sm btn-primary" type="button" onclick="openPalette()">⌨️ Command Palette (⌘K)</button>
+        </div>
+
         <div class="grid g2-1" style="margin-top:16px">
           <article class="card hoverable chart-card">
             <div class="card-head" style="margin-bottom:8px">
@@ -295,7 +304,9 @@
                 <div class="chart-legend">
                   <button class="legend-btn on" id="lg-cpu" style="--lc:#22d3ee" onclick="toggleSeries('cpu')"><i></i>CPU</button>
                   <button class="legend-btn on" id="lg-ram" style="--lc:#a78bfa" onclick="toggleSeries('ram')"><i></i>RAM</button>
+                  <button class="legend-btn" id="lg-disk" style="--lc:#34d399" onclick="toggleSeries('disk')"><i></i>Disk</button>
                   <button class="legend-btn" id="lg-net" style="--lc:#60a5fa" onclick="toggleSeries('net')"><i></i>Net</button>
+                  <button class="legend-btn" id="lg-matrix" style="--lc:#fbbf24" onclick="toggleMatrixMode()"><i></i>Matrix</button>
                 </div>
                 <div class="segmented" id="rangeSeg">
                   <button class="seg-btn" data-r="150" onclick="setRange(150,this)">5m</button>
@@ -318,6 +329,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M8.5 12l2.5 2.5 4.5-4.5"/></svg>
                 System Health
                 <span class="badge" id="checksBadge">checking…</span>
+                <span class="badge ok" id="healthScoreBadge" style="margin-left:4px">Health: 100%</span>
               </div>
               <button class="icon-btn" onclick="updateChecks()" title="Refresh checks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
@@ -354,7 +366,7 @@
           </article>
         </div>
 
-        <div class="grid g3" style="margin-top:16px">
+        <div class="grid g4" style="margin-top:16px">
           <article class="card hoverable">
             <div class="card-head">
               <div class="card-title">
@@ -376,6 +388,18 @@
               <button class="icon-btn" onclick="loadPorts()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
             </div>
             <div id="portsList"><div class="skel" style="height:120px"></div></div>
+          </article>
+
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                Top Hogs
+                <span class="badge" id="overviewHogsCount">--</span>
+              </div>
+              <button class="icon-btn" onclick="loadOverviewHogs()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            </div>
+            <div id="overviewHogsList"><div class="skel" style="height:120px"></div></div>
           </article>
 
           <article class="card hoverable">
@@ -1268,13 +1292,51 @@ function drawSparks(){
 // Main time-series chart (CPU / RAM / NET, hover tooltip)
 // ================================================================
 let histData=[];                       // ascending samples from /api/history (+local)
-const chartCfg={range:S.chartRange,series:{cpu:true,ram:true,net:false}};
+const chartCfg={range:S.chartRange,series:{cpu:true,ram:true,disk:false,net:false},matrix:false};
 let chartHover=null;
 const SERIES_META={
   cpu:{color:'#22d3ee',label:'CPU',get:s=>s.cpu,fmt:v=>v.toFixed(1)+' %'},
   ram:{color:'#a78bfa',label:'RAM',get:s=>s.ram,fmt:v=>v.toFixed(1)+' %'},
+  disk:{color:'#34d399',label:'Disk',get:s=>s.disk,fmt:v=>v.toFixed(1)+' %'},
   net:{color:'#60a5fa',label:'Net',get:s=>(s.sent_bps+s.recv_bps)/1048576,fmt:v=>v.toFixed(2)+' MB/s'}
 };
+function toggleMatrixMode(){
+  chartCfg.matrix=!chartCfg.matrix;
+  const btn=$('#lg-matrix');
+  if(btn)btn.classList.toggle('on',chartCfg.matrix);
+  if(chartCfg.matrix){
+    ['cpu','ram','disk','net'].forEach(k=>{chartCfg.series[k]=true;const b=$('#lg-'+k);if(b)b.classList.add('on');});
+  }
+  drawMainChart();
+}
+async function runQuickAction(action){
+  toast('Running: '+action+'…','info');
+  logActivity('fix','Quick action: '+action);
+  const j=await postJSON('/api/fix',{action});
+  if(j&&j.error)toast('Action failed: '+j.error,'err');
+  else{toast('Completed: '+action,'ok');updateChecks();updateStatus();}
+}
+async function loadOverviewHogs(){
+  const el=$('#overviewHogsList');
+  const badge=$('#overviewHogsCount');
+  if(!el)return;
+  try{
+    const d=await fetchJSON('/api/processes?limit=6');
+    if(!d||!d.processes){el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('cpu',20)+'</div><strong>Process data unavailable</strong></div>';return;}
+    const procs=d.processes.sort((a,b)=>b.cpu-a.cpu).slice(0,5);
+    if(badge)badge.textContent=procs.length+' top';
+    el.innerHTML=procs.map(p=>`
+      <div class="disk-row" style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:var(--font-mono);font-weight:700;font-size:.8rem">${esc(p.name)} <span class="dim" style="font-size:.68rem">(${p.pid})</span></div>
+          <div class="meta" style="font-family:var(--font-mono);font-size:.64rem;color:var(--text-3)">CPU: ${p.cpu}% · RAM: ${p.mem}%</div>
+        </div>
+        <button class="icon-btn danger" style="width:26px;height:26px" title="Kill PID ${p.pid}" onclick="killProcess(${p.pid},'${jsq(p.name)}')">${icon('x',12)}</button>
+      </div>`).join('');
+  }catch(e){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('cpu',20)+'</div><strong>Failed to load processes</strong></div>';
+  }
+}
 async function loadHistory(){
   const d=await fetchJSON('/api/history?points='+chartCfg.range);
   if(d&&Array.isArray(d.samples)){
@@ -1344,9 +1406,10 @@ function drawMainChart(){
   ctx.textAlign='left';
 
   // series areas + lines
-  for(const k of ['ram','cpu','net']){
+  for(const k of Object.keys(chartCfg.series)){
     if(!chartCfg.series[k])continue;
     const meta=SERIES_META[k];
+    if(!meta)continue;
     const yAt=k==='net'?yNet:yPct;
     const pts=data.map((s,i)=>[xAt(i),yAt(meta.get(s))]);
     const g=ctx.createLinearGradient(0,padT,0,padT+ih);
@@ -1362,9 +1425,10 @@ function drawMainChart(){
     ctx.strokeStyle=label;ctx.setLineDash([3,3]);ctx.lineWidth=1;
     ctx.beginPath();ctx.moveTo(x,padT);ctx.lineTo(x,padT+ih);ctx.stroke();
     ctx.setLineDash([]);
-    for(const k of ['cpu','ram','net']){
+    for(const k of Object.keys(chartCfg.series)){
       if(!chartCfg.series[k])continue;
       const meta=SERIES_META[k];
+      if(!meta)continue;
       const yy=k==='net'?yNet(meta.get(data[chartHover])):yPct(meta.get(data[chartHover]));
       ctx.beginPath();ctx.arc(x,yy,3.2,0,7);
       ctx.fillStyle=meta.color;ctx.fill();
@@ -1395,7 +1459,12 @@ function chartBoxEvents(){
     const data=histData.slice(-chartCfg.range);
     const s=data[chartHover];
     let html='<div class="tt-time">'+todayAt((s.t||0)*1000)+'</div>';
-    for(const k of ['cpu','ram','net']){
+    for(const k of Object.keys(chartCfg.series)){
+      if(!chartCfg.series[k])continue;
+      const meta=SERIES_META[k];
+      if(!meta)continue;
+      html+='<div class="tt-row"><i style="background:'+meta.color+'"></i>'+meta.label+'<b>'+meta.fmt(meta.get(s))+'</b></div>';
+    }
       if(!chartCfg.series[k])continue;
       const meta=SERIES_META[k];
       html+='<div class="tt-row"><i style="background:'+meta.color+'"></i>'+meta.label+'<b>'+meta.fmt(meta.get(s))+'</b></div>';
@@ -2259,6 +2328,13 @@ async function updateChecks(){
   const data=await fetchJSON('/api/checks');
   if(!data||data.error||!Array.isArray(data)){list.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('alert',22)+'</div><strong>Checks unavailable</strong></div>';return;}
   const warns=data.filter(c=>c.status==='warn'||c.status==='fail').length;
+  const fails=data.filter(c=>c.status==='fail').length;
+  const score=Math.max(0,100-Math.round((warns*20)+(fails*40)));
+  const hb=$('#healthScoreBadge');
+  if(hb){
+    hb.textContent='Health: '+score+'%';
+    hb.className='badge '+(score>=90?'ok':score>=70?'warn':'fail');
+  }
   const badge=$('#checksBadge');
   badge.textContent=warns?warns+(warns===1?' issue':' issues'):'all clear';
   badge.className='badge '+(warns?'warn':'ok');
@@ -2846,7 +2922,7 @@ function refreshCurrent(){
   if(currentTab==='overview'||!fn){updateStatus();updateChecks();loadHistory();}
 }
 function refreshAll(){
-  updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();
+  updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();loadOverviewHogs();
   loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
   if(currentTab==='troubleshooting')loadTroubleshooting(true);
 }
@@ -2901,11 +2977,12 @@ renderDiagHistory();
 chartBoxEvents();
 $('#logWrap').checked=!!S.logWrap;
 toggleLogWrap(); // apply wrap setting
-updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();
+updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();loadOverviewHogs();
 loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
 restartTimers();
 setInterval(updateChecks,60000);
 setInterval(()=>{if(!document.hidden)loadDisks();},30000);
+setInterval(()=>{if(!document.hidden)loadOverviewHogs();},15000);
 setInterval(()=>{if(!document.hidden&&$('#procAuto').checked)loadProcesses();},5000);
 setInterval(()=>{if(!document.hidden&&$('#logAuto').checked&&$('#tab-logs').classList.contains('active'))loadLogs();},5000);
 setInterval(tickClock,1000);
