@@ -5,7 +5,7 @@ import os
 from flask import Blueprint, jsonify, request
 from markupsafe import escape
 
-from .commands import run, run_privileged, safe_name, validate_disk_path, validate_vm_name, which
+from .commands import run, run_privileged, validate_disk_path, validate_vm_name, which
 from .common import _audit
 from .security import rate_limit
 
@@ -18,13 +18,14 @@ if not os.environ.get("LIBVIRT_DEFAULT_URI"):
 
 
 @bp.route("/api/vms")
+@rate_limit("60 per minute")
 def api_vms():
     vms = []
     code, out, err = run(["virsh", "list", "--all", "--name"])
     if code == 0 and out.strip():
         names = [n.strip() for n in out.splitlines() if n.strip()]
         for n in names:
-            if not safe_name(n):
+            if not validate_vm_name(n):
                 continue
             _, info, _ = run(["virsh", "dominfo", n])
             _, state_raw, _ = run(["virsh", "domstate", n])

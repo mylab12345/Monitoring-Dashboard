@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, render_template
 
 from .commands import PASSWORDLESS_SUDO
 from .common import APP_HOME, APP_VERSION, LOAD_ERRORS, PRIVILEGE_DIR
+from .security import rate_limit
 
 bp = Blueprint("web", __name__)
 
@@ -16,6 +17,7 @@ def index():
 
 
 @bp.route("/api/health")
+@rate_limit("120 per minute")
 def api_health():
     """Cheap liveness/readiness probe used by the UI and service monitors.
 
@@ -34,6 +36,7 @@ def api_health():
 
 
 @bp.route("/api/version")
+@rate_limit("60 per minute")
 def api_version():
     return jsonify({
         "app": "Monitoring",

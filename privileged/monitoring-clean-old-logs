@@ -24,7 +24,26 @@ def _is_old_regular_file(path, mtime_threshold):
         return False
     if not path.endswith(".gz"):
         return False
+    # Ensure file is inside LOG_ROOT (no symlink escape)
+    try:
+        real = os.path.realpath(path)
+        if not real.startswith(LOG_ROOT + os.sep) and real != LOG_ROOT:
+            return False
+    except Exception:
+        return False
     return int(st.st_mtime) < mtime_threshold
+
+
+def _depth(root):
+    """Calculate depth relative to LOG_ROOT, handling '.' case."""
+    try:
+        rel = os.path.relpath(root, LOG_ROOT)
+    except ValueError:
+        return 999
+    if rel == ".":
+        return 0
+    # Count separators, but handle edge cases
+    return rel.count(os.sep) + 1 if rel else 0
 
 
 def main(argv):
@@ -51,15 +70,23 @@ def main(argv):
     threshold = now - min_days * 86400
     removed = 0
     for root, dirs, files in os.walk(LOG_ROOT, topdown=True, followlinks=False):
+        # Ensure we are still inside LOG_ROOT
+        try:
+            abs_root = os.path.abspath(root)
+            if not abs_root.startswith(LOG_ROOT + os.sep) and abs_root != LOG_ROOT:
+                dirs[:] = []
+                continue
+        except Exception:
+            dirs[:] = []
+            continue
         # Never recurse into non-directories, symlinks or outside /var/log.
         dirs[:] = [d for d in dirs
                    if os.path.isdir(os.path.join(root, d))
                    and not os.path.islink(os.path.join(root, d))
                    and os.path.abspath(os.path.join(root, d)).startswith(LOG_ROOT + os.sep)]
-        rel_depth = os.path.relpath(root, LOG_ROOT).count(os.sep)
-        if rel_depth > MAX_DEPTH:
+        if _depth(root) >= MAX_DEPTH:
             dirs[:] = []
-            continue
+            # Still process files at this depth, but don't go deeper
         for name in files:
             path = os.path.join(root, name)
             if _is_old_regular_file(path, threshold):

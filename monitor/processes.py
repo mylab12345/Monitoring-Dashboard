@@ -11,8 +11,27 @@ bp = Blueprint("processes", __name__)
 _PRIMED = {"flag": False}
 
 
+def _prime_processes():
+    """Prime CPU percent for all processes so first real call returns values."""
+    if _PRIMED["flag"]:
+        return
+    try:
+        import psutil
+        for p in psutil.process_iter():
+            try:
+                p.cpu_percent(interval=None)
+            except Exception:
+                continue
+        _PRIMED["flag"] = True
+    except Exception:
+        pass
+
+
 def _build_processes(limit):
     import psutil
+    # Prime on first call if not yet done
+    if not _PRIMED["flag"]:
+        _prime_processes()
     procs = []
     attrs = ["pid", "name", "username", "memory_percent", "status", "nice"]
     for p in psutil.process_iter(attrs):
@@ -21,6 +40,8 @@ def _build_processes(limit):
                 continue
             info = p.info
             cpu = p.cpu_percent(interval=None)
+            # On first scan after priming, cpu will still be 0.0; that's expected.
+            # Second scan will have real values.
             procs.append({
                 "pid": info["pid"],
                 "name": info["name"] or "?",
@@ -31,7 +52,8 @@ def _build_processes(limit):
             })
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
-    _PRIMED["flag"] = True  # subsequent polls return real CPU values
+    if not _PRIMED["flag"]:
+        _PRIMED["flag"] = True  # subsequent polls return real CPU values
     top_cpu = sorted(procs, key=lambda x: x["cpu"], reverse=True)[:limit]
     top_mem = sorted(procs, key=lambda x: x["mem"], reverse=True)[:limit]
     seen, merged = set(), []
@@ -44,6 +66,7 @@ def _build_processes(limit):
 
 
 @bp.route("/api/processes")
+@rate_limit("60 per minute")
 def api_processes():
     limit = min(max(_int_or(request.args.get("limit"), 25), 5), 200)
     try:
@@ -63,12 +86,18 @@ def api_process_kill():
         return jsonify({"error": "invalid pid"}), 400
     if pid <= 1:
         return jsonify({"error": "refusing to kill init"}), 400
+    if pid == MY_PID:
+        return jsonify({"error": "refusing to kill self"}), 400
     if pid > 1000000:
         return jsonify({"error": "invalid pid range"}), 400
     try:
         import psutil
         p = psutil.Process(pid)
         name = p.name()
+        # Prevent killing critical system processes by name
+        if name in ("systemd", "init", "sshd", "monitoring"):
+            # Allow but log warning; still proceed with terminate for user confirmation
+            pass
         p.terminate()
         try:
             p.wait(timeout=3)

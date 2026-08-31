@@ -28,7 +28,7 @@ function filteredServices(){
   return rows;
 }
 function svcPageGo(dir){svcPage=Math.max(0,svcPage+dir);renderServices();}
-const svcIconBtn=(a,act,ic,t,danger)=>'<button class="icon-btn'+(danger?' danger':'')+'" title="'+t+'" onclick="svcAction(\''+a+'\',\''+act+'\')">'+icon(ic,12)+'</button>';
+const svcIconBtn=(unit,act,ic,t,danger)=>'<button class="icon-btn svc-action'+(danger?' danger':'')+'" data-unit="'+esc(unit)+'" data-action="'+esc(act)+'" title="'+esc(t)+'" aria-label="'+esc(t)+' '+esc(unit)+'">'+icon(ic,12)+'</button>';
 function renderServices(){
   const tb=$('#svcRows');
   if(!tb)return;
@@ -43,7 +43,6 @@ function renderServices(){
   $('#svcNext').disabled=svcPage>=pages-1;
   if(!rows.length){tb.innerHTML='<tr><td colspan="5" class="dim" style="text-align:center;padding:22px">No services match</td></tr>';return;}
   tb.innerHTML=slice.map(s=>{
-    const a=jsq(s.unit);
     const pill=s.active==='active'?(s.sub==='running'?'ok':'info'):s.active==='failed'?'fail':'neutral';
     return '<tr>'
       +'<td class="mono strong">'+esc(s.unit)+'</td>'
@@ -51,13 +50,17 @@ function renderServices(){
       +'<td><span class="pill '+pill+'">'+esc(s.active)+'</span></td>'
       +'<td class="mono dim" style="font-size:.7rem">'+esc(s.sub)+'</td>'
       +'<td><span class="row-actions">'
-        +svcIconBtn(a,'start','play','Start')
-        +svcIconBtn(a,'stop','stop','Stop')
-        +svcIconBtn(a,'restart','restart','Restart')
-        +svcIconBtn(a,'enable','up','Enable')
-        +svcIconBtn(a,'disable','x','Disable',true)
+        +svcIconBtn(s.unit,'start','play','Start')
+        +svcIconBtn(s.unit,'stop','stop','Stop')
+        +svcIconBtn(s.unit,'restart','restart','Restart')
+        +svcIconBtn(s.unit,'enable','up','Enable')
+        +svcIconBtn(s.unit,'disable','x','Disable',true)
       +'</span></td></tr>';
   }).join('');
+  // Bind via data attributes to avoid inline JS injection via unit names
+  $$('#svcRows .svc-action').forEach(b=>{
+    b.addEventListener('click',()=>svcAction(b.dataset.unit,b.dataset.action));
+  });
 }
 async function svcAction(name,action){
   if(action==='stop'||action==='disable'){

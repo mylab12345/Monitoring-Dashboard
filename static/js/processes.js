@@ -35,8 +35,12 @@ function renderProcesses(){
     +'<td><span class="cell-bars '+(p.cpu>=50?'hot':p.cpu>=20?'warm':'')+'"><span class="num">'+p.cpu+'</span><span class="mini"><i style="width:'+Math.min(100,p.cpu)+'%"></i></span></span></td>'
     +'<td><span class="cell-bars '+(p.mem>=60?'hot':p.mem>=30?'warm':'')+'"><span class="num">'+p.mem+'</span><span class="mini"><i style="width:'+Math.min(100,p.mem)+'%"></i></span></span></td>'
     +'<td><span class="pill '+(p.status==='running'?'ok':p.status==='zombie'?'fail':'neutral')+'">'+esc(p.status)+'</span></td>'
-    +'<td><span class="row-actions"><button class="icon-btn danger" title="Kill PID '+p.pid+'" onclick="killProcess('+p.pid+',\''+jsq(p.name)+'\')">'+icon('x',13)+'</button></span></td>'
+    +'<td><span class="row-actions"><button class="icon-btn danger proc-kill" data-pid="'+p.pid+'" data-name="'+esc(p.name)+'" title="Kill PID '+p.pid+'" aria-label="Kill '+esc(p.name)+' (PID '+p.pid+')">'+icon('x',13)+'</button></span></td>'
   +'</tr>').join('');
+  // Bind via data attributes to avoid inline JS injection via process names
+  $$('#procRows .proc-kill').forEach(b=>{
+    b.addEventListener('click',()=>killProcess(+b.dataset.pid,b.dataset.name));
+  });
 }
 $$('#procTable th.sortable').forEach(th=>th.addEventListener('click',()=>{
   const k=th.dataset.key;

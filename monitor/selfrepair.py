@@ -81,6 +81,7 @@ def _repair_check():
 
 
 @bp.route("/api/self-repair")
+@rate_limit("30 per minute")
 def api_self_repair_status():
     try:
         return jsonify(_cached("self-repair", 30, _repair_check))

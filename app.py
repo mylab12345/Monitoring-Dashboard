@@ -13,7 +13,7 @@ update performed by an *older* update.sh that did not know about the new
 directory), this file prints a clear, actionable error instead of a cryptic
 traceback, so a `git pull`/update can never leave the operator guessing.
 
-Run:  python3 app.py   (binds 0.0.0.0:$MONITORING_PORT, default 8050)
+Run:  python3 app.py   (binds 127.0.0.1:$MONITORING_PORT by default, secure)
 Requirements: flask, psutil  (see requirements.txt)
 Privileges:   the service runs as the non-login account "monitoring".
               Privileged controls (systemd/package/journal/libvirt/qemu/kill)
@@ -32,7 +32,7 @@ try:
     IMPORT_ERROR = None
 except Exception as exc:  # noqa: BLE001 — must not mask the real reason
     create_app = None
-    APP_BIND = os.environ.get("MONITORING_BIND", "0.0.0.0")
+    APP_BIND = os.environ.get("MONITORING_BIND", "127.0.0.1")
     APP_PORT = 8050
     APP_VERSION = "unknown"
     AUTH_TOKEN = ""
