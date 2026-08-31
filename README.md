@@ -71,6 +71,24 @@ sudo ./update.sh --remote    # pull the latest from GitHub instead
 
 It automatically: finds the installed app → backs up the current version (last 5 kept) → copies new files → syncs Python deps → restarts the service → health-checks it. If no install exists yet, it simply runs the installer.
 
+### ⚠️ One-time note when upgrading from v2.4.x (the old single-file layout)
+
+Versions before this refactor kept the whole backend in `app.py` and the whole
+frontend inline in `templates/index.html`. The app is now modular: the backend
+lives in the **`monitor/`** package and the UI in **`static/js/`**. The updater
+and installer now copy both directories and verify them before restarting the
+service.
+
+- **Always upgrade with the *new* `update.sh`** — e.g. `git pull` in your
+  checkout, then `sudo ./update.sh` from that checkout. An *old* installed
+  `update.sh` (v2.4.x) does not know about `monitor/` and would copy only the
+  thin `app.py`, leaving the service unable to start.
+- If the service ever fails to start after an update, `app.py` prints a clear
+  error (see `monitoring logs`) and the fix is simply re-running
+  `sudo ./update.sh` from an up-to-date checkout — no manual surgery needed.
+- Make sure your checkout is clean (`git status`) before `git pull`, so the new
+  `monitor/` and `static/js/` directories land without conflicts.
+
 ## ✨ Features
 
 **Overview**
@@ -110,9 +128,25 @@ monitoring check-privileges # report the service account, groups and sudo grants
 ## 📦 Layout
 
 ```
-app.py                 # Flask backend (all APIs)
-templates/index.html   # Single-page UI (sidebar navigation, glass theme)
+app.py                 # Thin entrypoint: creates the app + starts the server
+monitor/               # Modular backend package (one module per feature area)
+  __init__.py          #   create_app(): registers each blueprint defensively —
+                       #   a broken module degrades gracefully instead of crashing
+  common.py            #   config, logging, cache, shared helpers
+  commands.py          #   argv-only subprocess runner + input validators
+  security.py          #   token auth, rate limiting, headers, error handlers
+  web.py metrics.py processes.py services.py logs.py system.py packages.py
+  fixes.py diagnostics.py desktop.py vms.py privileges.py
+                       #   one Blueprint per area; a syntax error in any file
+                       #   only takes down its own routes (reported by /api/health)
+templates/index.html   # Page markup + navigation (no inline app logic)
 static/dashboard.css   # Glass theme + wallpaper
+static/js/             # Frontend split into 14 files (core, tabs, overview,
+                       #   alerts, diagnostics, activity, checks, network,
+                       #   processes, services, vms, logs, settings, bootstrap)
+                       #   — separate parse units, so one broken file can't
+                       #   abort the rest; tab loaders are lazy thunks with a
+                       #   try/catch guard
 static/icon.png        # App icon (desktop + favicon)
 install.sh             # Universal OS-detecting installer (the global link)
 update.sh              # One-file update/reinstall after code changes
@@ -126,6 +160,20 @@ privileged/             # sudo helper scripts (validated argv, no shell, no sudo
 sudoers/monitoring      # exact sudoers fragment for the service account
 VERSION                # App version (shown in the dashboard)
 ```
+
+### Why the split?
+
+The backend was a single 2,300-line `app.py` and the UI a single 2,200-line
+inline `<script>`. In both cases a single mistake (a syntax error, a bad
+import, an undefined helper) aborted **everything** — this actually shipped on
+`main` at one point. Now:
+
+- **Backend:** each feature area is a module registered via `create_app()`. A
+  broken module is caught, logged, and reported in `GET /api/health` (`modules`)
+  while every other endpoint keeps working.
+- **Frontend:** each file is a separate `<script>` parse unit, tab loaders are
+  lazy thunks wrapped in `try/catch`, and a global `error` handler surfaces
+  unexpected failures as a toast instead of silently freezing the UI.
 
 ## 🔐 Notes
 

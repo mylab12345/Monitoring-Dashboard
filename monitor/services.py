@@ -1,0 +1,51 @@
+"""systemd service listing and bounded control."""
+from flask import Blueprint, jsonify, request
+from markupsafe import escape
+
+from .commands import run, run_privileged, validate_service_name, validate_systemctl_action, which
+from .common import _audit
+from .security import rate_limit
+
+bp = Blueprint("services", __name__)
+
+
+@bp.route("/api/services")
+def api_services():
+    if not which("systemctl"):
+        return jsonify({"available": False, "services": []})
+    _, out, err = run(["systemctl", "list-units", "--type=service", "--all", "--plain",
+                       "--no-pager", "--no-legend"], timeout=15)
+    services = []
+    for line in out.splitlines():
+        parts = line.split(None, 4)
+        if len(parts) >= 4:
+            unit = parts[0]
+            desc = parts[4].strip() if len(parts) > 4 else ""
+            services.append({
+                "unit": unit,
+                "load": parts[1],
+                "active": parts[2],
+                "sub": parts[3],
+                "description": desc,
+            })
+    return jsonify({"available": True, "services": services})
+
+
+@bp.route("/api/service/action", methods=["POST"])
+@rate_limit("20 per minute")
+def api_service_action():
+    data = request.json or {}
+    name = data.get("name", "")
+    action = data.get("action", "")
+
+    if not validate_service_name(name):
+        return jsonify({"error": "invalid unit name"}), 400
+    if not validate_systemctl_action(action):
+        return jsonify({"error": "invalid action"}), 400
+
+    # Route systemd mutations through the whitelisted helper only.
+    code, out, err = run_privileged("monitoring-systemctl", [action, name], timeout=30)
+    if code != 0 and (err or out) and "Created symlink" not in (err or out):
+        return jsonify({"error": escape(((err or out).strip()[:300]))}), 500
+    _audit("service-action", action=action, unit=name)
+    return jsonify({"result": f"{action} {escape(name)}: ok"})

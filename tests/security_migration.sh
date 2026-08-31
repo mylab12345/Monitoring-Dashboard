@@ -17,23 +17,30 @@ echo "== Monitoring security migration checks =="
 
 # 1. Syntax of shell/python scripts
 HELPERS=( "$ROOT"/privileged/monitoring-* )
-for f in app.py monitoring-app "$ROOT"/privileged/*.py \
+for f in app.py monitoring-app "$ROOT"/privileged/*.py "$ROOT"/monitor/*.py \
          install.sh update.sh uninstall.sh monitoring "$ROOT"/openrc/monitoring \
          "$ROOT"/tests/security_migration.sh "${HELPERS[@]}"; do
   [ -f "$f" ] || continue
   case "$f" in
-    *.py|monitoring-app|*/privileged/*)
+    *.py|monitoring-app|*/privileged/*|*/monitor/*)
       (command -v python3 >/dev/null 2>&1 && python3 -m py_compile "$f") >/dev/null 2>&1 && ok "py_compile $(basename "$f")" || bad "py_compile $(basename "$f")" ;;
     *.sh|monitoring|*/openrc/*|*/tests/*) (command -v bash >/dev/null 2>&1 && bash -n "$f") >/dev/null 2>&1 && ok "bash -n $(basename "$f")" || bad "bash -n $(basename "$f")" ;;
   esac
 done
 
-# 2. No shell=True / no string commands in app.py
-if grep -nE 'shell\s*=\s*True|(^|[^a-zA-Z0-9_])run\("[^"]|(^|[^a-zA-Z0-9_])run\(f"' "$ROOT/app.py" >/dev/null 2>&1; then
-  grep -nE 'shell\s*=\s*True|(^|[^a-zA-Z0-9_])run\("[^"]|(^|[^a-zA-Z0-9_])run\(f"' "$ROOT/app.py"
-  bad "app.py still contains shell strings or shell=True"
+# 2. No shell=True / no string commands in the app (app.py + monitor/*.py)
+SHELL_VIOLATIONS=""
+for py in "$ROOT/app.py" "$ROOT"/monitor/*.py; do
+  [ -f "$py" ] || continue
+  if grep -nE 'shell\s*=\s*True|(^|[^a-zA-Z0-9_])run\("[^"]|(^|[^a-zA-Z0-9_])run\(f"' "$py" >/dev/null 2>&1; then
+    SHELL_VIOLATIONS="$SHELL_VIOLATIONS $py"
+  fi
+done
+if [ -n "$SHELL_VIOLATIONS" ]; then
+  grep -nE 'shell\s*=\s*True|(^|[^a-zA-Z0-9_])run\("[^"]|(^|[^a-zA-Z0-9_])run\(f"' $SHELL_VIOLATIONS
+  bad "app still contains shell strings or shell=True"
 else
-  ok "app.py uses argv-only subprocess commands"
+  ok "app uses argv-only subprocess commands"
 fi
 
 # 3. systemd service runs as monitoring, not root
@@ -98,18 +105,19 @@ else
   bad "installer does not configure subsystem group access"
 fi
 
-# 10. Privileged operations in app.py route through whitelisted helpers
+# 10. Privileged operations route through whitelisted helpers (app.py + monitor/)
+APP_SRC="$(find "$ROOT/monitor" -name '*.py' 2>/dev/null) $ROOT/app.py"
 for pat in 'monitoring-systemctl' 'monitoring-package' 'monitoring-vm' \
            'monitoring-qemu' 'monitoring-journal-vacuum' \
            'monitoring-clean-old-logs' 'monitoring-kill'; do
-  if grep -q "$pat" "$ROOT/app.py"; then ok "app.py uses $pat helper"; else bad "app.py does not use $pat helper"; fi
+  if grep -q "$pat" $APP_SRC; then ok "app uses $pat helper"; else bad "app does not use $pat helper"; fi
 done
 
 # 11. Process/VM/repair paths must not call sudo directly
-if grep -qE 'sudo[- ]+-n[^ ]*[[:space:]]+systemctl|sudo[- ]+-n[^ ]*[[:space:]]+virsh|sudo[- ]+-n[^ ]*[[:space:]]+qemu-img|sudo[- ]+-n[^ ]*[[:space:]]+apt|sudo[- ]+-n[^ ]*[[:space:]]+journalctl' "$ROOT/app.py"; then
-  bad "app.py still uses raw sudo for privileged operations"
+if grep -qE 'sudo[- ]+-n[^ ]*[[:space:]]+systemctl|sudo[- ]+-n[^ ]*[[:space:]]+virsh|sudo[- ]+-n[^ ]*[[:space:]]+qemu-img|sudo[- ]+-n[^ ]*[[:space:]]+apt|sudo[- ]+-n[^ ]*[[:space:]]+journalctl' $APP_SRC; then
+  bad "app still uses raw sudo for privileged operations"
 else
-  ok "app.py has no raw sudo calls for systemd/virsh/qemu/apt/journalctl"
+  ok "app has no raw sudo calls for systemd/virsh/qemu/apt/journalctl"
 fi
 
 # 12. Docker group is mentioned for read access when docker exists

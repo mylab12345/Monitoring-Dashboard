@@ -284,9 +284,25 @@ cp -f "$SRC/requirements.txt" "$MONITORING_HOME/requirements.txt" 2>/dev/null ||
 cp -f "$SRC/VERSION" "$MONITORING_HOME/VERSION" 2>/dev/null || true
 cp -f "$SRC/update.sh" "$MONITORING_HOME/update.sh" 2>/dev/null || true
 cp -f "$SRC/uninstall.sh" "$MONITORING_HOME/uninstall.sh" 2>/dev/null || true
-mkdir -p "$MONITORING_HOME/templates" "$MONITORING_HOME/static"
+mkdir -p "$MONITORING_HOME/templates" "$MONITORING_HOME/static" "$MONITORING_HOME/monitor"
 cp -f "$SRC/templates/"* "$MONITORING_HOME/templates/" 2>/dev/null || true
-cp -f "$SRC/static/"* "$MONITORING_HOME/static/" 2>/dev/null || true
+# static/ and monitor/ are copied recursively: static holds the js/ subdir and
+# monitor/ is the modular backend package (app.py is only the entrypoint).
+cp -rf "$SRC/static/." "$MONITORING_HOME/static/" 2>/dev/null || true
+cp -rf "$SRC/monitor/." "$MONITORING_HOME/monitor/" 2>/dev/null || true
+
+# Sanity check: the new app.py depends on the `monitor/` package and the
+# `static/js/` frontend. Fail loudly if the sources are incomplete rather than
+# installing an app that cannot start.
+if [ ! -f "$SRC/monitor/__init__.py" ]; then
+  die "Sources are incomplete: '$SRC/monitor/__init__.py' not found. The checkout/archive is missing the modular backend — do a full \`git pull\` and re-run."
+fi
+if [ ! -f "$MONITORING_HOME/monitor/__init__.py" ]; then
+  die "Install aborted: could not copy the 'monitor/' package into $MONITORING_HOME. Check permissions and re-run."
+fi
+if [ ! -f "$MONITORING_HOME/static/js/bootstrap.js" ]; then
+  die "Install aborted: could not copy 'static/js/' into $MONITORING_HOME. Check permissions and re-run."
+fi
 # The code is owned root and is not writable by the service account.
 chown -R root:"$MONITORING_GROUP" "$MONITORING_HOME" 2>/dev/null || chown -R root "$MONITORING_HOME" || true
 chmod -R o+rX "$MONITORING_HOME" 2>/dev/null || true

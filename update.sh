@@ -188,7 +188,7 @@ TS="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$BACKUP_DIR"
 BACKUP="$BACKUP_DIR/${OLD_VERSION}-${TS}"
 mkdir -p "$BACKUP"
-cp -a "$TARGET/app.py" "$TARGET/templates" "$TARGET/static" "$BACKUP/" 2>/dev/null || true
+cp -a "$TARGET/app.py" "$TARGET/templates" "$TARGET/static" "$TARGET/monitor" "$BACKUP/" 2>/dev/null || true
 [ -f "$TARGET/VERSION" ] && cp -a "$TARGET/VERSION" "$BACKUP/" || true
 ls -1dt "$BACKUP_DIR"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
 log "Backup saved: $BACKUP (keeping last 5)"
@@ -208,9 +208,26 @@ cp -f "$SRC/requirements.txt" "$TARGET/requirements.txt" 2>/dev/null || true
 cp -f "$SRC/VERSION" "$TARGET/VERSION" 2>/dev/null || true
 cp -f "$SRC/update.sh" "$TARGET/update.sh" 2>/dev/null && chmod 755 "$TARGET/update.sh" || true
 cp -f "$SRC/uninstall.sh" "$TARGET/uninstall.sh" 2>/dev/null && chmod 755 "$TARGET/uninstall.sh" || true
-mkdir -p "$TARGET/templates" "$TARGET/static"
+mkdir -p "$TARGET/templates" "$TARGET/static" "$TARGET/monitor"
 cp -f "$SRC/templates/"* "$TARGET/templates/" 2>/dev/null || true
-cp -f "$SRC/static/"* "$TARGET/static/" 2>/dev/null || true
+# static/ and monitor/ are copied recursively: static holds the js/ subdir and
+# monitor/ is the modular backend package (app.py is only the entrypoint).
+cp -rf "$SRC/static/." "$TARGET/static/" 2>/dev/null || true
+cp -rf "$SRC/monitor/." "$TARGET/monitor/" 2>/dev/null || true
+
+# Sanity check: the new app.py depends on the `monitor/` package and the
+# `static/js/` frontend. If either is missing from the sources, abort BEFORE
+# restarting the service — a partial update would otherwise leave the
+# dashboard down with a confusing error.
+if [ ! -f "$SRC/monitor/__init__.py" ]; then
+  die "Sources are incomplete: '$SRC/monitor/__init__.py' not found. The checkout/archive is missing the modular backend — do a full \`git pull\` (or use --remote) and re-run."
+fi
+if [ ! -f "$TARGET/monitor/__init__.py" ]; then
+  die "Update aborted: could not copy the 'monitor/' package into $TARGET. Check permissions and re-run."
+fi
+if [ ! -f "$TARGET/static/js/bootstrap.js" ]; then
+  die "Update aborted: could not copy 'static/js/' into $TARGET. Check permissions and re-run."
+fi
 chown -R root:"$MONITORING_GROUP" "$TARGET" 2>/dev/null || chown -R root "$TARGET" || true
 chmod -R o+rX "$TARGET" 2>/dev/null || true
 

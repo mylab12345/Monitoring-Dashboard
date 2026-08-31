@@ -36,10 +36,10 @@ run "cd '$ROOT' && bash tests/security_migration.sh"
 # 2. API / validation / helper / repo-consistency regression tests
 run "cd '$ROOT' && '$PY' -m unittest discover -s tests -p 'test_*.py' -v"
 
-# 3. Frontend parse check — a syntax error in the inline app script aborts the
-#    entire dashboard at parse time (every tab renders as empty skeletons), and
-#    no amount of static string matching catches it. Requires node; skipped
-#    with a warning when unavailable.
+# 3. Frontend parse check — the app script is split across static/js/*.js, each
+#    of which is a separate parse unit, so a syntax error in one file can no
+#    longer abort the whole dashboard. Every file must still parse cleanly.
+#    Requires node; skipped with a warning when unavailable.
 NODE=""
 for cand in node nodejs; do
   if command -v "$cand" >/dev/null 2>&1; then NODE="$cand"; break; fi
@@ -47,32 +47,23 @@ done
 if [ -n "$NODE" ]; then
   echo
   echo "──────────────────────────────────────────────────────────────"
-  echo "▶ Frontend JS parse check (templates/index.html)"
+  echo "▶ Frontend JS parse check (static/js/*.js)"
   echo "──────────────────────────────────────────────────────────────"
-  TMPJS="$(mktemp -t monitoring-frontend-XXXXXX.js)"
-  if "$PY" - "$ROOT" "$TMPJS" <<'PYEOF'
-import re, sys
-root, out = sys.argv[1], sys.argv[2]
-with open(f"{root}/templates/index.html") as fh:
-    html = fh.read()
-scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, re.S)
-if not scripts:
-    sys.exit("no <script> block found in templates/index.html")
-with open(out, "w") as fh:
-    fh.write(scripts[-1])
-PYEOF
-  then
-    if "$NODE" --check "$TMPJS"; then
-      echo "✓ inline app script parses"
+  FAIL_JS=0
+  for f in "$ROOT"/static/js/*.js; do
+    [ -f "$f" ] || continue
+    if "$NODE" --check "$f"; then
+      echo "✓ $(basename "$f") parses"
     else
-      echo "✗ templates/index.html inline JS has a syntax error"
-      FAILED=1
+      echo "✗ $(basename "$f") has a syntax error"
+      FAIL_JS=1
     fi
+  done
+  if [ "$FAIL_JS" -eq 0 ]; then
+    echo "✓ all frontend JS files parse"
   else
-    echo "✗ could not extract the inline script"
     FAILED=1
   fi
-  rm -f "$TMPJS"
 else
   echo
   echo "⚠ node not available — skipping frontend parse check"
