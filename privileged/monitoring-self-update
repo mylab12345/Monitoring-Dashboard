@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""monitoring-self-update - check for and apply Monitoring dashboard updates.
+
+The monitoring service account is granted passwordless sudo for this helper
+only (see /etc/sudoers.d/monitoring). The helper never invokes a shell and
+validates every argument. It implements the dashboard's own "system update"
+flow for Monitoring itself:
+
+  --check                Print a JSON status report (read-only):
+                         installed version, latest version from GitHub,
+                         whether an update is available, and any error.
+  --update [--branch B]  Apply the latest update using the INSTALLED copy's
+                         own update.sh --remote. The update is launched in a
+                         detached session (new process group) and this helper
+                         returns immediately: update.sh restarts the
+                         monitoring service itself, so the dashboard's HTTP
+                         request completes before the process is replaced.
+                         The branch is validated against a strict pattern.
+
+Both modes degrade gracefully: no installation, no network or a broken
+environment file never produce a crash — --check always exits 0 with the
+details in the JSON payload.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+
+DEFAULT_REPO = "mylab12345/Monitoring-Dashboard"
+DEFAULT_BRANCH = "main"
+ENV_FILE = "/etc/monitoring.env"
+FALLBACK_HOMES = ("/opt/monitoring",)
+BRANCH_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9._-]*$")
+KERNEL_ERROR = 2
+UPDATE_LOG = "/var/log/monitoring/self-update.log"
+
+
+def _installed_home():
+    """The app install dir: /etc/monitoring.env, then known defaults."""
+    home = None
+    try:
+        with open(ENV_FILE, "r") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("MONITORING_HOME="):
+                    value = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if value.startswith("/") and " " not in value:
+                        home = value
+    except OSError:
+        pass
+    if home and os.path.isfile(os.path.join(home, "app.py")):
+        return home
+    for candidate in FALLBACK_HOMES:
+        if os.path.isfile(os.path.join(candidate, "app.py")):
+            return candidate
+    return home
+
+
+def _read_version(home):
+    try:
+        with open(os.path.join(home, "VERSION"), "r") as fh:
+            return fh.read().strip()
+    except OSError:
+        return None
+
+
+def _fetch_latest(repo, branch, timeout=15):
+    url = "https://raw.githubusercontent.com/%s/%s/VERSION" % (repo, branch)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            payload = resp.read().decode("utf-8", "replace").strip()
+    except Exception as exc:  # network / DNS / TLS / HTTP
+        return None, "could not fetch latest version: %s" % exc
+    if VERSION_RE.fullmatch(payload):
+        return payload, None
+    return None, "unexpected upstream VERSION payload: %r" % payload[:60]
+
+
+def _version_key(version):
+    parts = []
+    for chunk in str(version).split("."):
+        digits = "".join(c for c in chunk if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    parts += [0] * (3 - len(parts))
+    return tuple(parts)
+
+
+def _newer(latest, installed):
+    return (latest is not None and installed is not None
+            and _version_key(latest) > _version_key(installed))
+
+
+def check():
+    home = _installed_home()
+    installed = _read_version(home) if home else None
+    latest, error = _fetch_latest(DEFAULT_REPO, DEFAULT_BRANCH)
+    if installed is None and error is None:
+        error = "dashboard not installed (no VERSION file found)"
+    print(json.dumps({
+        "installed": installed,
+        "latest": latest,
+        "available": bool(_newer(latest, installed)),
+        "source": "github:%s/%s" % (DEFAULT_REPO, DEFAULT_BRANCH),
+        "home": home,
+        "error": error,
+    }))
+    return 0
+
+
+def start_update(branch):
+    home = _installed_home()
+    if not home:
+        print(json.dumps({"error": "no installed dashboard found to update"}),
+              file=sys.stderr)
+        return KERNEL_ERROR
+    script = os.path.join(home, "update.sh")
+    if not os.path.isfile(script):
+        print(json.dumps({"error": "no update.sh at %s — reinstall with "
+                                   "install.sh" % script}), file=sys.stderr)
+        return KERNEL_ERROR
+    argv = [script, "--remote"]
+    if branch and branch != DEFAULT_BRANCH:
+        argv += ["--branch", branch]
+    try:
+        os.makedirs(os.path.dirname(UPDATE_LOG), exist_ok=True)
+        log_fh = open(UPDATE_LOG, "ab")
+    except OSError:
+        log_fh = None
+    try:
+        kwargs = {}
+        if log_fh is not None:
+            kwargs["stdout"] = log_fh
+            kwargs["stderr"] = subprocess.STDOUT
+        else:
+            kwargs["stdout"] = subprocess.DEVNULL
+            kwargs["stderr"] = subprocess.DEVNULL
+        proc = subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, start_new_session=True, **kwargs)
+    except OSError as exc:
+        if log_fh is not None:
+            log_fh.close()
+        print(json.dumps({"error": "could not start update: %s" % exc}),
+              file=sys.stderr)
+        return KERNEL_ERROR
+    print(json.dumps({
+        "result": "update started (pid %d); the dashboard service will "
+                  "restart automatically — wait about a minute and reload" % proc.pid,
+        "pid": proc.pid,
+        "log": UPDATE_LOG,
+    }))
+    return 0
+
+
+def main(argv):
+    if argv == ["--check"]:
+        return check()
+    if argv[:1] == ["--update"] and len(argv) in (1, 3):
+        branch = DEFAULT_BRANCH
+        if len(argv) == 3:
+            if argv[1] != "--branch" or not BRANCH_RE.fullmatch(argv[2]):
+                print("monitoring-self-update: invalid --branch",
+                      file=sys.stderr)
+                return KERNEL_ERROR
+            branch = argv[2]
+        return start_update(branch)
+    print("usage: monitoring-self-update --check | --update [--branch NAME]",
+          file=sys.stderr)
+    return KERNEL_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

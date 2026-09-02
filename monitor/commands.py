@@ -46,6 +46,7 @@ def privileged_tool(name):
         "monitoring-package",
         "monitoring-maintain",
         "monitoring-perf",
+        "monitoring-self-update",
         "monitoring-journal-vacuum",
         "monitoring-clean-old-logs",
         "monitoring-vm",

@@ -12,6 +12,15 @@ Modes:
                          Run the safe repair sequence and print one
                          [ok]/[skip]/[fail] line per step. Exit 0 only when
                          every required step succeeded.
+  --fix-all [--force-initramfs] [--no-upgrade]
+                         One-click "fix everything" for system & kernel
+                         software: the repair sequence PLUS bootloader refresh,
+                         firmware metadata refresh, package-list refresh, the
+                         full system upgrade (incl. new kernels; skipped with
+                         --no-upgrade), orphaned-package removal and cache
+                         cleanup. Exit 0 only when every required step
+                         succeeded; optional cleanup steps that fail are
+                         reported as [fail] lines and counted as warnings.
 
 Repair sequence (each step is individually reported so the dashboard never
 claims a fix ran when it did not):
@@ -27,6 +36,19 @@ claims a fix ran when it did not):
                     initrd, which yields boot failures, unbootable storage
                     or missing drivers). Only rebuilt when stale unless
                     --force-initramfs is given.
+  4. bootloader   - refresh the boot menu for the newest kernel
+                    (update-grub on Debian, grub2-mkconfig/grub-mkconfig on
+                    rpm/Arch families) so the new kernel appears at boot.
+  5. fwupd        - refresh firmware metadata (fwupdmgr refresh --force).
+                    Firmware itself is NEVER installed by this tool.
+  6. package-refresh - refresh package lists (apt update / dnf makecache /
+                    zypper refresh / pacman -Sy / apk update).
+  7. full-upgrade - the full system upgrade including new kernels
+                    (apt full-upgrade / dnf upgrade / zypper dist-upgrade /
+                    pacman -Su / apk upgrade).
+  8. autoremove   - remove orphaned/obsolete packages (pacman enumerates
+                    orphans itself; never accepts names from the caller).
+  9. clean        - clear the package manager cache.
 
 Detection logic is deliberately conservative: read-only checks are used for
 --check, and mutating steps only touch well-known system locations through
@@ -38,19 +60,61 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 MODULES_DIR = "/lib/modules"
 BOOT_DIR = "/boot"
 KERNEL_RE = re.compile(r"^[0-9][A-Za-z0-9._+-]*$")
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._+-]*$")
 KERNEL_ERROR = 2
 STEP_TIMEOUT = 600  # initramfs rebuilds are slow on big systems
+UPGRADE_TIMEOUT = 1800  # full upgrades can take a long time on big systems
+
+# Fixed, non-injectable package-manager commands (mirrors monitoring-package's
+# BASE map so fix-all and the /api/fix endpoints use the same transactions).
+PKG_COMMANDS = {
+    "apt":    {"refresh": ["apt-get", "update", "-qq"],
+               "upgrade": ["apt-get", "full-upgrade", "-y", "-qq"],
+               "autoremove": ["apt-get", "autoremove", "-y", "-qq"],
+               "clean": ["apt-get", "clean"]},
+    "dnf":    {"refresh": ["dnf", "makecache", "--quiet"],
+               "upgrade": ["dnf", "upgrade", "-y", "--quiet"],
+               "autoremove": ["dnf", "autoremove", "-y", "--quiet"],
+               "clean": ["dnf", "clean", "all", "-y"]},
+    "yum":    {"refresh": ["yum", "makecache", "--quiet"],
+               "upgrade": ["yum", "upgrade", "-y", "--quiet"],
+               "autoremove": ["yum", "autoremove", "-y"],
+               "clean": ["yum", "clean", "all"]},
+    "zypper": {"refresh": ["zypper", "refresh"],
+               "upgrade": ["zypper", "dist-upgrade", "-y", "--quiet"],
+               "autoremove": ["zypper", "clean"],
+               "clean": ["zypper", "clean"]},
+    "pacman": {"refresh": ["pacman", "-Sy", "--noconfirm", "--quiet"],
+               "upgrade": ["pacman", "-Su", "--noconfirm"],
+               "autoremove": None,  # orphans enumerated per-run below
+               "clean": ["pacman", "-Sc", "--noconfirm"]},
+    "apk":    {"refresh": ["apk", "update", "--quiet"],
+               "upgrade": ["apk", "upgrade", "--quiet"],
+               "autoremove": ["apk", "autoremove", "--quiet"],
+               "clean": ["apk", "cache", "clean"]},
+}
 
 
-def _capture(argv, timeout=STEP_TIMEOUT):
-    """Run argv without a shell; return (returncode, stdout, stderr)."""
+def _capture(argv, timeout=STEP_TIMEOUT, env=None):
+    """Run argv without a shell; return (returncode, stdout, stderr).
+
+    Package-manager transactions run non-interactively (same defaults as the
+    monitoring-package helper) so a mid-upgrade prompt can never hang the run.
+    """
+    run_env = dict(os.environ)
+    run_env["DEBIAN_FRONTEND"] = "noninteractive"
+    run_env.setdefault("NEEDRESTART_MODE", "a")
+    if env:
+        run_env.update(env)
     try:
         r = subprocess.run(argv, shell=False, capture_output=True, text=True,
-                           timeout=timeout, start_new_session=True)
+                           timeout=timeout, start_new_session=True,
+                           env=run_env)
         return r.returncode, r.stdout or "", r.stderr or ""
     except (OSError, subprocess.SubprocessError) as exc:
         return 127, "", str(exc)
@@ -152,6 +216,55 @@ def _fwupd_active():
     return code == 0
 
 
+def _fwupd_refresh_recommended():
+    """True when fwupd is active and its metadata is missing or > 7 days old."""
+    if not _fwupd_active() or not _which("fwupdmgr"):
+        return False
+    meta_dir = "/var/lib/fwupd/metadata"
+    newest = 0.0
+    if os.path.isdir(meta_dir):
+        try:
+            for name in os.listdir(meta_dir):
+                path = os.path.join(meta_dir, name)
+                if os.path.isfile(path):
+                    newest = max(newest, os.path.getmtime(path))
+        except OSError:
+            return True
+    return newest == 0.0 or (time.time() - newest) > 7 * 24 * 3600
+
+
+def _bootloader_meta():
+    """(tool, config_path) for the installed bootloader, or (None, None)."""
+    if _which("update-grub"):
+        return "update-grub", "/boot/grub/grub.cfg"
+    if _which("grub2-mkconfig"):
+        cfg = "/boot/grub2/grub.cfg" if os.path.isdir("/boot/grub2") \
+            else "/boot/grub/grub.cfg"
+        return "grub2-mkconfig", cfg
+    if _which("grub-mkconfig"):
+        return "grub-mkconfig", "/boot/grub/grub.cfg"
+    return None, None
+
+
+def _bootloader_state():
+    """needs_refresh is True when the boot menu predates the newest kernel."""
+    tool, cfg = _bootloader_meta()
+    if not tool:
+        return {"tool": None, "config": None, "needs_refresh": False}
+    installed = _installed_kernels()
+    newest_mod = _newest_module_mtime(installed[0]) if installed else 0.0
+    if newest_mod <= 0:
+        return {"tool": tool, "config": cfg, "needs_refresh": False}
+    if cfg and os.path.isfile(cfg):
+        try:
+            cfg_mtime = os.path.getmtime(cfg)
+        except OSError:
+            return {"tool": tool, "config": cfg, "needs_refresh": True}
+        return {"tool": tool, "config": cfg,
+                "needs_refresh": cfg_mtime + 2 < newest_mod}
+    return {"tool": tool, "config": cfg, "needs_refresh": True}
+
+
 def _pkg_manager():
     for mgr, cmd in (("apt", "apt-get"), ("dnf", "dnf"), ("yum", "yum"),
                      ("zypper", "zypper"), ("pacman", "pacman"),
@@ -159,6 +272,43 @@ def _pkg_manager():
         if _which(cmd):
             return mgr
     return None
+
+
+def _mount_is_read_only(path):
+    """True when `path` sits on a read-only mount; False/None otherwise."""
+    if not os.path.exists(path):
+        return False
+    findmnt = shutil.which("findmnt")
+    if not findmnt:
+        return None
+    code, out, _err = _capture(
+        [findmnt, "--noheadings", "--output", "OPTIONS", "--target", path],
+        timeout=5)
+    if code != 0 or not (out or "").strip():
+        return None
+    return "ro" in {p.strip() for p in out.strip().split(",")}
+
+
+def _package_paths_read_only():
+    """Package write-paths that are read-only in the current namespace.
+
+    Under an old monitoring.service unit (without ReadWritePaths=/usr /etc
+    /boot /efi), ProtectSystem=full makes these read-only even for root
+    inside the service namespace — the same condition monitoring-package
+    reports as exit 78.
+    """
+    return [p for p in ("/usr", "/etc", "/boot", "/efi")
+            if _mount_is_read_only(p) is True]
+
+
+_READONLY_GUIDANCE = (
+    "package paths are read-only in the service mount namespace: {paths}. "
+    "This is a mount policy, not a file permission. Install the updated "
+    "monitoring.service (it grants ReadWritePaths=/usr /etc /boot /efi), run "
+    "systemctl daemon-reload and restart monitoring before retrying — the "
+    "dashboard does this automatically with 'Repair service mount namespace' "
+    "(monitoring-self-repair). If the host itself is mounted read-only, "
+    "repair/remount that filesystem first; do not chmod /usr.")
 
 
 def check_status():
@@ -203,8 +353,11 @@ def check_status():
             needs_repair = True
 
     reboot_required, reboot_pkgs = _reboot_required()
+    bootloader = _bootloader_state()
+    fwupd = {"active": _fwupd_active(),
+             "refresh_recommended": _fwupd_refresh_recommended()}
 
-    return {
+    status = {
         "kernel": {
             "running": running,
             "installed": installed,
@@ -226,8 +379,52 @@ def check_status():
             "dpkg_healthy": dpkg_healthy,
             "needs_repair": needs_repair,
         },
-        "fwupd": {"active": _fwupd_active()},
+        "bootloader": bootloader,
+        "fwupd": fwupd,
     }
+    status["fix_all"] = {"issues": _fix_all_issues(status)}
+    return status
+
+
+def _fix_all_issues(status):
+    """Read-only list of detected system & kernel issues (helper-side).
+
+    The app merges these with app-side facts (pending updates, running kernel
+    vs newest installed) to drive the dashboard's one-click Fix All tool.
+    """
+    issues = []
+    pkgs = status.get("packages") or {}
+    if pkgs.get("needs_repair"):
+        issues.append({"id": "package-db",
+                       "label": "Package database needs repair",
+                       "severity": "error"})
+    modmap = status.get("module_map") or {}
+    if modmap.get("exists") is False:
+        issues.append({"id": "module-map",
+                       "label": "Kernel module map missing for running kernel",
+                       "severity": "warn"})
+    elif modmap.get("stale"):
+        issues.append({"id": "module-map",
+                       "label": "Kernel module map is stale",
+                       "severity": "error"})
+    ini = status.get("initramfs") or {}
+    if ini.get("status") == "needs-rebuild":
+        stale = (ini.get("stale") or [])[:3]
+        issues.append({"id": "initramfs",
+                       "label": "Initramfs missing/stale for "
+                                + (", ".join(stale) if stale else "kernels"),
+                       "severity": "error"})
+    bootloader = status.get("bootloader") or {}
+    if bootloader.get("needs_refresh"):
+        issues.append({"id": "bootloader",
+                       "label": "Boot menu not refreshed for the newest kernel",
+                       "severity": "warn"})
+    fwupd = status.get("fwupd") or {}
+    if fwupd.get("refresh_recommended"):
+        issues.append({"id": "fwupd",
+                       "label": "Firmware metadata should be refreshed",
+                       "severity": "info"})
+    return issues
 
 
 # --------------------------------------------------------------------------
@@ -302,10 +499,26 @@ def _step_initramfs(force=False):
 
 
 def run_repair(force_initramfs=False):
-    """Run the repair sequence; returns (exit_code, output_lines)."""
+    """Run the repair sequence; returns (exit_code, output_lines).
+
+    Exit 78 when the service mount namespace makes package paths read-only
+    (old monitoring.service without ReadWritePaths): the dashboard endpoint
+    then auto-repairs the unit and retries.
+    """
     manager = _pkg_manager()
     lines = []
     failed = []
+
+    if manager:
+        blocked = _package_paths_read_only()
+        if blocked:
+            lines.append("[fail] package-db: " + _READONLY_GUIDANCE.format(
+                paths=", ".join(blocked)))
+            lines.append("[fail] module-map/initramfs/bootloader: package "
+                         "paths are read-only in the service namespace")
+            lines.append("[fail] failed steps: package-db, module-map, "
+                         "initramfs, bootloader")
+            return 78, lines
 
     ok, detail = _step_package_db(manager)
     lines.append(f"[{'ok' if ok else 'fail'}] package-db"
@@ -332,6 +545,171 @@ def run_repair(force_initramfs=False):
     return (1 if failed else 0), lines
 
 
+# --------------------------------------------------------------------------
+# Fix-all steps (repair + boot + upgrade + cleanup)
+# --------------------------------------------------------------------------
+def _step_bootloader():
+    """Refresh the boot menu so the newest kernel appears at boot."""
+    tool, cfg = _bootloader_meta()
+    if not tool:
+        return True, "no bootloader tool (update-grub/grub2-mkconfig/grub-mkconfig); skipped"
+    if tool == "update-grub":
+        code, out, err = _capture(["update-grub"], timeout=STEP_TIMEOUT)
+    else:
+        code, out, err = _capture([tool, "-o", cfg], timeout=STEP_TIMEOUT)
+    detail = ((out or err or "").strip())[-300:]
+    if code == 0:
+        return True, f"{tool} refreshed the boot menu" \
+                     + (f": {detail[:150]}" if detail else "")
+    return False, f"{tool} failed: {detail or f'exit {code}'}"
+
+
+def _step_fwupd():
+    """Refresh firmware metadata only — never installs firmware."""
+    if not _fwupd_active():
+        return True, "fwupd is not active; skipped"
+    if not _which("fwupdmgr"):
+        return True, "fwupdmgr not installed; skipped"
+    code, out, err = _capture(["fwupdmgr", "refresh", "--force"], timeout=300)
+    detail = ((out or err or "").strip())[-300:]
+    if code == 0:
+        return True, "firmware metadata refreshed" \
+                     + (f": {detail[:150]}" if detail else "")
+    return False, f"fwupdmgr refresh failed: {detail or f'exit {code}'}"
+
+
+def _step_package_refresh(manager):
+    if not manager:
+        return True, "no supported package manager; skipped"
+    cmd = PKG_COMMANDS.get(manager, {}).get("refresh")
+    if not cmd:
+        return True, f"no refresh command for {manager}; skipped"
+    code, out, err = _capture(cmd, timeout=900)
+    detail = ((out or err or "").strip())[-300:]
+    if code == 0:
+        return True, f"{manager} package lists refreshed" \
+                     + (f": {detail[:150]}" if detail else "")
+    return False, f"{manager} refresh failed: {detail or f'exit {code}'}"
+
+
+def _step_full_upgrade(manager):
+    """Full system upgrade — installs new kernels on every supported family."""
+    if not manager:
+        return True, "no supported package manager; skipped"
+    cmd = PKG_COMMANDS.get(manager, {}).get("upgrade")
+    if not cmd:
+        return True, f"no upgrade command for {manager}; skipped"
+    code, out, err = _capture(cmd, timeout=UPGRADE_TIMEOUT)
+    detail = ((out or err or "").strip())[-300:]
+    if code == 0:
+        return True, f"{manager} full upgrade completed" \
+                     + (f": {detail[:150]}" if detail else "")
+    return False, f"{manager} full upgrade failed: {detail or f'exit {code}'}"
+
+
+def _step_autoremove(manager):
+    """Remove orphaned/obsolete packages (safe: only what the manager reports)."""
+    if not manager:
+        return True, "no supported package manager; skipped"
+    if manager == "pacman":
+        code, out, _err = _capture(["pacman", "-Qdtq"], timeout=60)
+        orphans = [line.strip() for line in (out or "").splitlines()
+                   if line.strip() and NAME_RE.match(line.strip())][:200]
+        if not orphans:
+            return True, "no orphaned packages"
+        code, out, err = _capture(
+            ["pacman", "-Rns", "--noconfirm"] + orphans, timeout=900)
+        detail = ((out or err or "").strip())[-200:]
+        if code == 0:
+            return True, f"removed {len(orphans)} orphaned package(s)" \
+                         + (f": {detail[:150]}" if detail else "")
+        return False, f"pacman autoremove failed: {detail or f'exit {code}'}"
+    cmd = PKG_COMMANDS.get(manager, {}).get("autoremove")
+    if not cmd:
+        return True, f"no autoremove command for {manager}; skipped"
+    code, out, err = _capture(cmd, timeout=900)
+    detail = ((out or err or "").strip())[-300:]
+    if code == 0:
+        return True, f"{manager} autoremove completed" \
+                     + (f": {detail[:150]}" if detail else "")
+    return False, f"{manager} autoremove failed: {detail or f'exit {code}'}"
+
+
+def _step_clean(manager):
+    if not manager:
+        return True, "no supported package manager; skipped"
+    cmd = PKG_COMMANDS.get(manager, {}).get("clean")
+    if not cmd:
+        return True, f"no clean command for {manager}; skipped"
+    code, out, err = _capture(cmd, timeout=600)
+    detail = ((out or err or "").strip())[-300:]
+    if code == 0:
+        return True, f"{manager} cache cleaned" \
+                     + (f": {detail[:150]}" if detail else "")
+    return False, f"{manager} clean failed: {detail or f'exit {code}'}"
+
+
+def run_fix_all(force_initramfs=False, no_upgrade=False):
+    """One-click full system & kernel maintenance; returns (exit_code, lines).
+
+    Required steps (package-db, module-map, initramfs, package-refresh and
+    full-upgrade unless --no-upgrade) decide the exit code. Convenience steps
+    (bootloader, fwupd, autoremove, clean) are reported individually — a
+    failure there is a warning, not a reason to claim the run failed outright.
+    """
+    manager = _pkg_manager()
+    lines = []
+    required_failed = []
+    optional_failed = []
+
+    if manager:
+        blocked = _package_paths_read_only()
+        if blocked:
+            # Same exit-78 contract as monitoring-package: the endpoint
+            # auto-repairs the unit and the UI retries after the restart.
+            lines.append("[fail] package-refresh/full-upgrade/autoremove/"
+                         "clean: " + _READONLY_GUIDANCE.format(
+                             paths=", ".join(blocked)))
+            lines.append("[fail] failed required steps: package-refresh, "
+                         "full-upgrade, autoremove, clean")
+            return 78, lines
+
+    def run_step(name, fn, required=True):
+        ok, detail = fn()
+        lines.append(f"[{'ok' if ok else 'fail'}] {name}"
+                     + (f": {detail[:200]}" if detail else ""))
+        if not ok:
+            (required_failed if required else optional_failed).append(name)
+
+    run_step("package-db", lambda: _step_package_db(manager))
+    run_step("module-map", _step_module_map)
+    run_step("initramfs", lambda: _step_initramfs(force_initramfs))
+    run_step("bootloader", _step_bootloader, required=False)
+    run_step("fwupd", _step_fwupd, required=False)
+
+    if manager:
+        run_step("package-refresh", lambda: _step_package_refresh(manager))
+        if no_upgrade:
+            lines.append("[skip] full-upgrade: skipped by --no-upgrade")
+        else:
+            run_step("full-upgrade", lambda: _step_full_upgrade(manager))
+        run_step("autoremove", lambda: _step_autoremove(manager),
+                 required=False)
+        run_step("clean", lambda: _step_clean(manager), required=False)
+    else:
+        lines.append("[skip] package-refresh/full-upgrade/autoremove/clean: "
+                     "no supported package manager found")
+
+    if required_failed:
+        lines.append(f"[fail] failed required steps: {', '.join(required_failed)}")
+        return 1, lines
+    note = ""
+    if optional_failed:
+        note = f" ({len(optional_failed)} warning(s): {', '.join(optional_failed)})"
+    lines.append(f"[ok] fix-all completed{note}")
+    return 0, lines
+
+
 def main(argv):
     if argv == ["--check"]:
         print(json.dumps(check_status()))
@@ -342,12 +720,20 @@ def main(argv):
         code, lines = run_repair(force)
         print("\n".join(lines))
         return code
+    if "--fix-all" in argv:
+        allowed = {"--fix-all", "--force-initramfs", "--no-upgrade"}
+        if set(argv) <= allowed:
+            force = "--force-initramfs" in argv
+            no_upgrade = "--no-upgrade" in argv
+            code, lines = run_fix_all(force, no_upgrade)
+            print("\n".join(lines))
+            return code
     if "--repair" in argv and "--force-initramfs" not in argv:
         print("usage: monitoring-maintain --repair [--force-initramfs]",
               file=sys.stderr)
         return KERNEL_ERROR
-    print("usage: monitoring-maintain --check | --repair [--force-initramfs]",
-          file=sys.stderr)
+    print("usage: monitoring-maintain --check | --repair [--force-initramfs] | "
+          "--fix-all [--force-initramfs] [--no-upgrade]", file=sys.stderr)
     return KERNEL_ERROR
 
 

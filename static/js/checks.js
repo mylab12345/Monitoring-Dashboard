@@ -68,7 +68,7 @@ function renderFixButtons(){
       <span>${esc(m.label)}<span class="fdesc">${esc(m.desc)}</span></span>
     </button>`).join('');
 }
-async function runFix(action,btn){
+async function runFix(action,btn,autoRetried){
   const term=$('#fixTerminal'),out=$('#fixResult');
   const meta=FIX_META[action]||{icon:'wrench',desc:action};
   if(QUICK_CONFIRM[action]){
@@ -85,15 +85,36 @@ async function runFix(action,btn){
   const res=(j&&(j.result||j.error))||'Done';
   out.innerHTML='<span class="dim">$ monitoring fix '+esc(action)+'</span>\n'+esc(res.length>600?res.slice(0,600)+'…':res);
   if(j&&j.error){
+    // Exit 78 = read-only service mount namespace. The backend has already
+    // repaired the unit (patched ReadWritePaths + scheduled restart): wait
+    // for the dashboard to come back, then retry the same action once.
+    if(j.repair_scheduled&&!autoRetried){
+      await autoRepairAndRetry(()=>runFix(action,btn,true));
+      if(btn){btn.disabled=false;btn.innerHTML=old;}
+      updateChecks();
+      return;
+    }
     toast('Fix failed: '+j.error,'err');
     logActivity('fix','Fix failed: '+meta.label,false);
-    if(detectReadOnlyMount(j.error)){
+    if(j.read_only_mount||detectReadOnlyMount(j.error)){
       const repaired=await offerSelfRepair(()=>runFix(action));
       if(repaired)refreshSelfRepair();
     }
   }
   else{toast(meta.desc||('Completed: '+action));logActivity('fix','Fix completed: '+meta.label);}
   updateChecks();
+}
+
+// Waits out the dashboard restart that monitoring-self-repair schedules,
+// then invokes retryFn (the failed action, re-run against the fresh,
+// writable namespace). Used when the backend reports repair_scheduled.
+async function autoRepairAndRetry(retryFn){
+  toast('Package paths are read-only — repairing the service mount namespace…','info');
+  logActivity('fix','Auto-repair service mount namespace (read-only)');
+  const up=await waitForApi(45000,1500);
+  if(!up){toast('Dashboard did not return after the restart — check: monitoring status','err');return;}
+  toast('Service mount namespace repaired — retrying the action…','info');
+  await retryFn();
 }
 
 // ================================================================
@@ -107,8 +128,8 @@ async function runFix(action,btn){
 // (service-account sudo): it patches the unit, runs daemon-reload and
 // restarts the service, so no root shell is needed.
 function detectReadOnlyMount(text){
-  return /read[- ]?only/i.test(String(text||''))
-    && /(filesystem|file system|\/usr|\/etc)/i.test(String(text||''));
+  return /read[- ]?only|readwritepaths|exit 78/i.test(String(text||''))
+    && /(filesystem|file system|\/usr|\/etc|monitoring\.service)/i.test(String(text||''));
 }
 async function waitForApi(timeoutMs=30000,intervalMs=1500){
   const t0=Date.now();

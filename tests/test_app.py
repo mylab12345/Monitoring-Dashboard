@@ -74,7 +74,7 @@ class ApiBaseline(unittest.TestCase):
                      "/api/history", "/api/processes", "/api/services", "/api/disks",
                      "/api/network", "/api/ports", "/api/logs", "/api/checks",
                      "/api/troubleshooting", "/api/privileges", "/api/self-repair",
-                     "/api/maintain"):
+                     "/api/maintain", "/api/app-update"):
             r = self._get(path)
             json.loads(r.get_data())
 
@@ -306,6 +306,142 @@ class MaintenanceBackend(unittest.TestCase):
                           return_value="/nonexistent/monitoring-perf"):
             r = self.client.post("/api/maintain/perf", json={"profile": "balanced"})
             self.assertEqual(r.status_code, 503)
+        with patch.object(maintain_mod, "_helper_path",
+                          return_value="/nonexistent/monitoring-maintain"):
+            r = self.client.post("/api/maintain/fix-all", json={})
+            self.assertEqual(r.status_code, 503)
+        with patch.object(maintain_mod, "_helper_path",
+                          return_value="/nonexistent/monitoring-self-update"):
+            r = self.client.post("/api/app-update/run", json={})
+            self.assertEqual(r.status_code, 503)
+
+    def test_app_update_run_validation(self):
+        """Dashboard self-update endpoint: invalid branches are rejected and
+        the route is strictly rate-limited (1 per minute, fresh process)."""
+        code = (
+            "import app as app_mod;\n"
+            "c = app_mod.app.test_client();\n"
+            "r1 = c.post('/api/app-update/run', json={'branch': '$(rm -rf /)'});\n"
+            "r2 = c.post('/api/app-update/run', json={'branch': 'a b'});\n"
+            "print(r1.status_code, r2.status_code)\n"
+        )
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                             text=True, timeout=60,
+                             env=dict(os.environ, MONITORING_HOME=REPO))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split(), ["400", "429"])
+
+    def test_maintain_fix_all_passes_flags_to_helper(self):
+        """fix-all must forward the exact flags to the whitelisted helper."""
+        from monitor import maintain as maintain_mod
+        calls = []
+
+        def fake_run_privileged(helper, args=None, timeout=60):
+            calls.append(list(args or []))
+            return 0, "[ok] package-db\n[ok] fix-all completed", ""
+
+        with patch.object(maintain_mod, "_helper_path",
+                          return_value=os.path.join(REPO, "privileged",
+                                                    "monitoring-maintain")), \
+             patch.object(maintain_mod, "run_privileged", side_effect=fake_run_privileged):
+            r = self.client.post("/api/maintain/fix-all",
+                                 json={"force_initramfs": True, "no_upgrade": True})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(calls, [["--fix-all", "--force-initramfs", "--no-upgrade"]])
+        self.assertIn("fix-all", r.get_json()["action"])
+
+    def test_readonly_78_triggers_auto_repair(self):
+        """Exit 78 (read-only service mount namespace) must auto-repair and
+        tell the UI to retry — not just fail."""
+        from monitor import fixes
+        with patch.object(fixes, "_pkg_manager", return_value="apt"), \
+             patch.object(fixes, "run_privileged",
+                          return_value=(78, "", "monitoring-package: required "
+                                                "filesystem is read-only: "
+                                                "/usr, /etc, /boot\n"
+                                                "ReadWritePaths guidance…")), \
+             patch.object(fixes, "auto_repair_readonly",
+                          return_value=(True, "repair scheduled")):
+            r = self.client.post("/api/fix", json={"action": "upgrade"})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["read_only_mount"])
+        self.assertTrue(body["repair_scheduled"])
+        self.assertEqual(body["exit_code"], 78)
+        self.assertIn("read-only", body["error"])
+        self.assertNotIn("result", body)  # the action did not run yet
+
+    def test_readonly_78_without_repair_stays_500(self):
+        """When the self-repair helper cannot run, the failure must stay a
+        real 500 with the reason attached."""
+        from monitor import fixes
+        with patch.object(fixes, "_pkg_manager", return_value="apt"), \
+             patch.object(fixes, "run_privileged",
+                          return_value=(78, "", "required filesystem is "
+                                                "read-only: /usr")), \
+             patch.object(fixes, "auto_repair_readonly",
+                          return_value=(False, "helper is not installed")):
+            r = self.client.post("/api/fix", json={"action": "autoremove"})
+        self.assertEqual(r.status_code, 500)
+        body = r.get_json()
+        self.assertTrue(body["read_only_mount"])
+        self.assertFalse(body.get("repair_scheduled"))
+        self.assertEqual(body["repair_error"], "helper is not installed")
+
+    def test_maintain_repair_78_auto_repair(self):
+        """System & Kernel repair returning 78 must auto-repair the unit."""
+        from monitor import maintain as maintain_mod
+        with patch.object(maintain_mod, "_helper_path",
+                          return_value=os.path.join(REPO, "privileged",
+                                                    "monitoring-maintain")), \
+             patch.object(maintain_mod, "run_privileged",
+                          return_value=(78, "", "[fail] package-db: package "
+                                                "paths are read-only")), \
+             patch.object(maintain_mod, "auto_repair_readonly",
+                          return_value=(True, "repair scheduled")):
+            r = self.client.post("/api/maintain/repair", json={})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["repair_scheduled"])
+        self.assertTrue(body["read_only_mount"])
+
+    def test_fix_all_marks_exit78_and_repairs(self):
+        """Diagnostics fix-all must record exit 78 and auto-repair."""
+        from monitor import diagnostics as diag
+        issues = {"issues": {
+            "critical": [{"id": "x1", "fix": "fix-broken-packages",
+                          "name": "broken", "detail": "", "category": "Packages",
+                          "severity": "critical"}],
+            "warnings": [], "info": []}, "score": 50}
+
+        def fake_run_privileged(name, args=None, timeout=60):
+            if name == "monitoring-package":
+                return (78, "", "monitoring-package: required filesystem is "
+                                "read-only: /usr, /etc")
+            return (0, "", "")
+
+        with patch.object(diag, "_diag_scan", return_value=issues), \
+             patch.object(diag, "_pkg_manager", return_value="apt"), \
+             patch.object(diag, "run_privileged", side_effect=fake_run_privileged), \
+             patch.object(diag, "auto_repair_readonly",
+                          return_value=(True, "repair scheduled")):
+            r = self.client.post("/api/troubleshooting/fix-all",
+                                 json={"fixes": ["fix-broken-packages"]})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["repair_scheduled"])
+        self.assertEqual(body["failed"][0]["exit_code"], 78)
+        self.assertIn("read-only", body["failed"][0]["output"])
+
+    def test_output_keeps_head_on_truncation(self):
+        """Long helper output must keep the diagnostic FIRST lines."""
+        from monitor import fixes
+        head = "monitoring-package: required filesystem is read-only: /usr"
+        text = head + "\n" + "padding " * 300
+        out = fixes._output("", text)
+        self.assertIn("read-only", out.splitlines()[0])
+        self.assertIn("[truncated]", out)
+        self.assertLessEqual(len(out), 510)
 
     def test_dpkg_audit_detects_half_installed_output_without_error_word(self):
         from monitor import packages
@@ -417,6 +553,22 @@ class HelperValidation(unittest.TestCase):
         self.assertEqual(self._helper("monitoring-maintain").returncode, 2)
         self.assertEqual(self._helper("monitoring-maintain", "--repair", "--extra").returncode, 2)
         self.assertEqual(self._helper("monitoring-maintain", "--check", "extra").returncode, 2)
+        self.assertEqual(self._helper("monitoring-maintain", "--fix-all", "--extra").returncode, 2)
+        self.assertEqual(self._helper("monitoring-maintain", "--fix-all", "--force-initramfs", "--no-upgrade", "x").returncode, 2)
+        self.assertEqual(self._helper("monitoring-maintain", "--fix-all", "--bogus", "--no-upgrade").returncode, 2)
+
+    def test_self_update_validation(self):
+        self.assertEqual(self._helper("monitoring-self-update", "--bogus").returncode, 2)
+        self.assertEqual(self._helper("monitoring-self-update").returncode, 2)
+        self.assertEqual(self._helper("monitoring-self-update", "--update", "--branch", "$(id)").returncode, 2)
+        self.assertEqual(self._helper("monitoring-self-update", "--update", "--branch", "a/b").returncode, 2)
+        self.assertEqual(self._helper("monitoring-self-update", "--update", "--extra").returncode, 2)
+        self.assertEqual(self._helper("monitoring-self-update", "--update", "--branch").returncode, 2)
+        # --check is read-only and must always answer (exit 0), even offline.
+        r = self._helper("monitoring-self-update", "--check")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("installed", r.stdout)
+        self.assertIn("available", r.stdout)
 
     def test_perf_validation(self):
         self.assertEqual(self._helper("monitoring-perf", "--bogus").returncode, 2)
@@ -444,9 +596,10 @@ class HelperValidation(unittest.TestCase):
 
     def test_all_helpers_check(self):
         for name in ("monitoring-systemctl", "monitoring-self-repair", "monitoring-package",
-                     "monitoring-maintain", "monitoring-perf", "monitoring-journal-vacuum",
-                     "monitoring-clean-old-logs", "monitoring-vm", "monitoring-vm-config",
-                     "monitoring-qemu", "monitoring-kill", "monitoring-zombie-clean",
+                     "monitoring-maintain", "monitoring-perf", "monitoring-self-update",
+                     "monitoring-journal-vacuum", "monitoring-clean-old-logs",
+                     "monitoring-vm", "monitoring-vm-config", "monitoring-qemu",
+                     "monitoring-kill", "monitoring-zombie-clean",
                      "monitoring-privilege-check"):
             r = self._helper(name, "--check")
             self.assertEqual(r.returncode, 0, f"{name} --check failed: {r.stderr}")
@@ -943,3 +1096,109 @@ class MaintainKernelLogic(unittest.TestCase):
             m.os.uname = real_uname
         self.assertTrue(status["module_map"]["exists"])
         self.assertTrue(status["module_map"]["stale"])
+
+    def test_check_status_reports_fix_all_issues(self):
+        """check_status must expose a machine-readable fix-all issue list."""
+        m = self.mod
+        self._mk(["6.8.0-45-generic"], boot_files=())
+        m.__dict__["_initramfs_tool"] = lambda: "update-initramfs"
+        m.__dict__["_bootloader_meta"] = lambda: ("update-grub",
+                                                  "/boot/grub/grub.cfg")
+        m.__dict__["_fwupd_refresh_recommended"] = lambda: True
+        status = m.check_status()
+        ids = [i["id"] for i in status["fix_all"]["issues"]]
+        self.assertIn("initramfs", ids)
+        self.assertIn("fwupd", ids)
+        self.assertIn("bootloader", ids)
+
+    # ---- run_fix_all -----------------------------------------------------
+    def _stub_fix_all_steps(self, m, failures=None, manager=None):
+        """Replace every fix-all step with a recording stub."""
+        failures = failures or {}
+        calls = []
+
+        def step(name):
+            def _fn(*_args):  # accepts the manager arg passed to some steps
+                calls.append(name)
+                return (failures.get(name) is None), "ok" if name not in failures else "boom"
+            return _fn
+
+        m.__dict__["_step_package_db"] = step("package-db")
+        m.__dict__["_step_module_map"] = step("module-map")
+        m.__dict__["_step_initramfs"] = step("initramfs")
+        m.__dict__["_step_bootloader"] = step("bootloader")
+        m.__dict__["_step_fwupd"] = step("fwupd")
+        m.__dict__["_pkg_manager"] = lambda: manager
+        m.__dict__["_package_paths_read_only"] = lambda: []  # namespace is fine
+        m.__dict__["_step_package_refresh"] = step("package-refresh")
+        m.__dict__["_step_full_upgrade"] = step("full-upgrade")
+        m.__dict__["_step_autoremove"] = step("autoremove")
+        m.__dict__["_step_clean"] = step("clean")
+        return calls
+
+    def test_run_fix_all_reports_every_step(self):
+        """Every step must produce its own line; optional failures are warnings."""
+        m = self.mod
+        calls = self._stub_fix_all_steps(m, failures={"bootloader": True},
+                                         manager=None)
+        code, lines = m.run_fix_all(force_initramfs=False, no_upgrade=False)
+        text = "\n".join(lines)
+        self.assertEqual(code, 0)  # bootloader is optional -> still completes
+        self.assertIn("[ok] package-db", text)
+        self.assertIn("[fail] bootloader: boom", text)
+        self.assertIn("[skip] package-refresh/full-upgrade/autoremove/clean: "
+                      "no supported package manager found", text)
+        self.assertIn("[ok] fix-all completed (1 warning(s): bootloader)", text)
+        self.assertEqual(calls, ["package-db", "module-map", "initramfs",
+                                 "bootloader", "fwupd"])
+
+    def test_run_fix_all_runs_upgrade_chain_with_manager(self):
+        m = self.mod
+        calls = self._stub_fix_all_steps(m, manager="apt")
+        code, lines = m.run_fix_all(False, False)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ["package-db", "module-map", "initramfs",
+                                 "bootloader", "fwupd", "package-refresh",
+                                 "full-upgrade", "autoremove", "clean"])
+        self.assertIn("[ok] full-upgrade", "\n".join(lines))
+
+    def test_run_fix_all_no_upgrade_skips_full_upgrade(self):
+        m = self.mod
+        calls = self._stub_fix_all_steps(m, manager="apt")
+        code, lines = m.run_fix_all(False, True)
+        self.assertEqual(code, 0)
+        self.assertNotIn("full-upgrade", calls)
+        self.assertIn("[skip] full-upgrade: skipped by --no-upgrade",
+                      "\n".join(lines))
+
+    def test_run_fix_all_fails_when_required_step_fails(self):
+        m = self.mod
+        self._stub_fix_all_steps(m, failures={"package-db": True}, manager="apt")
+        code, lines = m.run_fix_all(False, False)
+        text = "\n".join(lines)
+        self.assertEqual(code, 1)
+        self.assertIn("[fail] package-db: boom", text)
+        self.assertIn("[fail] failed required steps: package-db", text)
+
+    def test_run_repair_readonly_namespace_returns_78(self):
+        """An old monitoring.service unit (read-only /usr) must be reported as
+        exit 78 with guidance, matching the monitoring-package contract."""
+        m = self.mod
+        m.__dict__["_pkg_manager"] = lambda: "apt"
+        m.__dict__["_package_paths_read_only"] = lambda: ["/usr", "/etc"]
+        code, lines = m.run_repair(force_initramfs=False)
+        self.assertEqual(code, 78)
+        text = "\n".join(lines)
+        self.assertIn("read-only", text)
+        self.assertIn("ReadWritePaths", text)
+        self.assertIn("do not chmod /usr", text)
+
+    def test_run_fix_all_readonly_namespace_returns_78(self):
+        m = self.mod
+        m.__dict__["_pkg_manager"] = lambda: "apt"
+        m.__dict__["_package_paths_read_only"] = lambda: ["/boot"]
+        code, lines = m.run_fix_all(False, False)
+        self.assertEqual(code, 78)
+        text = "\n".join(lines)
+        self.assertIn("package paths are read-only", text)
+        self.assertIn("monitoring-self-repair", text)

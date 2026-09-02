@@ -2,6 +2,10 @@
 
 **Version 2.6.0** — new dashboard tool for system/kernel software repair,
 full system upgrade, and reversible performance tuning.
+**Version 2.7.0** — adds the one-click **Fix All System & Kernel Issues**
+pipeline, in-dashboard self-update (Help → Dashboard Update), a read-only
+performance-health panel, and `update.sh --check` (see
+`SYSTEM_KERNEL_IMPROVEMENTS.md` for the full review).
 
 ---
 

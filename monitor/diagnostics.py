@@ -17,6 +17,7 @@ from .metrics import _cpu_model, _pretty_distro, _read_temp_c
 from .packages import (FIX_COMMANDS, PACKAGE_MUTATION_LOCK, _dpkg_audit,
                        _pkg_manager, _updatable_packages)
 from .security import rate_limit
+from .selfrepair import auto_repair_readonly
 
 bp = Blueprint("diagnostics", __name__)
 
@@ -844,6 +845,20 @@ def api_troubleshooting_verify():
     return jsonify({"results": results, "timestamp": datetime.now().isoformat()})
 
 
+def _clip_output(text, limit=500):
+    """Keep BOTH the head and the tail of long helper output.
+
+    The head of a failed package operation states WHY it failed (e.g.
+    \"required filesystem is read-only: /usr, /etc\") and must survive
+    truncation so the UI can detect and auto-repair the condition.
+    """
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    head = max(1, limit // 2)
+    return text[:head] + "\n…[truncated]…\n" + text[-(limit - head):]
+
+
 @bp.route("/api/troubleshooting/fix-all", methods=["POST"])
 @rate_limit("5 per minute")
 def api_troubleshooting_fix_all():
@@ -876,6 +891,7 @@ def api_troubleshooting_fix_all():
         fixes_needed = fixes_needed.intersection(set(fixes_to_run))
 
     def record_fix(fix_result, code=0):
+        fix_result["exit_code"] = code
         if code == 0:
             results["fixed"].append(fix_result)
         else:
@@ -902,7 +918,7 @@ def api_troubleshooting_fix_all():
                 cmd = TROUBLESHOOT_FIXES.get(mgr, {}).get("broken_packages", [])
                 if cmd:
                     code, out, err = helper_list("monitoring-package", cmd)
-                    fix_result["output"] = (out or err or "Done").strip()[-500:]
+                    fix_result["output"] = (_clip_output(out or err or "Done"))
                     record_fix(fix_result, code)
                 else:
                     fix_result["output"] = f"No fix available for {mgr}"
@@ -912,31 +928,31 @@ def api_troubleshooting_fix_all():
                 c1, o1, e1 = helper_run("monitoring-journal-vacuum")
                 c2, o2, e2 = helper_run("monitoring-clean-old-logs", ["--min-age-days", "7"])
                 code = 0 if c1 == 0 and c2 == 0 else 1
-                fix_result["output"] = ((o1 or e1 or "") + (o2 or e2 or "")).strip()[-500:] or "Logs cleared"
+                fix_result["output"] = _clip_output((o1 or e1 or "") + (o2 or e2 or "")) or "Logs cleared"
                 record_fix(fix_result, code)
 
             elif fix == "clear-old-logs":
                 code, out, err = helper_run("monitoring-clean-old-logs", ["--min-age-days", "30"])
-                fix_result["output"] = (out or err or "Old logs cleared").strip()[-500:]
+                fix_result["output"] = _clip_output(out or err or "Old logs cleared")
                 record_fix(fix_result, code)
 
             elif fix == "vacuum-journal":
                 code, out, err = helper_run("monitoring-journal-vacuum")
-                fix_result["output"] = (out or err or "Journal vacuumed").strip()[-500:]
+                fix_result["output"] = _clip_output(out or err or "Journal vacuumed")
                 record_fix(fix_result, code)
 
             elif fix == "update-packages" and mgr:
                 cmd = FIX_COMMANDS.get(mgr, {}).get("update", [])
                 if cmd:
                     code, out, err = helper_list("monitoring-package", cmd)
-                    fix_result["output"] = (out or err or "Done").strip()[-500:]
+                    fix_result["output"] = (_clip_output(out or err or "Done"))
                     record_fix(fix_result, code)
 
             elif fix == "upgrade-packages" and mgr:
                 cmd = FIX_COMMANDS.get(mgr, {}).get("upgrade", [])
                 if cmd:
                     code, out, err = helper_list("monitoring-package", cmd)
-                    fix_result["output"] = (out or err or "Upgrade complete").strip()[-500:]
+                    fix_result["output"] = _clip_output(out or err or "Upgrade complete")
                     record_fix(fix_result, code)
                 else:
                     fix_result["output"] = f"No upgrade command available for {mgr}"
@@ -957,12 +973,12 @@ def api_troubleshooting_fix_all():
                         c2 = c2 or cr
                         o2 += orr or er or ""
                     code = 0 if code == 0 and c2 == 0 else 1
-                    fix_result["output"] = ((out or "") + (o2 or "")).strip()[-500:] or "Reset complete"
+                    fix_result["output"] = _clip_output((out or "") + (o2 or "")) or "Reset complete"
                     record_fix(fix_result, code)
 
             elif fix == "clean-zombies":
                 code, out, err = helper_run("monitoring-zombie-clean")
-                fix_result["output"] = (out or err or "Zombie cleanup complete").strip()[-500:]
+                fix_result["output"] = _clip_output(out or err or "Zombie cleanup complete")
                 record_fix(fix_result, code)
 
             else:
@@ -975,6 +991,16 @@ def api_troubleshooting_fix_all():
 
     if not fixes_needed:
         results["skipped"].append({"fix": "all", "output": "No fixes needed - system is healthy!"})
+
+    # A failed package fix with exit 78 means the service mount namespace is
+    # read-only (old monitoring.service unit). Repair the unit automatically
+    # and tell the UI to wait for the restart and re-run fix-all.
+    if any(r.get("exit_code") == 78 for r in results["failed"]):
+        applied, repair_message = auto_repair_readonly()
+        if applied:
+            results["repair_scheduled"] = True
+            results["repair_message"] = repair_message[:300]
+            _audit("fix-all", outcome="repair-scheduled")
 
     _audit("fix-all", fixed=",".join(r["fix"] for r in results["fixed"]),
            failed=",".join(r["fix"] for r in results["failed"]),

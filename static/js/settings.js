@@ -6,6 +6,7 @@ async function fillHelp(){
   $('#helpPython').textContent='Python '+(v.python||'--');
   $('#helpUser').textContent=v.root?'root (full control)':'user'+(v.sudo?' (passwordless sudo)':'');
   $('#helpUrl').textContent=location.origin;
+  if(typeof loadAppUpdate==='function')loadAppUpdate(true);
 }
 function openDesktopApp(){
   toast('Launching desktop window…','info');
