@@ -44,6 +44,8 @@ def privileged_tool(name):
         "monitoring-systemctl",
         "monitoring-self-repair",
         "monitoring-package",
+        "monitoring-maintain",
+        "monitoring-perf",
         "monitoring-journal-vacuum",
         "monitoring-clean-old-logs",
         "monitoring-vm",

@@ -29,6 +29,7 @@ BLUEPRINTS = [
     ("monitor.packages", "bp"),
     ("monitor.selfrepair", "bp"),
     ("monitor.fixes", "bp"),
+    ("monitor.maintain", "bp"),
     ("monitor.diagnostics", "bp"),
     ("monitor.desktop", "bp"),
     ("monitor.vms", "bp"),

@@ -1,6 +1,6 @@
 # Monitoring — Universal Linux System Console
 
-Monitor, fix and manage any Linux machine from one enterprise-grade console — **live metrics with history charts, threshold alerting, health checks, one-click fixes, processes, systemd services, live logs, libvirt VMs and network inspection.** 100% local-first: **no accounts, no cloud, no telemetry** — pro tooling for your own machine.
+Monitor, fix and manage any Linux machine from one enterprise-grade console — **live metrics with history charts, threshold alerting, health checks, one-click fixes, processes, systemd services, live logs, libvirt VMs, network inspection and a dedicated System & Kernel tool for repair, full system upgrades and performance tuning.** 100% local-first: **no accounts, no cloud, no telemetry** — pro tooling for your own machine.
 
 Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rocky/Alma, openSUSE, Arch/Manjaro, Alpine.
 
@@ -94,7 +94,12 @@ service.
 - Live CPU / RAM / Disk / Swap metrics with ring gauges, sparkline history, load average, temperature, battery, uptime
 - **Resource timeline** — CPU/RAM/throughput area chart with hover tooltip and 5m/15m/30m/1h ranges, backed by a server-side metrics ring buffer (charts survive page reloads)
 - System health checks: disk usage, pending updates, broken packages, failed services, kernel errors, zombie processes
-- One-click safe fixes: update, upgrade, autoremove, clean cache, fix broken, clear logs — package-manager aware (apt/dnf/yum/zypper/pacman/apk)
+- One-click safe fixes: update, upgrade, **full-upgrade (incl. new kernels)**, autoremove, clean cache, fix broken, clear logs — package-manager aware (apt/dnf/yum/zypper/pacman/apk)
+- **System & Kernel tool (sidebar → System & Kernel)** — one tool for system software health:
+  - **System Upgrade** — refresh package lists + full system upgrade including new kernels (`apt full-upgrade` / `dnf upgrade` / `zypper dist-upgrade` / `pacman -Syu` / `apk upgrade`), with pending-update list and reboot-required warning
+  - **System & Kernel Repair** — finishes interrupted package transactions, repairs dependency state, regenerates the kernel module map (`depmod -a`) and rebuilds missing/stale initramfs images for every installed kernel (the classic "boot fails after a kernel update" fix) — each step reported individually
+  - **Performance Tuning** — reversible CPU governor / `vm.swappiness` / I/O scheduler profiles (balanced, max performance, powersave), persisted across reboots, one-click revert to your exact original values
+  - **Kernel & Firmware** — running vs. newest installed kernel, reboot state, fwupd status, kernel error log link
 - Self-repair: when a package fix hits the service's read-only mount namespace (`required filesystem is read-only: /usr, /etc, /boot`), the dashboard can fix it itself — patch `monitoring.service` with `ReadWritePaths=/usr /etc /boot /efi`, `daemon-reload` and restart — through the service account, no root shell
 - Mounted disks overview + listening ports + system info banner (CPU model, kernel, uptime, live network rate)
 

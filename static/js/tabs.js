@@ -1,4 +1,4 @@
-const TAB_NAMES=['overview','processes','network','services','vms','logs','alerts','troubleshooting','settings','help'];
+const TAB_NAMES=['overview','processes','network','services','vms','logs','alerts','troubleshooting','settings','help','maintain'];
 // Tab loaders are lazy thunks (not direct function references) so that:
 //   * load order between files stops mattering, and
 //   * a missing/broken loader only fails when that tab is opened, not at boot.
@@ -12,7 +12,8 @@ const TAB_LOADERS={
   alerts:()=>renderAlerts(),
   troubleshooting:()=>loadTroubleshooting(),
   settings:()=>renderSettings(),
-  help:()=>fillHelp()
+  help:()=>fillHelp(),
+  maintain:()=>loadMaintain(true)
 };
 let currentTab='overview';
 function showTab(name){

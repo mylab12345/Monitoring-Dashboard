@@ -24,31 +24,37 @@ def _pkg_manager():
 FIX_COMMANDS = {
     "apt":    {"update": ["monitoring-package", "--manager", "apt", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "apt", "--action", "upgrade"],
+               "full-upgrade": ["monitoring-package", "--manager", "apt", "--action", "full-upgrade"],
                "autoremove": ["monitoring-package", "--manager", "apt", "--action", "autoremove"],
                "clean": ["monitoring-package", "--manager", "apt", "--action", "clean"],
                "fix-broken": ["monitoring-package", "--manager", "apt", "--action", "fix-broken"]},
     "dnf":    {"update": ["monitoring-package", "--manager", "dnf", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "dnf", "--action", "upgrade"],
+               "full-upgrade": ["monitoring-package", "--manager", "dnf", "--action", "full-upgrade"],
                "autoremove": ["monitoring-package", "--manager", "dnf", "--action", "autoremove"],
                "clean": ["monitoring-package", "--manager", "dnf", "--action", "clean"],
                "fix-broken": ["monitoring-package", "--manager", "dnf", "--action", "fix-broken"]},
     "yum":    {"update": ["monitoring-package", "--manager", "yum", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "yum", "--action", "upgrade"],
+               "full-upgrade": ["monitoring-package", "--manager", "yum", "--action", "full-upgrade"],
                "autoremove": ["monitoring-package", "--manager", "yum", "--action", "autoremove"],
                "clean": ["monitoring-package", "--manager", "yum", "--action", "clean"],
                "fix-broken": ["monitoring-package", "--manager", "yum", "--action", "fix-broken"]},
     "zypper": {"update": ["monitoring-package", "--manager", "zypper", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "zypper", "--action", "upgrade"],
+               "full-upgrade": ["monitoring-package", "--manager", "zypper", "--action", "full-upgrade"],
                "autoremove": ["monitoring-package", "--manager", "zypper", "--action", "autoremove"],
                "clean": ["monitoring-package", "--manager", "zypper", "--action", "clean"],
                "fix-broken": ["monitoring-package", "--manager", "zypper", "--action", "fix-broken"]},
     "pacman": {"update": ["monitoring-package", "--manager", "pacman", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "pacman", "--action", "upgrade"],
+               "full-upgrade": ["monitoring-package", "--manager", "pacman", "--action", "full-upgrade"],
                "autoremove": ["monitoring-package", "--manager", "pacman", "--action", "autoremove"],
                "clean": ["monitoring-package", "--manager", "pacman", "--action", "clean"],
                "fix-broken": ["monitoring-package", "--manager", "pacman", "--action", "fix-broken"]},
     "apk":    {"update": ["monitoring-package", "--manager", "apk", "--action", "update"],
                "upgrade": ["monitoring-package", "--manager", "apk", "--action", "upgrade"],
+               "full-upgrade": ["monitoring-package", "--manager", "apk", "--action", "full-upgrade"],
                "autoremove": ["monitoring-package", "--manager", "apk", "--action", "autoremove"],
                "clean": ["monitoring-package", "--manager", "apk", "--action", "clean"],
                "fix-broken": ["monitoring-package", "--manager", "apk", "--action", "fix-broken"]},
@@ -61,11 +67,12 @@ PACKAGE_MUTATION_LOCK = threading.Lock()
 
 # Every action /api/fix knows how to run. Anything outside this set is a 400 so
 # the UI can never report success for an operation that did not execute.
-FIX_ACTIONS = frozenset({"update", "upgrade", "autoremove", "clean",
-                         "fix-broken", "clear-logs"})
+FIX_ACTIONS = frozenset({"update", "upgrade", "full-upgrade", "autoremove",
+                         "clean", "fix-broken", "clear-logs"})
 
 # UI wording -> canonical action name.
-FIX_ALIASES = {"vacuum-journal": "clear-logs", "clear-cache": "clean"}
+FIX_ALIASES = {"vacuum-journal": "clear-logs", "clear-cache": "clean",
+               "system-upgrade": "full-upgrade"}
 
 _updatable_cache = {"data": None, "ts": 0}
 _updatable_lock = threading.Lock()
@@ -167,6 +174,18 @@ def _updatable_packages_uncached():
     _updatable_cache["data"] = result
     _updatable_cache["ts"] = time.time()
     return result
+
+
+def clear_updatable_cache():
+    """Drop the cached upgradable-package list (after a successful mutation).
+
+    Without this, "Pending Updates" stays stale for up to the 5-minute TTL
+    after an upgrade/repair, and the operator cannot see that the system is
+    actually current (or that new updates appeared).
+    """
+    with _updatable_lock:
+        _updatable_cache["data"] = None
+        _updatable_cache["ts"] = 0
 
 
 @bp.route("/api/updates")

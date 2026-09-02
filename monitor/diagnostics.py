@@ -309,6 +309,22 @@ def _diag_scan():
                 verify=[_diag_ev("Re-check process CPU", "below 75%", "ps -eo pid,pcpu,comm --sort=-pcpu | head")],
                 deep={"kind": "procs", "title": "Top CPU consumers", "columns": ["PID", "Process", "CPU %", "MEM %", "RSS"],
                       "rows": _top_processes(6, "cpu")}))
+        # Thermal throttling risk: sustained high temperature degrades the
+        # whole system (CPU clocks down, latency climbs).
+        temp = _read_temp_c()
+        if temp is not None and temp >= 85:
+            put("warnings", _diag_issue(
+                "thermal_throttle", "CPU Thermal Throttling Risk",
+                f"CPU temperature is {temp:.0f} \u00b0C \u2014 the kernel may be throttling clocks to protect the hardware.",
+                "cpu", "warning", "thermo",
+                evidence=[_diag_ev("CPU temperature", f"{temp:.0f} \u00b0C", "sensors")],
+                impact="Throttled CPUs reduce performance system-wide; sustained heat can also damage components.",
+                recommended_fix={
+                    "id": None, "label": "Reduce heat load",
+                    "description": "Clean cooling vents, check fans, reduce ambient temperature, or lower sustained load (see Processes).",
+                    "risk": "low", "commands": ["sensors", "ps -eo pid,pcpu,comm --sort=-pcpu | head -10"],
+                },
+                verify=[_diag_ev("Re-check temperature", "below 85 \u00b0C", "sensors")]))
     except Exception:
         pass
 
@@ -512,6 +528,67 @@ def _diag_scan():
             },
             verify=[_diag_ev("Re-check current-boot kernel errors", "no new errors after remediation/reboot", kernel_cmd)],
             deep={"kind": "logs", "title": "Current-boot kernel errors", "lines": error_lines[:8]}))
+
+    # Kernel update pending: a new kernel is installed but not yet running.
+    try:
+        import glob as _glob
+        running = os.uname().release
+        installed = sorted(
+            (os.path.basename(p) for p in _glob.glob("/lib/modules/*")
+             if re.fullmatch(r"[0-9][A-Za-z0-9._+-]*", os.path.basename(p))),
+            reverse=True)
+        if installed and installed[0] != running:
+            put("info", _diag_issue(
+                "kernel_update_pending", "Kernel Update Not Active Yet",
+                f"Running kernel {running} is not the newest installed kernel ({installed[0]}).",
+                "kernel", "info", "zap",
+                evidence=[_diag_ev("Running kernel", running, "uname -r"),
+                          _diag_ev("Newest installed", installed[0], "ls /lib/modules")],
+                impact="The security and hardware fixes in the new kernel only apply after a reboot. "
+                       "Schedule one when convenient; a reboot with pending updates is normal.",
+                recommended_fix={
+                    "id": None, "label": "Reboot to activate the new kernel",
+                    "description": "No automatic reboot is performed. Close applications and reboot when convenient, then re-check.",
+                    "risk": "low", "commands": ["uname -r", "reboot"],
+                },
+                verify=[_diag_ev("Re-check running kernel", "newest installed kernel", "uname -r")]))
+    except Exception:
+        pass
+
+    # Performance tuning opportunity: conservative kernel defaults.
+    try:
+        governor = None
+        try:
+            with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") as fh:
+                governor = fh.read().strip()
+        except OSError:
+            pass
+        swappiness = None
+        try:
+            with open("/proc/sys/vm/swappiness") as fh:
+                swappiness = fh.read().strip()
+        except OSError:
+            pass
+        if governor in ("powersave", "conservative") or (
+                swappiness is not None and swappiness.isdigit()
+                and int(swappiness) >= 20):
+            put("info", _diag_issue(
+                "perf_tuning", "Performance Tuning Available",
+                "Kernel is on conservative defaults (" + (
+                    f"governor {governor}, " if governor else "") + (
+                    f"swappiness {swappiness}" if swappiness else "defaults") + ")",
+                "cpu", "info", "cpu",
+                evidence=[_diag_ev("CPU governor", governor or "unmanaged (no cpufreq)", "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"),
+                          _diag_ev("vm.swappiness", swappiness or "n/a", "sysctl vm.swappiness")],
+                impact="Balanced tuning (schedutil governor, lower swappiness, modern I/O scheduler) can reduce latency and swap churn on interactive workloads.",
+                recommended_fix={
+                    "id": None, "label": "Apply a performance profile",
+                    "description": "Open System & Kernel → Performance Tuning in the dashboard to apply a balanced or maximum-performance profile (reversible).",
+                    "risk": "low", "commands": ["cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", "sysctl vm.swappiness"],
+                },
+                verify=[_diag_ev("Re-check governor/swappiness", "profile applied", "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor; sysctl vm.swappiness")]))
+    except Exception:
+        pass
 
     # -------------------------------------------------- 8. Log hygiene (disk)
     code, old_lines = run_lines(["find", "/var/log", "-type", "f", "-name", "*.gz", "-mtime", "+30"])

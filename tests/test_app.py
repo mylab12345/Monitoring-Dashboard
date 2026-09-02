@@ -73,7 +73,8 @@ class ApiBaseline(unittest.TestCase):
         for path in ("/api/health", "/api/version", "/api/status", "/api/systeminfo",
                      "/api/history", "/api/processes", "/api/services", "/api/disks",
                      "/api/network", "/api/ports", "/api/logs", "/api/checks",
-                     "/api/troubleshooting", "/api/privileges", "/api/self-repair"):
+                     "/api/troubleshooting", "/api/privileges", "/api/self-repair",
+                     "/api/maintain"):
             r = self._get(path)
             json.loads(r.get_data())
 
@@ -241,6 +242,71 @@ class MaintenanceBackend(unittest.TestCase):
                 manager,
             )
 
+    def test_full_upgrade_has_a_command_for_every_supported_manager(self):
+        """The System & Kernel tool's full upgrade must work on every distro."""
+        from monitor import packages
+        self.assertIn("full-upgrade", packages.FIX_ACTIONS)
+        self.assertEqual(packages.FIX_ALIASES.get("system-upgrade"),
+                         "full-upgrade")
+        for manager in ("apt", "dnf", "yum", "zypper", "pacman", "apk"):
+            cmd = packages.FIX_COMMANDS[manager]["full-upgrade"]
+            self.assertEqual(cmd[0], "monitoring-package")
+            self.assertEqual(cmd[2], manager)
+            self.assertEqual(cmd[4], "full-upgrade")
+
+    def test_full_upgrade_runs_refresh_then_upgrade_on_apt(self):
+        from monitor import fixes
+        calls = []
+
+        def fake_run_privileged(helper, args=None, timeout=60):
+            calls.append(list(args or []))
+            return (0, "ok", "")
+
+        with patch.object(fixes, "run_privileged", side_effect=fake_run_privileged), \
+             patch.object(fixes, "_pkg_manager", return_value="apt"):
+            response = self.client.post("/api/fix", json={"action": "full-upgrade"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [["--manager", "apt", "--action", "update"],
+                                 ["--manager", "apt", "--action", "full-upgrade"]])
+
+    def test_full_upgrade_uses_upgrade_command_on_dnf(self):
+        from monitor import fixes
+        calls = []
+
+        def fake_run_privileged(helper, args=None, timeout=60):
+            calls.append(list(args or []))
+            return (0, "ok", "")
+
+        with patch.object(fixes, "run_privileged", side_effect=fake_run_privileged), \
+             patch.object(fixes, "_pkg_manager", return_value="dnf"):
+            response = self.client.post("/api/fix", json={"action": "full-upgrade"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, [["--manager", "dnf", "--action", "upgrade"]])
+
+    def test_maintain_mutation_validation(self):
+        """System & Kernel endpoints must validate input and degrade honestly."""
+        r = self.client.post("/api/maintain/perf", json={"profile": "turbo"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("error", r.get_json())
+        r = self.client.post("/api/maintain/perf",
+                             json={"profile": "balanced", "swappiness": 999})
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/maintain/perf",
+                             json={"profile": "balanced", "iosched": "$(rm)"})
+        self.assertEqual(r.status_code, 400)
+        # Without the installed helper the endpoints must say so (503), never
+        # report success. Patch the helper lookup so the test is independent
+        # of whether helpers happen to be installed on this host.
+        from monitor import maintain as maintain_mod
+        with patch.object(maintain_mod, "_helper_path",
+                          return_value="/nonexistent/monitoring-maintain"):
+            r = self.client.post("/api/maintain/repair", json={})
+            self.assertEqual(r.status_code, 503)
+        with patch.object(maintain_mod, "_helper_path",
+                          return_value="/nonexistent/monitoring-perf"):
+            r = self.client.post("/api/maintain/perf", json={"profile": "balanced"})
+            self.assertEqual(r.status_code, 503)
+
     def test_dpkg_audit_detects_half_installed_output_without_error_word(self):
         from monitor import packages
         with patch.object(packages, "which", return_value=True), \
@@ -344,6 +410,21 @@ class HelperValidation(unittest.TestCase):
         self.assertEqual(self._helper("monitoring-package", "--manager", "evil", "--action", "update").returncode, 2)
         self.assertEqual(self._helper("monitoring-package", "--manager", "apt", "--action", "explode").returncode, 2)
         self.assertEqual(self._helper("monitoring-package", "apt", "update").returncode, 2)
+        self.assertEqual(self._helper("monitoring-package", "--manager", "apt", "--action", "full-upgrade", "--check").returncode, 0)
+
+    def test_maintain_validation(self):
+        self.assertEqual(self._helper("monitoring-maintain", "--bogus").returncode, 2)
+        self.assertEqual(self._helper("monitoring-maintain").returncode, 2)
+        self.assertEqual(self._helper("monitoring-maintain", "--repair", "--extra").returncode, 2)
+        self.assertEqual(self._helper("monitoring-maintain", "--check", "extra").returncode, 2)
+
+    def test_perf_validation(self):
+        self.assertEqual(self._helper("monitoring-perf", "--bogus").returncode, 2)
+        self.assertEqual(self._helper("monitoring-perf", "--apply", "--profile", "turbo").returncode, 2)
+        self.assertEqual(self._helper("monitoring-perf", "--apply", "--profile", "balanced", "--swappiness", "abc").returncode, 2)
+        self.assertEqual(self._helper("monitoring-perf", "--apply", "--profile", "balanced", "--swappiness", "101").returncode, 2)
+        self.assertEqual(self._helper("monitoring-perf", "--apply", "--profile", "balanced", "--iosched", "$(touch /tmp/x)").returncode, 2)
+        self.assertEqual(self._helper("monitoring-perf", "--apply", "--profile", "balanced", "--extra", "x").returncode, 2)
 
     def test_clean_logs_range(self):
         self.assertEqual(self._helper("monitoring-clean-old-logs", "--min-age-days", "-5").returncode, 2)
@@ -362,7 +443,8 @@ class HelperValidation(unittest.TestCase):
         self.assertEqual(self._helper("monitoring-self-repair").returncode, 2)
 
     def test_all_helpers_check(self):
-        for name in ("monitoring-systemctl", "monitoring-self-repair", "monitoring-package", "monitoring-journal-vacuum",
+        for name in ("monitoring-systemctl", "monitoring-self-repair", "monitoring-package",
+                     "monitoring-maintain", "monitoring-perf", "monitoring-journal-vacuum",
                      "monitoring-clean-old-logs", "monitoring-vm", "monitoring-vm-config",
                      "monitoring-qemu", "monitoring-kill", "monitoring-zombie-clean",
                      "monitoring-privilege-check"):

@@ -1,0 +1,445 @@
+#!/usr/bin/env python3
+"""monitoring-perf - safe, reversible performance tuning for the dashboard.
+
+Granted to the monitoring service account via passwordless sudo only for this
+helper (see /etc/sudoers.d/monitoring). All arguments are validated against
+fixed allow-lists; no shell is ever invoked.
+
+Modes:
+  --check                       Print a JSON status report (read-only).
+  --apply --profile P [--swappiness N] [--iosched S]
+                                Apply a tuning profile live AND persist it:
+                                  * vm.swappiness via /etc/sysctl.d/99-monitoring-perf.conf
+                                  * CPU governor + I/O scheduler via a oneshot
+                                    systemd unit (monitoring-perf.service)
+                                Original values are stored once in
+                                /etc/monitoring-perf.orig so --revert can
+                                restore the exact pre-tuning state.
+  --apply-at-boot               Internal: read /etc/monitoring-perf.conf and
+                                apply it live (used by the oneshot unit).
+  --revert                      Restore original values, remove config files,
+                                the sysctl drop-in and the systemd unit.
+
+Profiles:
+  balanced      schedutil/ondemand governor, swappiness 10, mq-deadline I/O
+  performance   performance governor, swappiness 10, none (blk-mq) I/O
+  powersave     powersave governor, swappiness 60, scheduler untouched
+
+The helper degrades gracefully on machines without cpufreq (e.g. VMs), on
+non-systemd systems (persistence via sysctl drop-in only) and when a target
+governor/scheduler is not supported by the hardware: each failure is reported
+as a [skip] line, never silently ignored.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+CONF_FILE = "/etc/monitoring-perf.conf"
+ORIG_FILE = "/etc/monitoring-perf.orig"
+SYSCTL_DROPIN = "/etc/sysctl.d/99-monitoring-perf.conf"
+UNIT_FILE = "/etc/systemd/system/monitoring-perf.service"
+UNIT_NAME = "monitoring-perf.service"
+SYSFS_CPU = "/sys/devices/system/cpu"
+SYSFS_BLOCK = "/sys/block"
+SKIP_DEVS = ("loop", "ram", "zram", "dm-", "md", "fd", "sr")
+
+PROFILES = {
+    "balanced": {"governor": ("schedutil", "ondemand"), "swappiness": 10,
+                 "iosched": "mq-deadline"},
+    "performance": {"governor": ("performance",), "swappiness": 10,
+                    "iosched": "none"},
+    "powersave": {"governor": ("powersave",), "swappiness": 60,
+                  "iosched": None},
+}
+GOVERNORS = {"performance", "powersave", "schedutil", "ondemand",
+             "conservative", "userspace", "interactive"}
+IOSCHEDS = {"none", "noop", "deadline", "cfq", "mq-deadline", "kyber", "bfq"}
+INT_RE = re.compile(r"^[0-9]+$")
+NAME_RE = re.compile(r"^[a-z0-9_-]+$")
+KERNEL_ERROR = 2
+
+
+def _capture(argv, timeout=30):
+    try:
+        r = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                           timeout=timeout, start_new_session=True)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+
+
+def _which(binary):
+    return shutil.which(binary)
+
+
+def _read_text(path):
+    try:
+        with open(path, "r") as fh:
+            return fh.read().strip()
+    except OSError:
+        return None
+
+
+def _write_text(path, text):
+    with open(path, "w") as fh:
+        fh.write(text)
+
+
+def _governor_paths():
+    paths = []
+    if not os.path.isdir(SYSFS_CPU):
+        return paths
+    try:
+        cpus = [name for name in os.listdir(SYSFS_CPU) if name.startswith("cpu")
+                and name[3:].lstrip("0123456789") == ""]
+    except OSError:
+        return paths
+    for cpu in sorted(cpus, key=lambda n: int(n[3:] or 0)):
+        paths.append(os.path.join(SYSFS_CPU, cpu, "cpufreq",
+                                  "scaling_governor"))
+    return paths
+
+
+def _scheduler_paths():
+    paths = []
+    if not os.path.isdir(SYSFS_BLOCK):
+        return paths
+    try:
+        devs = os.listdir(SYSFS_BLOCK)
+    except OSError:
+        return paths
+    for dev in sorted(devs):
+        if any(dev.startswith(prefix) for prefix in SKIP_DEVS):
+            continue
+        paths.append(os.path.join(SYSFS_BLOCK, dev, "queue", "scheduler"))
+    return paths
+
+
+def _available_values(path):
+    raw = _read_text(path)
+    if not raw:
+        return None
+    # sysfs lists choices with the current one in brackets: "[mq-deadline] none"
+    return [part.strip("[]") for part in raw.replace("[", " [").split()
+            if part.strip()]
+
+
+def _current_governors():
+    values = {}
+    for path in _governor_paths():
+        value = _read_text(path)
+        if value:
+            values[path] = value
+    return values
+
+
+def _current_schedulers():
+    values = {}
+    for path in _scheduler_paths():
+        raw = _read_text(path)
+        if not raw:
+            continue
+        match = re.search(r"\[([^\]]+)\]", raw)
+        values[path] = match.group(1) if match else raw.split()[0]
+    return values
+
+
+def _current_swappiness():
+    value = _read_text("/proc/sys/vm/swappiness")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _systemd_available():
+    return (_which("systemctl") is not None
+            and os.path.isdir("/run/systemd/system"))
+
+
+def check_status():
+    governors = _current_governors()
+    schedulers = _current_schedulers()
+    applied = os.path.isfile(CONF_FILE)
+    profile = None
+    stored = None
+    if applied:
+        try:
+            with open(CONF_FILE, "r") as fh:
+                stored = json.load(fh)
+            profile = stored.get("profile")
+        except (ValueError, OSError):
+            stored = None
+    return {
+        "applied": applied,
+        "profile": profile,
+        "swappiness": _current_swappiness(),
+        "governors": sorted(set(governors.values())),
+        "governor_count": len(governors),
+        "schedulers": sorted(set(schedulers.values())),
+        "scheduler_devices": list(schedulers.keys()),
+        "originals_stored": os.path.isfile(ORIG_FILE),
+        "systemd": _systemd_available(),
+    }
+
+
+def _apply_governor(targets, lines):
+    """Apply one of the profile governor choices; report each path."""
+    for path in _governor_paths():
+        available = _available_values(path)
+        if not available:
+            lines.append("[skip] governor " + path + ": no cpufreq interface")
+            continue
+        chosen = next((g for g in targets if g in available), None)
+        if chosen is None:
+            lines.append(f"[skip] governor {path}: none of {targets} supported "
+                         f"(available: {', '.join(available)})")
+            continue
+        try:
+            _write_text(path, chosen)
+            lines.append(f"[ok] governor {path} -> {chosen}")
+        except OSError as exc:
+            lines.append(f"[fail] governor {path}: {exc}")
+
+
+def _apply_swappiness(value, lines, persist=True):
+    if value is None:
+        return
+    sysctl = _which("sysctl")
+    if sysctl:
+        code, out, err = _capture([sysctl, "-w", f"vm.swappiness={value}"],
+                                  timeout=15)
+        if code != 0:
+            lines.append(f"[fail] vm.swappiness={value}: {(out or err or '').strip()[:120]}")
+            return
+    else:
+        try:
+            _write_text("/proc/sys/vm/swappiness", str(value) + "\n")
+        except OSError as exc:
+            lines.append(f"[fail] vm.swappiness: {exc}")
+            return
+    lines.append(f"[ok] vm.swappiness -> {value}")
+    if persist:
+        try:
+            _write_text(SYSCTL_DROPIN, f"# Written by Monitoring performance tuning\nvm.swappiness = {value}\n")
+        except OSError as exc:
+            lines.append(f"[fail] persist sysctl drop-in: {exc}")
+
+
+def _apply_iosched(target, lines):
+    if target is None:
+        lines.append("[skip] I/O scheduler: profile leaves scheduler untouched")
+        return
+    for path in _scheduler_paths():
+        available = _available_values(path)
+        if not available:
+            continue
+        if target not in available:
+            lines.append(f"[skip] scheduler {path}: {target} not supported "
+                         f"(available: {', '.join(available)})")
+            continue
+        try:
+            _write_text(path, target)
+            lines.append(f"[ok] scheduler {path} -> {target}")
+        except OSError as exc:
+            lines.append(f"[fail] scheduler {path}: {exc}")
+
+
+def _persist_unit(lines):
+    if not _systemd_available():
+        lines.append("[skip] persistence of governor/scheduler: systemd not "
+                     "present (live tuning only until reboot)")
+        return
+    self_path = os.path.abspath(__file__)
+    unit = ("[Unit]\n"
+            "Description=Monitoring performance tuning (governor/scheduler)\n"
+            "After=local-fs.target\n\n"
+            "[Service]\n"
+            "Type=oneshot\n"
+            "ExecStart=" + self_path + " --apply-at-boot\n"
+            "RemainAfterExit=yes\n\n"
+            "[Install]\n"
+            "WantedBy=multi-user.target\n")
+    try:
+        _write_text(UNIT_FILE, unit)
+    except OSError as exc:
+        lines.append(f"[fail] write unit {UNIT_FILE}: {exc}")
+        return
+    _capture(["systemctl", "daemon-reload"], timeout=30)
+    code, out, err = _capture(["systemctl", "enable", UNIT_NAME], timeout=30)
+    if code != 0:
+        lines.append(f"[fail] systemctl enable {UNIT_NAME}: "
+                     f"{(out or err or '').strip()[:120]}")
+        return
+    lines.append(f"[ok] persistence unit enabled: {UNIT_NAME}")
+
+
+def _store_originals():
+    if os.path.isfile(ORIG_FILE):
+        return  # never overwrite the true defaults once captured
+    payload = {
+        "swappiness": _current_swappiness(),
+        "governors": _current_governors(),
+        "schedulers": _current_schedulers(),
+    }
+    try:
+        _write_text(ORIG_FILE, json.dumps(payload, indent=2) + "\n")
+    except OSError:
+        return False
+    return True
+
+
+def _write_conf(profile, swappiness, iosched, lines):
+    payload = {"profile": profile, "swappiness": swappiness,
+               "iosched": iosched,
+               "governor": list(PROFILES[profile]["governor"])}
+    try:
+        _write_text(CONF_FILE, json.dumps(payload) + "\n")
+    except OSError as exc:
+        lines.append(f"[fail] write {CONF_FILE}: {exc}")
+        return False
+    return True
+
+
+def apply_profile(profile, swappiness=None, iosched=None):
+    lines = []
+    spec = PROFILES[profile]
+    swappiness = spec["swappiness"] if swappiness is None else swappiness
+    iosched = spec["iosched"] if iosched is None else iosched
+    if not _store_originals():
+        lines.append("[warn] could not store original values — revert may "
+                     "fall back to kernel defaults")
+    _apply_swappiness(swappiness, lines)
+    _apply_governor(spec["governor"], lines)
+    _apply_iosched(iosched, lines)
+    if _write_conf(profile, swappiness, iosched, lines):
+        _persist_unit(lines)
+        lines.append(f"[ok] profile '{profile}' applied and saved "
+                     f"({CONF_FILE})")
+    else:
+        lines.append(f"[fail] profile '{profile}' could not be saved")
+    return lines
+
+
+def apply_at_boot():
+    lines = []
+    try:
+        with open(CONF_FILE, "r") as fh:
+            stored = json.load(fh)
+    except (ValueError, OSError) as exc:
+        print(f"[fail] no valid {CONF_FILE}: {exc}", file=sys.stderr)
+        return 1
+    profile = stored.get("profile")
+    if profile not in PROFILES:
+        print(f"[fail] invalid stored profile: {profile!r}", file=sys.stderr)
+        return 1
+    spec = PROFILES[profile]
+    swappiness = stored.get("swappiness")
+    iosched = stored.get("iosched")
+    if not isinstance(swappiness, int) or not 0 <= swappiness <= 100:
+        swappiness = spec["swappiness"]
+    if iosched is not None and (not isinstance(iosched, str)
+                                or iosched not in IOSCHEDS):
+        iosched = spec["iosched"]
+    _apply_swappiness(swappiness, lines, persist=False)
+    _apply_governor(spec["governor"], lines)
+    _apply_iosched(iosched, lines)
+    print("\n".join(lines))
+    return 0
+
+
+def revert():
+    lines = []
+    removed = []
+    if os.path.isfile(ORIG_FILE):
+        try:
+            with open(ORIG_FILE, "r") as fh:
+                orig = json.load(fh)
+        except (ValueError, OSError):
+            orig = None
+        if orig:
+            swappiness = orig.get("swappiness")
+            if isinstance(swappiness, int):
+                _apply_swappiness(swappiness, lines, persist=False)
+            for path, value in (orig.get("governors") or {}).items():
+                if os.path.isfile(path) and isinstance(value, str):
+                    try:
+                        _write_text(path, value)
+                        lines.append(f"[ok] governor {path} -> {value}")
+                    except OSError as exc:
+                        lines.append(f"[fail] governor {path}: {exc}")
+            for path, value in (orig.get("schedulers") or {}).items():
+                if os.path.isfile(path) and isinstance(value, str):
+                    try:
+                        _write_text(path, value)
+                        lines.append(f"[ok] scheduler {path} -> {value}")
+                    except OSError as exc:
+                        lines.append(f"[fail] scheduler {path}: {exc}")
+    else:
+        # No stored originals: fall back to conservative kernel defaults.
+        _apply_swappiness(60, lines, persist=False)
+        _apply_governor(("powersave", "schedutil", "ondemand"), lines)
+        lines.append("[warn] no stored originals found — restored conservative "
+                     "kernel defaults")
+    for path in (CONF_FILE, ORIG_FILE, SYSCTL_DROPIN, UNIT_FILE):
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+                removed.append(path)
+        except OSError as exc:
+            lines.append(f"[fail] remove {path}: {exc}")
+    if _systemd_available():
+        _capture(["systemctl", "disable", UNIT_NAME], timeout=30)
+        _capture(["systemctl", "daemon-reload"], timeout=30)
+    if removed:
+        lines.append(f"[ok] removed {', '.join(removed)}")
+    lines.append("[ok] performance tuning reverted")
+    return lines
+
+
+def main(argv):
+    if argv == ["--check"]:
+        print(json.dumps(check_status()))
+        return 0
+    if argv == ["--apply-at-boot"]:
+        return apply_at_boot()
+    if argv == ["--revert"]:
+        print("\n".join(revert()))
+        return 0
+    if argv[:2] == ["--apply", "--profile"] and len(argv) in (3, 5, 7) \
+            and argv[2] in PROFILES:
+        profile = argv[2]
+        swappiness = None
+        iosched = None
+        rest = argv[3:]
+        while rest:
+            flag, value, *rest = rest
+            if flag == "--swappiness":
+                if not INT_RE.match(value) or not 0 <= int(value) <= 100:
+                    print(f"monitoring-perf: invalid swappiness: {value}",
+                          file=sys.stderr)
+                    return KERNEL_ERROR
+                swappiness = int(value)
+            elif flag == "--iosched":
+                if not NAME_RE.match(value) or value not in IOSCHEDS:
+                    print(f"monitoring-perf: invalid iosched: {value}",
+                          file=sys.stderr)
+                    return KERNEL_ERROR
+                iosched = value
+            else:
+                print(f"monitoring-perf: unknown option: {flag}",
+                      file=sys.stderr)
+                return KERNEL_ERROR
+        print("\n".join(apply_profile(profile, swappiness, iosched)))
+        return 0
+    print("usage: monitoring-perf --check | --apply --profile <balanced|performance|powersave> "
+          "[--swappiness 0-100] [--iosched <sched>] | --apply-at-boot | --revert",
+          file=sys.stderr)
+    return KERNEL_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

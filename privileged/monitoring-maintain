@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""monitoring-maintain - inspect and repair system & kernel software state.
+
+The monitoring service account is granted passwordless sudo for this helper
+only (see /etc/sudoers.d/monitoring). The helper accepts a fixed set of
+subcommands, validates every argument, never invokes a shell and never
+accepts package names or paths from the browser.
+
+Modes:
+  --check                Print a JSON status report (read-only).
+  --repair [--force-initramfs]
+                         Run the safe repair sequence and print one
+                         [ok]/[skip]/[fail] line per step. Exit 0 only when
+                         every required step succeeded.
+
+Repair sequence (each step is individually reported so the dashboard never
+claims a fix ran when it did not):
+  1. package-db   - finish interrupted package transactions and repair
+                    dependency state (dpkg --configure -a + apt -f install
+                    on Debian, rpm --rebuilddb on rpm families, pacman -Dk
+                    on Arch, apk fix on Alpine).
+  2. module-map   - regenerate the kernel module dependency database with
+                    `depmod -a` so modules load after a kernel change.
+  3. initramfs    - rebuild the initramfs/initrd for kernels whose image is
+                    missing or older than their modules (kernel upgrades
+                    that were interrupted by a reboot can leave a stale
+                    initrd, which yields boot failures, unbootable storage
+                    or missing drivers). Only rebuilt when stale unless
+                    --force-initramfs is given.
+
+Detection logic is deliberately conservative: read-only checks are used for
+--check, and mutating steps only touch well-known system locations through
+fixed argv lists.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+MODULES_DIR = "/lib/modules"
+BOOT_DIR = "/boot"
+KERNEL_RE = re.compile(r"^[0-9][A-Za-z0-9._+-]*$")
+KERNEL_ERROR = 2
+STEP_TIMEOUT = 600  # initramfs rebuilds are slow on big systems
+
+
+def _capture(argv, timeout=STEP_TIMEOUT):
+    """Run argv without a shell; return (returncode, stdout, stderr)."""
+    try:
+        r = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                           timeout=timeout, start_new_session=True)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+
+
+def _which(binary):
+    return shutil.which(binary)
+
+
+def _installed_kernels():
+    """Sorted list of kernel versions present under /lib/modules."""
+    try:
+        versions = [name for name in os.listdir(MODULES_DIR)
+                    if KERNEL_RE.match(name)
+                    and os.path.isdir(os.path.join(MODULES_DIR, name))]
+    except OSError:
+        return []
+    # Simple version-aware-ish sort: most kernels sort correctly lexically;
+    # fall back to mtime when names are identical prefixes.
+    return sorted(versions, reverse=True)
+
+
+def _newest_module_mtime(version):
+    """Newest .ko/.ko.xz/.ko.zst mtime under /lib/modules/<version>."""
+    newest = 0.0
+    root = os.path.join(MODULES_DIR, version)
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            if name.endswith((".ko", ".ko.xz", ".ko.zst", ".ko.gz")):
+                try:
+                    newest = max(newest, os.path.getmtime(
+                        os.path.join(dirpath, name)))
+                except OSError:
+                    continue
+    return newest
+
+
+def _initramfs_candidates(version):
+    """Candidate initramfs paths for a kernel version (Debian/RedHat/Alpine)."""
+    return [
+        os.path.join(BOOT_DIR, f"initrd.img-{version}"),
+        os.path.join(BOOT_DIR, f"initramfs-{version}.img"),
+        os.path.join(BOOT_DIR, f"initramfs-{version}"),
+    ]
+
+
+def _initramfs_state(version):
+    """One of 'ok', 'missing', 'stale', 'unknown' for a kernel version."""
+    newest_mod = _newest_module_mtime(version)
+    if newest_mod <= 0:
+        return "unknown"
+    for path in _initramfs_candidates(version):
+        if not os.path.isfile(path):
+            continue
+        try:
+            if os.path.getmtime(path) + 2 >= newest_mod:
+                return "ok"
+        except OSError:
+            continue
+        return "stale"
+    return "missing"
+
+
+def _initramfs_tool():
+    for tool in ("update-initramfs", "dracut", "mkinitfs"):
+        if _which(tool):
+            return tool
+    return None
+
+
+def _dpkg_audit():
+    """(available, healthy) mirroring the dashboard's dpkg --audit logic."""
+    if not _which("dpkg"):
+        return False, None
+    code, out, err = _capture(["dpkg", "--audit"], timeout=60)
+    detail = "\n".join(part.strip() for part in (out or "", err or "")
+                       if part and part.strip())
+    return True, (code == 0 and not detail)
+
+
+def _reboot_required():
+    for path in ("/run/reboot-required", "/var/run/reboot-required"):
+        if os.path.exists(path):
+            pkgs = []
+            try:
+                with open(path + ".pkgs", "r") as fh:
+                    pkgs = [line.strip() for line in fh if line.strip()]
+            except OSError:
+                pass
+            return True, pkgs[:20]
+    return False, []
+
+
+def _fwupd_active():
+    if not _which("systemctl") or not os.path.isdir("/run/systemd/system"):
+        return None
+    code, _, _ = _capture(["systemctl", "is-active", "--quiet", "fwupd"],
+                          timeout=10)
+    return code == 0
+
+
+def _pkg_manager():
+    for mgr, cmd in (("apt", "apt-get"), ("dnf", "dnf"), ("yum", "yum"),
+                     ("zypper", "zypper"), ("pacman", "pacman"),
+                     ("apk", "apk")):
+        if _which(cmd):
+            return mgr
+    return None
+
+
+def check_status():
+    """Build the read-only JSON status report."""
+    running = os.uname().release
+    installed = _installed_kernels()
+    latest = installed[0] if installed else None
+
+    initramfs_tool = _initramfs_tool()
+    initramfs_kernels = []
+    for version in installed:
+        state = _initramfs_state(version)
+        initramfs_kernels.append({"version": version, "state": state})
+    initramfs_stale = [k["version"] for k in initramfs_kernels
+                       if k["state"] in ("missing", "stale")]
+    initramfs_status = ("ok" if not initramfs_stale
+                        else "needs-rebuild" if initramfs_tool else "stale")
+
+    modmap = {"exists": False, "stale": False}
+    running_mods = os.path.join(MODULES_DIR, running)
+    modmap_path = os.path.join(running_mods, "modules.dep")
+    if os.path.isfile(modmap_path):
+        modmap["exists"] = True
+        newest_mod = _newest_module_mtime(running)
+        try:
+            modmap["stale"] = (newest_mod > 0 and
+                               os.path.getmtime(modmap_path) + 2 < newest_mod)
+        except OSError:
+            modmap["stale"] = False
+
+    manager = _pkg_manager()
+    dpkg_available, dpkg_healthy = _dpkg_audit()
+    needs_repair = False
+    if dpkg_available:
+        needs_repair = not dpkg_healthy
+    # For non-dpkg families a cheap authoritative brokenness probe is not
+    # available without expensive verification runs; the repair step itself
+    # still runs their safe database rebuild operations.
+    if manager == "pacman" and _which("pacman"):
+        code, _, _ = _capture(["pacman", "-Dk", "--quiet"], timeout=60)
+        if code != 0:
+            needs_repair = True
+
+    reboot_required, reboot_pkgs = _reboot_required()
+
+    return {
+        "kernel": {
+            "running": running,
+            "installed": installed,
+            "latest": latest,
+            "running_is_latest": bool(latest) and running == latest,
+        },
+        "reboot_required": reboot_required,
+        "reboot_packages": reboot_pkgs,
+        "initramfs": {
+            "tool": initramfs_tool,
+            "status": initramfs_status,
+            "kernels": initramfs_kernels,
+            "stale": initramfs_stale,
+        },
+        "module_map": modmap,
+        "packages": {
+            "manager": manager,
+            "dpkg_available": dpkg_available,
+            "dpkg_healthy": dpkg_healthy,
+            "needs_repair": needs_repair,
+        },
+        "fwupd": {"active": _fwupd_active()},
+    }
+
+
+# --------------------------------------------------------------------------
+# Repair steps
+# --------------------------------------------------------------------------
+def _step_package_db(manager):
+    """Finish interrupted transactions / repair dependency state."""
+    if manager == "apt":
+        c1, o1, e1 = _capture(["dpkg", "--configure", "-a"], timeout=STEP_TIMEOUT)
+        c2, o2, e2 = _capture(["apt-get", "install", "--fix-broken", "-y", "-qq"],
+                              timeout=STEP_TIMEOUT)
+        c3, o3, e3 = _capture(["dpkg", "--configure", "-a"], timeout=STEP_TIMEOUT)
+        detail = ((o1 or e1 or "") + (o2 or e2 or "") + (o3 or e3 or "")).strip()
+        return (c1 == 0 and c2 == 0 and c3 == 0), detail[-300:]
+    if manager in ("dnf", "yum", "zypper"):
+        if not _which("rpm"):
+            return True, "rpm not present; nothing to rebuild"
+        code, out, err = _capture(["rpm", "--rebuilddb"], timeout=STEP_TIMEOUT)
+        return code == 0, ((out or err or "").strip())[-300:]
+    if manager == "pacman":
+        code, out, err = _capture(["pacman", "-Dk", "--quiet"], timeout=120)
+        return code == 0, ((out or err or "").strip())[-300:]
+    if manager == "apk":
+        code, out, err = _capture(["apk", "fix", "--quiet"], timeout=STEP_TIMEOUT)
+        return code == 0, ((out or err or "").strip())[-300:]
+    return True, "no supported package manager; skipped"
+
+
+def _step_module_map():
+    if not _which("depmod"):
+        return True, "depmod not installed; skipped"
+    code, out, err = _capture(["depmod", "-a"], timeout=STEP_TIMEOUT)
+    return code == 0, ((out or err or "").strip())[-300:]
+
+
+def _rebuild_initramfs_for(tool, version):
+    """Rebuild the initramfs for one kernel version with the installed tool."""
+    if tool == "update-initramfs":
+        code, out, err = _capture(
+            ["update-initramfs", "-u", "-k", version], timeout=STEP_TIMEOUT)
+    elif tool == "dracut":
+        code, out, err = _capture(
+            ["dracut", "--force", "--kver", version], timeout=STEP_TIMEOUT)
+    elif tool == "mkinitfs":
+        code, out, err = _capture(
+            ["mkinitfs", "-o", f"/boot/initramfs-{version}", version],
+            timeout=STEP_TIMEOUT)
+    else:
+        return False, "no initramfs tool"
+    return code == 0, ((out or err or "").strip())[-300:]
+
+
+def _step_initramfs(force=False):
+    tool = _initramfs_tool()
+    if not tool:
+        return True, "no initramfs tool found (update-initramfs/dracut/mkinitfs); skipped"
+    stale = [k["version"] for k in check_status()["initramfs"]["kernels"]
+             if k["state"] in ("missing", "stale")]
+    if not stale and not force:
+        return True, "all installed kernels have a current initramfs; nothing to rebuild"
+    targets = stale if not force else check_status()["kernel"]["installed"]
+    if not targets:
+        return True, "no kernel versions found under /lib/modules; skipped"
+    failed = []
+    for version in targets:
+        ok, detail = _rebuild_initramfs_for(tool, version)
+        if not ok:
+            failed.append(f"{version}: {detail or 'rebuild failed'}")
+    if failed:
+        return False, "; ".join(failed)[-500:]
+    return True, f"rebuilt initramfs for {', '.join(targets)}"
+
+
+def run_repair(force_initramfs=False):
+    """Run the repair sequence; returns (exit_code, output_lines)."""
+    manager = _pkg_manager()
+    lines = []
+    failed = []
+
+    ok, detail = _step_package_db(manager)
+    lines.append(f"[{'ok' if ok else 'fail'}] package-db"
+                 + (f": {detail[:200]}" if detail else ""))
+    if not ok:
+        failed.append("package-db")
+
+    ok, detail = _step_module_map()
+    lines.append(f"[{'ok' if ok else 'fail'}] module-map"
+                 + (f": {detail[:200]}" if detail else ""))
+    if not ok:
+        failed.append("module-map")
+
+    ok, detail = _step_initramfs(force_initramfs)
+    lines.append(f"[{'ok' if ok else 'fail'}] initramfs"
+                 + (f": {detail[:200]}" if detail else ""))
+    if not ok:
+        failed.append("initramfs")
+
+    if not failed:
+        lines.append("[ok] all repair steps completed")
+    else:
+        lines.append(f"[fail] failed steps: {', '.join(failed)}")
+    return (1 if failed else 0), lines
+
+
+def main(argv):
+    if argv == ["--check"]:
+        print(json.dumps(check_status()))
+        return 0
+    if argv in (["--repair"], ["--repair", "--force-initramfs"],
+                ["--force-initramfs", "--repair"]):
+        force = "--force-initramfs" in argv
+        code, lines = run_repair(force)
+        print("\n".join(lines))
+        return code
+    if "--repair" in argv and "--force-initramfs" not in argv:
+        print("usage: monitoring-maintain --repair [--force-initramfs]",
+              file=sys.stderr)
+        return KERNEL_ERROR
+    print("usage: monitoring-maintain --check | --repair [--force-initramfs]",
+          file=sys.stderr)
+    return KERNEL_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

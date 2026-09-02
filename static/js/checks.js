@@ -55,6 +55,7 @@ async function updateChecks(){
 const FIX_META={
   update:{icon:'refresh',label:'Update Lists',desc:'Refresh repositories'},
   upgrade:{icon:'up',label:'Upgrade',desc:'Install available updates'},
+  'full-upgrade':{icon:'up',label:'Full Upgrade',desc:'Upgrade incl. new kernels'},
   autoremove:{icon:'trash',label:'Autoremove',desc:'Remove unused packages'},
   clean:{icon:'sparkles',label:'Clean Cache',desc:'Clear package caches'},
   'fix-broken':{icon:'wrench',label:'Fix Broken',desc:'Repair packages'},

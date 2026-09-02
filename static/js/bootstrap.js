@@ -25,6 +25,7 @@ function openPalette(){
     {g:'Go to',label:'Logs',icon:'terminal',hint:MOD+'6',run:()=>showTab('logs')},
     {g:'Go to',label:'Alerts & Activity',icon:'pulse',hint:MOD+'7',run:()=>showTab('alerts')},
     {g:'Go to',label:'Diagnose & Troubleshooting',icon:'zap',hint:MOD+'8',run:()=>showTab('troubleshooting')},
+    {g:'Go to',label:'System & Kernel Tool',icon:'wrench',run:()=>showTab('maintain')},
     {g:'Go to',label:'Settings',icon:'gear',hint:MOD+'9',run:()=>showTab('settings')},
     {g:'Go to',label:'Help & About',icon:'help',hint:MOD+'0',run:()=>showTab('help')},
     {g:'Actions',label:'Refresh current view',icon:'refresh',hint:'R',run:refreshCurrent},
@@ -88,6 +89,7 @@ function refreshAll(){
   updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();loadOverviewHogs();
   loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
   if(currentTab==='troubleshooting')loadTroubleshooting(true);
+  if(currentTab==='maintain')loadMaintain(true);
 }
 function focusSearch(){
   const panel=$('#tab-'+currentTab);
@@ -130,7 +132,8 @@ window.addEventListener('resize',()=>{
   $('#palKbd2').textContent=MOD+' K';
   // Quick Admin Actions: use the shared SVG icon set (was emoji, which render
   // inconsistently and carry no accessible name) and a platform-correct hint.
-  [['#qaRefresh','refresh','Refresh All'],['#qaClean','sparkles','Clean Cache'],
+  [['#qaRefresh','refresh','Refresh All'],['#qaUpgrade','up','Full Upgrade'],
+   ['#qaClean','sparkles','Clean Cache'],
    ['#qaUpdate','up','Update Lists'],['#qaVacuum','trash','Vacuum Journal'],
    ['#qaPalette','keyboard','Command Palette ('+MOD+' K)']].forEach(([sel,ic,label])=>{
     const b=$(sel);

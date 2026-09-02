@@ -1425,3 +1425,46 @@ select{
   .card{break-inside:avoid;box-shadow:none;border:1px solid #ccc}
   body{background:#fff;color:#000}
 }
+
+/* ================================================================
+   21. SYSTEM & KERNEL TOOL
+   ================================================================ */
+.maintain-hero{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  padding:18px 20px;
+}
+.maintain-hero-left{flex:1;min-width:240px}
+.maintain-hero-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.maintain-hero-actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.mnt-list{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.mnt-list-head{font-size:.68rem;font-weight:650;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin:4px 0 2px}
+.mnt-row{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:7px 2px;border-bottom:1px solid var(--border);font-size:.8rem;
+}
+.mnt-row:last-child{border-bottom:0}
+.mnt-name{flex:1;min-width:140px;display:flex;align-items:center;gap:7px;font-weight:550}
+.mnt-name svg{width:13px;height:13px;color:var(--text-3);flex-shrink:0}
+.mnt-check{
+  display:flex;align-items:flex-start;gap:8px;margin-top:8px;padding:8px 10px;
+  border:1px dashed var(--border-2);border-radius:var(--r-sm);font-size:.76rem;cursor:pointer;
+}
+.mnt-check input{accent-color:var(--teal);margin-top:2px}
+.mnt-check strong{display:block;font-size:.76rem}
+.mnt-profile-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+@media(max-width:720px){.mnt-profile-grid{grid-template-columns:1fr}}
+.mnt-profile{
+  display:flex;align-items:flex-start;gap:8px;text-align:left;
+  padding:10px;border-radius:var(--r-sm);cursor:pointer;
+  background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);
+  transition:border-color .2s,transform .15s;
+}
+.mnt-profile:hover{border-color:var(--border-2);transform:translateY(-1px)}
+.mnt-profile:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.mnt-profile.on{border-color:var(--teal);background:rgba(45,212,191,.08)}
+.mnt-profile-ic{width:26px;height:26px;border-radius:var(--r-sm);flex-shrink:0;display:flex;align-items:center;justify-content:center;background:rgba(45,212,191,.12);color:var(--teal)}
+.mnt-profile-txt strong{display:block;font-size:.78rem}
+.mnt-profile-txt .dim{display:block;margin-top:1px}
+.linklike{background:none;border:0;padding:0;color:var(--teal);font-size:inherit;cursor:pointer;text-decoration:underline}
+.linklike:hover{color:var(--cyan)}
+.mnt-perf-kv{margin-top:10px}
