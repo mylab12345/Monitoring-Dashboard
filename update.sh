@@ -8,6 +8,7 @@
 #  Usage:
 #      sudo ./update.sh                # install changes from THIS checkout
 #      sudo ./update.sh --remote      # pull latest from GitHub and install
+#      ./update.sh --check            # read-only update check (no root needed)
 #      curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring-Dashboard/main/update.sh | sudo bash
 #                                     # same as --remote
 #
@@ -37,6 +38,56 @@ NOLOGIN="$(command -v nologin || echo /usr/sbin/nologin)"
 log()  { printf '\033[1;32m[update]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[update]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[update]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# version_gt A B -> exit 0 when A is a newer dotted version than B.
+version_gt() {
+  local a b i ai bi
+  IFS='.' read -r -a a <<< "$1"
+  IFS='.' read -r -a b <<< "$2"
+  for i in 0 1 2; do
+    ai="${a[$i]:-0}"; bi="${b[$i]:-0}"
+    ai="${ai//[^0-9]/0}"; bi="${bi//[^0-9]/0}"
+    ai="${ai#0}"; bi="${bi#0}"
+    [ -z "$ai" ] && ai=0; [ -z "$bi" ] && bi=0
+    if [ "$ai" -gt "$bi" ]; then return 0
+    elif [ "$ai" -lt "$bi" ]; then return 1; fi
+  done
+  return 1
+}
+
+# Read-only update check: prints installed/latest/update_available and exits.
+# Does NOT need root and never modifies anything. Used by the dashboard's
+# Help -> Update card (via the monitoring-self-update helper) and by scripts.
+check_for_update() {
+  local tgt="" inst="" latest="" avail=0
+  if [ -f /etc/monitoring.env ]; then
+    # shellcheck disable=SC1090
+    . /etc/monitoring.env 2>/dev/null || true
+    tgt="${MONITORING_HOME:-}"
+  fi
+  if [ -z "$tgt" ] && [ -d /opt/monitoring ] && [ -f /opt/monitoring/app.py ]; then
+    tgt="/opt/monitoring"
+  fi
+  if [ -n "$tgt" ] && [ -f "$tgt/VERSION" ]; then
+    inst="$(cat "$tgt/VERSION" 2>/dev/null || true)"
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    latest="$(curl -fsSL --max-time 15 "https://raw.githubusercontent.com/${REPO}/${BRANCH}/VERSION" 2>/dev/null || true)"
+  fi
+  if [ -n "$inst" ] && [ -n "$latest" ] && [ "$inst" != "$latest" ]; then
+    if version_gt "$latest" "$inst"; then avail=1; fi
+  fi
+  printf 'monitoring-update-check installed=%s latest=%s update_available=%s\n' \
+    "${inst:-none}" "${latest:-unknown}" "$avail"
+  if [ "$avail" = "1" ]; then
+    log "Update available: v${inst} → v${latest}"
+    log "Apply it with: sudo ./update.sh --remote   (or: monitoring update)"
+  elif [ -n "$inst" ] && [ -n "$latest" ] && [ "$inst" = "$latest" ]; then
+    log "Monitoring is up to date (v${inst})"
+  else
+    warn "Could not determine update state (installed=${inst:-none}, latest=${latest:-unknown})"
+  fi
+}
 
 # Download the ${REPO}@${BRANCH} source archive and extract it into a fresh
 # temp dir. We download to a file FIRST and only extract once we know the
@@ -136,6 +187,7 @@ while [ $# -gt 0 ]; do
     --force)  FORCE=1; shift ;;
     --repo)   REPO="$2"; shift 2 ;;
     --branch) BRANCH="$2"; shift 2 ;;
+    --check)  check_for_update; exit 0 ;;
     -h|--help) sed -n '2,22p' "$0" 2>/dev/null; exit 0 ;;
     *) die "Unknown option: $1 (try --help)" ;;
   esac

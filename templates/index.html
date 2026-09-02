@@ -765,6 +765,32 @@
           </div>
         </div>
 
+        <article class="card hoverable" style="margin-top:16px" id="mntFixAllCard">
+          <div class="card-head">
+            <div class="card-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0 5.6 5.6L17 15l-3-3 3.3-3.3a4.5 4.5 0 0 0-5.6-5.6L8.5 6.3A4.5 4.5 0 0 0 3 13l3 3-4 4 2 2 4-4 3 3a4.5 4.5 0 0 0 6.7-5.5z"/></svg>
+              Fix All System &amp; Kernel Issues
+              <span class="badge" id="mntFixAllBadge">scanning…</span>
+            </div>
+            <span class="pill neutral" id="mntFixAllState">—</span>
+          </div>
+          <p class="dim" style="font-size:.76rem">The one-click tool that fixes <strong>every</strong> detected system &amp; kernel software issue: interrupted package transactions, broken dependencies, kernel module maps, missing/stale initramfs images, the boot menu, firmware metadata — then refreshes package lists, runs the full system upgrade (new kernels included), removes obsolete packages and cleans caches. Each step is reported individually and verified.</p>
+          <div id="mntFixAllIssues" class="mnt-list"><div class="skel" style="height:44px"></div></div>
+          <div class="btn-group" style="margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-danger" id="mntFixAllBtn" onclick="runMaintainFixAll()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.5 4.5 0 0 0 5.6 5.6L17 15l-3-3 3.3-3.3a4.5 4.5 0 0 0-5.6-5.6L8.5 6.3A4.5 4.5 0 0 0 3 13l3 3-4 4 2 2 4-4 3 3a4.5 4.5 0 0 0 6.7-5.5z"/></svg>
+              Fix All System &amp; Kernel Issues
+            </button>
+            <label class="mnt-check"><input type="checkbox" id="mntFixAllForceInitramfs"> <span><strong>Force initramfs rebuild</strong><span class="dim small"> rebuild images for every installed kernel even when they look current.</span></span></label>
+            <label class="mnt-check"><input type="checkbox" id="mntFixAllNoUpgrade"> <span><strong>Skip system upgrade</strong><span class="dim small"> repair, boot, firmware and cleanup only — no package upgrades.</span></span></label>
+          </div>
+          <div class="terminal" id="mntFixAllTerm" hidden>
+            <div class="tbar"><i></i><i></i><i></i><span>monitoring maintain --fix-all</span></div>
+            <pre id="mntFixAllResult"></pre>
+          </div>
+          <p class="dim small" style="margin-top:10px">&#9888; A full upgrade can take several minutes and may finish with a reboot required — nothing is rebooted automatically.</p>
+        </article>
+
         <div class="grid g2" style="margin-top:16px;align-items:start">
           <article class="card hoverable">
             <div class="card-head">
@@ -824,6 +850,7 @@
             </div>
             <p class="dim" style="font-size:.76rem">Reversible kernel-level tuning: CPU governor, memory swap tendency (<span class="mono">vm.swappiness</span>) and I/O scheduler. Applied live and persisted across reboots; one-click revert restores your exact original values.</p>
             <div class="kv mnt-perf-kv" id="mntPerfKV"></div>
+            <div class="mnt-list" id="mntPerfHealth"></div>
             <div class="mnt-profile-grid" id="mntPerfProfiles"></div>
             <div class="btn-group" style="margin-top:12px">
               <button class="btn btn-danger btn-sm" id="mntPerfRevert" onclick="revertPerf()">Revert to original values</button>
@@ -1026,7 +1053,29 @@ monitoring update     # self-update
 monitoring open       # open in browser
 
 sudo ./update.sh     # reinstall code changes
-sudo ./update.sh --remote</pre>
+sudo ./update.sh --remote
+./update.sh --check  # read-only update check</pre>
+            </div>
+          </article>
+
+          <article class="card hoverable">
+            <div class="card-head">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                Dashboard Update
+                <span class="badge" id="appUpdateBadge">checking…</span>
+              </div>
+              <span class="pill neutral" id="appUpdateState">—</span>
+            </div>
+            <p class="dim" style="font-size:.76rem">Updates Monitoring itself — checks the installed version against the latest release and applies it with the installed <span class="mono">update.sh --remote</span>. The dashboard restarts automatically during the update.</p>
+            <div class="kv" id="appUpdateKV"></div>
+            <div class="btn-group" style="margin-top:12px">
+              <button class="btn" id="appUpdateCheckBtn" onclick="loadAppUpdate(false)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>Check for updates</button>
+              <button class="btn btn-primary" id="appUpdateRunBtn" onclick="runAppUpdate()" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>Update now</button>
+            </div>
+            <div class="terminal" id="appUpdateTerm" hidden>
+              <div class="tbar"><i></i><i></i><i></i><span>monitoring-self-update</span></div>
+              <pre id="appUpdateResult"></pre>
             </div>
           </article>
         </div>

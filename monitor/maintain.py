@@ -18,12 +18,14 @@ the UI can never report success for an operation that did not execute.
 """
 import json
 import os
+import re
+import time
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
 from .commands import PASSWORDLESS_SUDO, privileged_tool, run_privileged
-from .common import _audit, _cache_clear, _cached
+from .common import APP_VERSION, _audit, _cache_clear, _cached
 from .fixes import run_fix_action
 from .metrics import _pretty_distro, _read_temp_c
 from .packages import _updatable_packages
@@ -33,9 +35,11 @@ bp = Blueprint("maintain", __name__)
 
 MAINTAIN_HELPER = "monitoring-maintain"
 PERF_HELPER = "monitoring-perf"
+SELF_UPDATE_HELPER = "monitoring-self-update"
 GOVERNOR_PROFILES = ("balanced", "performance", "powersave")
 IOSCHED_ALLOWED = ("none", "noop", "deadline", "cfq", "mq-deadline", "kyber",
                    "bfq")
+BRANCH_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 def _helper_path(name):
@@ -99,20 +103,140 @@ def _maintain_status():
         "packages": updates.get("packages", [])[:20],
     }
     try:
-        import time
+        import time as _time
         import psutil
         report["system"] = {
             "hostname": os.uname().nodename,
             "os": _pretty_distro(),
             "arch": os.uname().machine,
-            "uptime_s": int(time.time() - psutil.boot_time()),
+            "uptime_s": int(_time.time() - psutil.boot_time()),
             "temp_c": _read_temp_c(),
         }
     except Exception:
         pass
     report["perf"] = _perf_status()
+    report["perf"]["health"] = _perf_health(report)
+    report["fix_all"] = _fix_all_report(report)
     report["timestamp"] = datetime.now().isoformat()
     return report
+
+
+def _fix_all_report(report):
+    """Merge helper-side and app-side detected issues for the Fix All tool.
+
+    Helper-side issues come from monitoring-maintain --check (package-db,
+    module-map, initramfs, bootloader, fwupd); app-side facts add pending
+    updates, a required reboot and an un-activated newer kernel. The UI only
+    enables the one-click Fix All button when this list is non-empty.
+    """
+    issues = []
+    seen = set()
+
+    def add(issue_id, label, severity):
+        if issue_id in seen:
+            return
+        seen.add(issue_id)
+        issues.append({"id": issue_id, "label": label,
+                       "severity": severity})
+
+    for item in ((report.get("fix_all") or {}).get("issues") or []):
+        if isinstance(item, dict) and item.get("id") and item.get("label"):
+            add(str(item["id"])[:40], str(item["label"])[:180],
+                str(item.get("severity") or "warn")[:10])
+
+    pkgs = report.get("packages") or {}
+    ini = report.get("initramfs") or {}
+    kern = report.get("kernel") or {}
+    if pkgs.get("needs_repair"):
+        add("package-db", "Package database needs repair", "error")
+    if (report.get("module_map") or {}).get("stale"):
+        add("module-map", "Kernel module map is stale", "error")
+    if ini.get("status") == "needs-rebuild":
+        stale = (ini.get("stale") or [])[:3]
+        add("initramfs",
+            "Initramfs missing/stale for " + (", ".join(stale) if stale
+                                              else "installed kernels"),
+            "error")
+    if (report.get("bootloader") or {}).get("needs_refresh"):
+        add("bootloader", "Boot menu not refreshed for the newest kernel",
+            "warn")
+    if (report.get("fwupd") or {}).get("refresh_recommended"):
+        add("fwupd", "Firmware metadata should be refreshed", "info")
+    if report.get("reboot_required"):
+        reboot_pkgs = (report.get("reboot_packages") or [])[:3]
+        add("reboot", "Reboot required"
+            + (f" ({', '.join(reboot_pkgs)})" if reboot_pkgs else ""), "warn")
+    if (kern.get("installed") and kern.get("running")
+            and kern["installed"]
+            and kern["installed"][0] != kern["running"]):
+        add("kernel-activate",
+            f"Newer kernel installed ({kern['installed'][0]}) — reboot to "
+            f"activate it", "warn")
+    updates = report.get("updates") or {}
+    if updates.get("count"):
+        add("updates", f"{updates['count']} package update(s) available",
+            "info")
+    return {"issues": issues, "count": len(issues),
+            "healthy": len(issues) == 0}
+
+
+def _perf_health(report):
+    """Read-only system-performance health facts and hints for the perf card.
+
+    These are cheap /proc reads — no privileged access, no side effects. The
+    hints connect the knobs the perf helper exposes to the live state of the
+    machine so the operator can see WHY a tuning change may help.
+    """
+    facts = {"load": None, "cpus": None, "swap_total_mb": None,
+             "swap_used_mb": None, "swap_used_pct": None, "hints": []}
+    try:
+        with open("/proc/loadavg", "r") as fh:
+            parts = fh.read().split()
+        facts["load"] = [float(p) for p in parts[:3]] if len(parts) >= 3 else None
+    except (OSError, ValueError):
+        pass
+    try:
+        import psutil
+        facts["cpus"] = psutil.cpu_count() or None
+        sm = psutil.swap_memory()
+        if sm and sm.total:
+            facts["swap_total_mb"] = round(sm.total / 1048576, 1)
+            facts["swap_used_mb"] = round(sm.used / 1048576, 1)
+            facts["swap_used_pct"] = round(100.0 * sm.used / sm.total, 1)
+    except Exception:
+        pass
+
+    perf = report.get("perf") or {}
+    swappiness = perf.get("swappiness")
+    if isinstance(swappiness, int) and swappiness > 60:
+        facts["hints"].append(
+            f"vm.swappiness is high ({swappiness}) — the 'balanced' profile "
+            "sets 10, which keeps interactive apps in RAM instead of paging.")
+    governors = perf.get("governors") or []
+    if governors and set(governors) == {"performance"}:
+        facts["hints"].append(
+            "All CPUs run the 'performance' governor — 'balanced' "
+            "(schedutil/ondemand) usually gives the same speed with much "
+            "lower power draw and heat.")
+    schedulers = perf.get("schedulers") or []
+    legacy = [s for s in schedulers if s in ("cfq", "deadline", "noop")]
+    if legacy:
+        facts["hints"].append(
+            "Legacy I/O scheduler(s) in use: " + ", ".join(sorted(legacy))
+            + " — the modern blk-mq schedulers ('mq-deadline' or 'none') are "
+            "generally faster on NVMe/SSD.")
+    load = facts["load"]
+    if load and facts["cpus"] and load[0] > facts["cpus"]:
+        facts["hints"].append(
+            f"Load average {load[0]:.1f} exceeds {facts['cpus']} CPU(s) — "
+            "check the Processes tab for the top consumers before tuning.")
+    kern = report.get("kernel") or {}
+    if kern.get("installed") and kern.get("running") \
+            and kern["installed"] and kern["installed"][0] != kern["running"]:
+        facts["hints"].append(
+            "A newer kernel is installed but not active — a reboot applies "
+            "its performance fixes and features.")
+    return facts
 
 
 def _perf_status():
@@ -175,6 +299,129 @@ def api_maintain_upgrade():
     _clear_related_caches()
     _audit("maintain-upgrade", outcome="ok" if status == 200 else "failed")
     return payload, status
+
+
+@bp.route("/api/maintain/fix-all", methods=["POST"])
+@rate_limit("3 per minute")
+def api_maintain_fix_all():
+    """One-click fix of every detected system & kernel software issue.
+
+    Drives ``monitoring-maintain --fix-all``: package-db repair, kernel
+    module map, initramfs rebuild, bootloader refresh, firmware metadata
+    refresh, package-list refresh, full system upgrade (incl. new kernels;
+    skippable), orphaned-package removal and cache cleanup. Every step is
+    reported as its own [ok]/[skip]/[fail] line so the UI can never claim a
+    fix ran when it did not.
+    """
+    data = request.get_json(silent=True) or {}
+    force_initramfs = bool(data.get("force_initramfs"))
+    no_upgrade = bool(data.get("no_upgrade"))
+    if not os.path.isfile(_helper_path(MAINTAIN_HELPER)):
+        return jsonify({"error": "monitoring-maintain helper is not installed "
+                                 "— run install.sh or update.sh (sudo) and retry"}), 503
+    args = ["--fix-all"]
+    if force_initramfs:
+        args.append("--force-initramfs")
+    if no_upgrade:
+        args.append("--no-upgrade")
+    code, out, err = run_privileged(MAINTAIN_HELPER, args, timeout=2400)
+    message = ((out or "") + (err or "")).strip()
+    if code == 0:
+        _clear_related_caches()
+        _audit("maintain-fix-all", outcome="ok",
+               force_initramfs=force_initramfs, no_upgrade=no_upgrade)
+        return jsonify({"result": message[-6000:] or "Fix-all completed",
+                        "exit_code": code, "action": "fix-all"})
+    _audit("maintain-fix-all", outcome="failed", exit_code=code,
+           force_initramfs=force_initramfs, no_upgrade=no_upgrade)
+    return jsonify({"error": f"fix-all failed (exit {code}): "
+                             f"{message[-6000:] or 'see helper output'}",
+                    "exit_code": code, "action": "fix-all"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Dashboard self-update (system update for Monitoring itself)
+# ---------------------------------------------------------------------------
+def _app_update_status():
+    """Installed vs. latest Monitoring version, via the whitelisted helper.
+
+    Read-only; never raises — a missing helper or offline host degrades to a
+    status payload the UI can render instead of a 500.
+    """
+    info = {
+        "helper": "missing",
+        "helper_path": _helper_path(SELF_UPDATE_HELPER),
+        "installed": APP_VERSION,
+        "latest": None,
+        "available": False,
+        "source": "github",
+        "home": None,
+        "error": None,
+        "checked_at": None,
+    }
+    path = _helper_path(SELF_UPDATE_HELPER)
+    if path and os.path.isfile(path):
+        info["helper"] = ("root" if os.geteuid() == 0
+                          else "sudo" if PASSWORDLESS_SUDO else "no-sudo")
+        code, out, err = run_privileged(SELF_UPDATE_HELPER, ["--check"],
+                                        timeout=30)
+        if code == 0:
+            try:
+                data = json.loads(out or "{}")
+                for key in ("installed", "latest", "available", "source",
+                            "home", "error"):
+                    if key in data:
+                        info[key] = data[key]
+            except (ValueError, TypeError):
+                info["error"] = (out or err or "")[:200]
+        else:
+            info["helper"] = "denied"
+            info["error"] = ((err or "") + (out or "")).strip()[:200]
+    if info.get("installed") is None:
+        info["installed"] = APP_VERSION
+    info["checked_at"] = datetime.now().isoformat()
+    return info
+
+
+@bp.route("/api/app-update")
+@rate_limit("20 per minute")
+def api_app_update():
+    try:
+        return jsonify(_cached("app-update", 60, _app_update_status))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc), "helper": "error"}), 500
+
+
+@bp.route("/api/app-update/run", methods=["POST"])
+@rate_limit("1 per minute")
+def api_app_update_run():
+    """Start a dashboard self-update through the installed update.sh --remote.
+
+    The helper launches the update in a detached session and returns
+    immediately: update.sh restarts the service itself, so this HTTP response
+    completes before the dashboard process is replaced. The UI then asks the
+    operator to wait and reload.
+    """
+    data = request.get_json(silent=True) or {}
+    branch = data.get("branch")
+    if branch is not None:
+        if not isinstance(branch, str) or not BRANCH_RE.fullmatch(branch):
+            return jsonify({"error": "invalid branch name"}), 400
+    if not os.path.isfile(_helper_path(SELF_UPDATE_HELPER)):
+        return jsonify({"error": "monitoring-self-update helper is not "
+                                 "installed — run install.sh or update.sh "
+                                 "(sudo) and retry"}), 503
+    args = ["--update"] + (["--branch", branch] if branch else [])
+    code, out, err = run_privileged(SELF_UPDATE_HELPER, args, timeout=60)
+    message = ((out or "") + (err or "")).strip()
+    if code == 0:
+        _cache_clear("app-update")
+        _audit("app-update", outcome="started", branch=branch or "main")
+        return jsonify({"result": message[:600] or "Update started",
+                        "exit_code": code, "action": "app-update"})
+    _audit("app-update", outcome="failed", exit_code=code)
+    return jsonify({"error": message[:600] or "update could not be started",
+                    "exit_code": code, "action": "app-update"}), 500
 
 
 @bp.route("/api/maintain/perf", methods=["POST"])

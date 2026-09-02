@@ -66,9 +66,10 @@ After **any** change to the code, just run the update file — it reinstalls the
 ```bash
 sudo ./update.sh              # from a checkout with your changes
 sudo ./update.sh --remote    # pull the latest from GitHub instead
+./update.sh --check          # read-only: installed vs. latest version (no root)
 ```
 
-It automatically: finds the installed app → backs up the current version (last 5 kept) → copies new files → syncs Python deps → restarts the service → health-checks it. If no install exists yet, it simply runs the installer.
+It automatically: finds the installed app → backs up the current version (last 5 kept) → copies new files → syncs Python deps → restarts the service → health-checks it. If no install exists yet, it simply runs the installer. `--check` needs no root and prints `monitoring-update-check installed=… latest=… update_available=0|1` — the same data the Help → Dashboard Update card shows.
 
 ### ⚠️ One-time note when upgrading from v2.4.x (the old single-file layout)
 
@@ -96,10 +97,12 @@ service.
 - System health checks: disk usage, pending updates, broken packages, failed services, kernel errors, zombie processes
 - One-click safe fixes: update, upgrade, **full-upgrade (incl. new kernels)**, autoremove, clean cache, fix broken, clear logs — package-manager aware (apt/dnf/yum/zypper/pacman/apk)
 - **System & Kernel tool (sidebar → System & Kernel)** — one tool for system software health:
+  - **Fix All System & Kernel Issues** — the one-click fixer for *every* detected system & kernel software issue: interrupted package transactions, broken dependencies, kernel module map, missing/stale initramfs images, the boot menu, firmware metadata — then refreshes package lists, runs the full system upgrade (new kernels included), removes obsolete packages and cleans caches. Each step is reported and verified individually (`[ok]/[skip]/[fail]`); advanced options force an initramfs rebuild or skip the upgrade.
   - **System Upgrade** — refresh package lists + full system upgrade including new kernels (`apt full-upgrade` / `dnf upgrade` / `zypper dist-upgrade` / `pacman -Syu` / `apk upgrade`), with pending-update list and reboot-required warning
   - **System & Kernel Repair** — finishes interrupted package transactions, repairs dependency state, regenerates the kernel module map (`depmod -a`) and rebuilds missing/stale initramfs images for every installed kernel (the classic "boot fails after a kernel update" fix) — each step reported individually
-  - **Performance Tuning** — reversible CPU governor / `vm.swappiness` / I/O scheduler profiles (balanced, max performance, powersave), persisted across reboots, one-click revert to your exact original values
+  - **Performance Tuning** — reversible CPU governor / `vm.swappiness` / I/O scheduler profiles (balanced, max performance, powersave), persisted across reboots, one-click revert to your exact original values — plus a read-only performance-health panel (load average, swap usage) with concrete tuning hints
   - **Kernel & Firmware** — running vs. newest installed kernel, reboot state, fwupd status, kernel error log link
+- **Dashboard update (Help → Dashboard Update)** — Monitoring updates itself from the web UI: checks the installed version against the latest GitHub release and applies it via the installed `update.sh --remote` (the service restarts automatically). The read-only check is also available from the terminal: `./update.sh --check`.
 - Self-repair: when a package fix hits the service's read-only mount namespace (`required filesystem is read-only: /usr, /etc, /boot`), the dashboard can fix it itself — patch `monitoring.service` with `ReadWritePaths=/usr /etc /boot /efi`, `daemon-reload` and restart — through the service account, no root shell
 - Mounted disks overview + listening ports + system info banner (CPU model, kernel, uptime, live network rate)
 
