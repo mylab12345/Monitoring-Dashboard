@@ -822,3 +822,124 @@ class ScriptSyntax(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class MaintainKernelLogic(unittest.TestCase):
+    """Simulated kernel/initramfs detection for the monitoring-maintain
+    helper — the exact scenario Linux Mint/Ubuntu hit after a kernel update:
+    the new kernel is installed but its initramfs was never rebuilt."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(REPO, "privileged", "monitoring-maintain")
+        loader = importlib.machinery.SourceFileLoader("monitoring_maintain", path)
+        spec = importlib.util.spec_from_loader("monitoring_maintain", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        cls.mod = mod
+        # Keep the pristine function in the module namespace: storing it as a
+        # class attribute and reading it back via `self.attr` would bind it to
+        # the test instance (a bound method) and poison the next test's global
+        # lookup with "takes 1 positional argument".
+        mod.__dict__["_ORIG_INITRAMFS_TOOL"] = mod._initramfs_tool
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp(prefix="mnt-test-")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.mod.MODULES_DIR = "/lib/modules"
+        self.mod.BOOT_DIR = "/boot"
+        # Restore the pristine function into the module namespace. Assigning
+        # through the class attribute (`self.mod._initramfs_tool = ...`) would
+        # bind the function to this test instance — a bound method that then
+        # breaks the next test's global lookup with "takes 1 positional arg".
+        mod_globals = self.mod.__dict__
+        mod_globals["_initramfs_tool"] = mod_globals["_ORIG_INITRAMFS_TOOL"]
+        if hasattr(self, "_real_uname"):
+            self.mod.__dict__["os"].uname = self._real_uname
+
+    def _mk(self, kernels, boot_files=(), module_mtimes=None, modules_dep=False):
+        """Build a fake /lib/modules + /boot tree and point the helper at it."""
+        m = self.mod
+        modules = os.path.join(self.tmp, "lib-modules")
+        boot = os.path.join(self.tmp, "boot")
+        for k in kernels:
+            kdir = os.path.join(modules, k)
+            os.makedirs(os.path.join(kdir, "kernel", "drivers"), exist_ok=True)
+            ko = os.path.join(kdir, "kernel", "drivers", "test.ko")
+            with open(ko, "w") as fh:
+                fh.write("x")
+            if module_mtimes and k in module_mtimes:
+                os.utime(ko, (module_mtimes[k], module_mtimes[k]))
+            if modules_dep:
+                with open(os.path.join(kdir, "modules.dep"), "w") as fh:
+                    fh.write("# deps\n")
+        for b in boot_files:
+            os.makedirs(boot, exist_ok=True)
+            with open(os.path.join(boot, b), "w") as fh:
+                fh.write("initrd")
+        m.MODULES_DIR = modules
+        m.BOOT_DIR = boot
+        return modules, boot
+
+    def test_installed_kernels_sorted_newest_first(self):
+        m = self.mod
+        self._mk(["6.8.0-45-generic", "6.8.0-44-generic", "6.8.0-31-generic"])
+        self.assertEqual(m._installed_kernels(),
+                         ["6.8.0-45-generic", "6.8.0-44-generic", "6.8.0-31-generic"])
+
+    def test_initramfs_missing_after_kernel_update(self):
+        """New kernel installed, no initrd -> state 'missing' (needs rebuild)."""
+        m = self.mod
+        self._mk(["6.8.0-45-generic", "6.8.0-44-generic"],
+                 boot_files=("initrd.img-6.8.0-44-generic",))
+        self.assertEqual(m._initramfs_state("6.8.0-45-generic"), "missing")
+        self.assertEqual(m._initramfs_state("6.8.0-44-generic"), "ok")
+
+    def test_initramfs_stale_when_older_than_modules(self):
+        """Initrd exists but predates the kernel's modules -> stale."""
+        m = self.mod
+        self._mk(["6.8.0-45-generic"],
+                 boot_files=("initrd.img-6.8.0-45-generic",),
+                 module_mtimes={"6.8.0-45-generic": 2000})
+        initrd = os.path.join(m.BOOT_DIR, "initrd.img-6.8.0-45-generic")
+        os.utime(initrd, (1000, 1000))  # older than the .ko mtime
+        self.assertEqual(m._initramfs_state("6.8.0-45-generic"), "stale")
+        os.utime(initrd, (2002, 2002))  # newer again -> ok
+        self.assertEqual(m._initramfs_state("6.8.0-45-generic"), "ok")
+
+    def test_check_status_flags_rebuild(self):
+        """check_status must report needs-rebuild + reboot state coherently."""
+        m = self.mod
+        self._mk(["6.8.0-45-generic"], boot_files=())
+        m.__dict__["_initramfs_tool"] = lambda: "update-initramfs"  # Mint/Ubuntu tool
+        status = m.check_status()
+        self.assertEqual(status["kernel"]["latest"], "6.8.0-45-generic")
+        self.assertEqual(status["initramfs"]["status"], "needs-rebuild")
+        self.assertEqual(status["initramfs"]["stale"], ["6.8.0-45-generic"])
+        self.assertEqual(status["initramfs"]["tool"], "update-initramfs")
+
+    def test_module_map_stale_detection(self):
+        """modules.dep older than the newest module -> stale module map."""
+        m = self.mod
+        self._mk(["6.8.0-45-generic"], modules_dep=True,
+                 module_mtimes={"6.8.0-45-generic": 2000})
+        dep = os.path.join(m.MODULES_DIR, "6.8.0-45-generic", "modules.dep")
+        os.utime(dep, (1000, 1000))  # older than the .ko
+        self.assertTrue(m._newest_module_mtime("6.8.0-45-generic") > 1000)
+        # Simulate that 6.8.0-45-generic is the running kernel so check_status
+        # inspects the fake tree for the module map.
+        import types
+        real_uname = m.os.uname
+        m.os.uname = lambda: types.SimpleNamespace(release="6.8.0-45-generic")
+        try:
+            status = m.check_status()
+        finally:
+            m.os.uname = real_uname
+        self.assertTrue(status["module_map"]["exists"])
+        self.assertTrue(status["module_map"]["stale"])
