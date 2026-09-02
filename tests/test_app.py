@@ -350,6 +350,99 @@ class MaintenanceBackend(unittest.TestCase):
         self.assertEqual(calls, [["--fix-all", "--force-initramfs", "--no-upgrade"]])
         self.assertIn("fix-all", r.get_json()["action"])
 
+    def test_readonly_78_triggers_auto_repair(self):
+        """Exit 78 (read-only service mount namespace) must auto-repair and
+        tell the UI to retry — not just fail."""
+        from monitor import fixes
+        with patch.object(fixes, "_pkg_manager", return_value="apt"), \
+             patch.object(fixes, "run_privileged",
+                          return_value=(78, "", "monitoring-package: required "
+                                                "filesystem is read-only: "
+                                                "/usr, /etc, /boot\n"
+                                                "ReadWritePaths guidance…")), \
+             patch.object(fixes, "auto_repair_readonly",
+                          return_value=(True, "repair scheduled")):
+            r = self.client.post("/api/fix", json={"action": "upgrade"})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["read_only_mount"])
+        self.assertTrue(body["repair_scheduled"])
+        self.assertEqual(body["exit_code"], 78)
+        self.assertIn("read-only", body["error"])
+        self.assertNotIn("result", body)  # the action did not run yet
+
+    def test_readonly_78_without_repair_stays_500(self):
+        """When the self-repair helper cannot run, the failure must stay a
+        real 500 with the reason attached."""
+        from monitor import fixes
+        with patch.object(fixes, "_pkg_manager", return_value="apt"), \
+             patch.object(fixes, "run_privileged",
+                          return_value=(78, "", "required filesystem is "
+                                                "read-only: /usr")), \
+             patch.object(fixes, "auto_repair_readonly",
+                          return_value=(False, "helper is not installed")):
+            r = self.client.post("/api/fix", json={"action": "autoremove"})
+        self.assertEqual(r.status_code, 500)
+        body = r.get_json()
+        self.assertTrue(body["read_only_mount"])
+        self.assertFalse(body.get("repair_scheduled"))
+        self.assertEqual(body["repair_error"], "helper is not installed")
+
+    def test_maintain_repair_78_auto_repair(self):
+        """System & Kernel repair returning 78 must auto-repair the unit."""
+        from monitor import maintain as maintain_mod
+        with patch.object(maintain_mod, "_helper_path",
+                          return_value=os.path.join(REPO, "privileged",
+                                                    "monitoring-maintain")), \
+             patch.object(maintain_mod, "run_privileged",
+                          return_value=(78, "", "[fail] package-db: package "
+                                                "paths are read-only")), \
+             patch.object(maintain_mod, "auto_repair_readonly",
+                          return_value=(True, "repair scheduled")):
+            r = self.client.post("/api/maintain/repair", json={})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["repair_scheduled"])
+        self.assertTrue(body["read_only_mount"])
+
+    def test_fix_all_marks_exit78_and_repairs(self):
+        """Diagnostics fix-all must record exit 78 and auto-repair."""
+        from monitor import diagnostics as diag
+        issues = {"issues": {
+            "critical": [{"id": "x1", "fix": "fix-broken-packages",
+                          "name": "broken", "detail": "", "category": "Packages",
+                          "severity": "critical"}],
+            "warnings": [], "info": []}, "score": 50}
+
+        def fake_run_privileged(name, args=None, timeout=60):
+            if name == "monitoring-package":
+                return (78, "", "monitoring-package: required filesystem is "
+                                "read-only: /usr, /etc")
+            return (0, "", "")
+
+        with patch.object(diag, "_diag_scan", return_value=issues), \
+             patch.object(diag, "_pkg_manager", return_value="apt"), \
+             patch.object(diag, "run_privileged", side_effect=fake_run_privileged), \
+             patch.object(diag, "auto_repair_readonly",
+                          return_value=(True, "repair scheduled")):
+            r = self.client.post("/api/troubleshooting/fix-all",
+                                 json={"fixes": ["fix-broken-packages"]})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["repair_scheduled"])
+        self.assertEqual(body["failed"][0]["exit_code"], 78)
+        self.assertIn("read-only", body["failed"][0]["output"])
+
+    def test_output_keeps_head_on_truncation(self):
+        """Long helper output must keep the diagnostic FIRST lines."""
+        from monitor import fixes
+        head = "monitoring-package: required filesystem is read-only: /usr"
+        text = head + "\n" + "padding " * 300
+        out = fixes._output("", text)
+        self.assertIn("read-only", out.splitlines()[0])
+        self.assertIn("[truncated]", out)
+        self.assertLessEqual(len(out), 510)
+
     def test_dpkg_audit_detects_half_installed_output_without_error_word(self):
         from monitor import packages
         with patch.object(packages, "which", return_value=True), \
@@ -1036,6 +1129,7 @@ class MaintainKernelLogic(unittest.TestCase):
         m.__dict__["_step_bootloader"] = step("bootloader")
         m.__dict__["_step_fwupd"] = step("fwupd")
         m.__dict__["_pkg_manager"] = lambda: manager
+        m.__dict__["_package_paths_read_only"] = lambda: []  # namespace is fine
         m.__dict__["_step_package_refresh"] = step("package-refresh")
         m.__dict__["_step_full_upgrade"] = step("full-upgrade")
         m.__dict__["_step_autoremove"] = step("autoremove")
@@ -1085,3 +1179,26 @@ class MaintainKernelLogic(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("[fail] package-db: boom", text)
         self.assertIn("[fail] failed required steps: package-db", text)
+
+    def test_run_repair_readonly_namespace_returns_78(self):
+        """An old monitoring.service unit (read-only /usr) must be reported as
+        exit 78 with guidance, matching the monitoring-package contract."""
+        m = self.mod
+        m.__dict__["_pkg_manager"] = lambda: "apt"
+        m.__dict__["_package_paths_read_only"] = lambda: ["/usr", "/etc"]
+        code, lines = m.run_repair(force_initramfs=False)
+        self.assertEqual(code, 78)
+        text = "\n".join(lines)
+        self.assertIn("read-only", text)
+        self.assertIn("ReadWritePaths", text)
+        self.assertIn("do not chmod /usr", text)
+
+    def test_run_fix_all_readonly_namespace_returns_78(self):
+        m = self.mod
+        m.__dict__["_pkg_manager"] = lambda: "apt"
+        m.__dict__["_package_paths_read_only"] = lambda: ["/boot"]
+        code, lines = m.run_fix_all(False, False)
+        self.assertEqual(code, 78)
+        text = "\n".join(lines)
+        self.assertIn("package paths are read-only", text)
+        self.assertIn("monitoring-self-repair", text)

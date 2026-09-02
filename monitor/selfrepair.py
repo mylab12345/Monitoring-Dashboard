@@ -118,3 +118,29 @@ def api_self_repair_apply():
     _audit("self-repair", outcome="failed", exit_code=code)
     return jsonify({"error": message[:600] or "self-repair failed",
                     "exit_code": code}), 500
+
+
+def auto_repair_readonly():
+    """Attempt the service-namespace repair; return (applied, message).
+
+    Called by the fix endpoints when a package action fails with exit 78
+    ("required filesystem is read-only" — the old monitoring.service unit
+    lacks ReadWritePaths=/usr /etc /boot /efi). The self-repair helper patches
+    the unit, daemon-reloads and schedules the restart through systemd so the
+    current HTTP response can complete before the dashboard process is
+    replaced; the UI then waits for the API and retries the failed action.
+    """
+    try:
+        path = privileged_tool(HELPER)
+    except ValueError:
+        return False, "monitoring-self-repair helper is not whitelisted"
+    if not os.path.isfile(path):
+        return False, ("monitoring-self-repair helper is not installed — "
+                       "run install.sh or update.sh (sudo) and retry")
+    code, out, err = run_privileged(HELPER, ["--apply"], timeout=120)
+    message = ((out or "") + (err or "")).strip()[:400]
+    if code == 0:
+        _cache_clear("self-repair")
+        _audit("self-repair-auto", outcome="scheduled")
+        return True, message or "repair scheduled"
+    return False, message or "self-repair failed"

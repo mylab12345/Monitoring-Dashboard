@@ -14,6 +14,7 @@ from .packages import (FIX_ACTIONS, FIX_ALIASES, FIX_COMMANDS,
                        PACKAGE_MUTATION_LOCK, _pkg_manager,
                        clear_updatable_cache)
 from .security import rate_limit
+from .selfrepair import auto_repair_readonly
 
 bp = Blueprint("fixes", __name__)
 
@@ -30,10 +31,20 @@ _REFRESH_BEFORE_FULL_UPGRADE = frozenset({"apt", "zypper"})
 
 
 def _output(stdout, stderr, fallback=""):
-    """Combine command output without losing a useful error message."""
+    """Combine command output without losing a useful error message.
+
+    Long output keeps BOTH the head (the first lines usually state WHY the
+    action failed — e.g. \"required filesystem is read-only: /usr, /etc\")
+    and the tail, so the UI can never lose the critical first line to
+    truncation.
+    """
     text = "\n".join(part.strip() for part in (stdout or "", stderr or "")
                    if part and part.strip())
-    return text[-500:] if text else fallback
+    if not text:
+        return fallback
+    if len(text) <= 500:
+        return text
+    return text[:200] + "\n…[truncated]…\n" + text[-280:]
 
 
 def _clear_stale_caches():
@@ -50,20 +61,42 @@ def _clear_stale_caches():
 
 
 def _result(action, manager, code, stdout, stderr):
-    """Create a truthful API response for a completed helper invocation."""
+    """Create a truthful API response for a completed helper invocation.
+
+    Exit 78 (sysexits EX_CONFIG) is the monitoring-package read-only-mount
+    guard: the installed monitoring.service predates
+    ``ReadWritePaths=/usr /etc /boot /efi``, so package paths are read-only
+    in the service namespace. Instead of only returning an error, the
+    dashboard repairs the unit itself (monitoring-self-repair --apply:
+    patch + daemon-reload + scheduled restart) and tells the UI to wait for
+    the restart and retry the action — so the fix succeeds without the
+    operator needing a root shell.
+    """
     text = _output(stdout, stderr, "Done")
     if code == 0:
         _clear_stale_caches()
         _audit("fix", action=action, manager=manager, outcome="success")
         return jsonify({"result": text, "action": action, "manager": manager}), 200
 
-    # Include the exit status so the UI/operator can distinguish a missing
-    # helper, a package-manager lock, a read-only mount, and a package error.
     message = f"{action} failed (exit {code}): {text}"
+    payload = {"error": message, "action": action, "manager": manager,
+               "exit_code": code}
+    status = 500
+    if code == 78:
+        # Package-manager guard for a read-only service mount namespace.
+        payload["read_only_mount"] = True
+        applied, repair_message = auto_repair_readonly()
+        if applied:
+            payload.update({"repair_scheduled": True,
+                            "repair_message": repair_message})
+            _audit("fix", action=action, manager=manager,
+                   outcome="repair-scheduled", exit_code=code)
+            status = 200
+        else:
+            payload["repair_error"] = repair_message
     _audit("fix", action=action, manager=manager, outcome="failed",
            exit_code=code)
-    return jsonify({"error": message, "action": action, "manager": manager,
-                    "exit_code": code}), 500
+    return jsonify(payload), status
 
 
 def _unsupported(action, manager, message):

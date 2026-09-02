@@ -274,6 +274,43 @@ def _pkg_manager():
     return None
 
 
+def _mount_is_read_only(path):
+    """True when `path` sits on a read-only mount; False/None otherwise."""
+    if not os.path.exists(path):
+        return False
+    findmnt = shutil.which("findmnt")
+    if not findmnt:
+        return None
+    code, out, _err = _capture(
+        [findmnt, "--noheadings", "--output", "OPTIONS", "--target", path],
+        timeout=5)
+    if code != 0 or not (out or "").strip():
+        return None
+    return "ro" in {p.strip() for p in out.strip().split(",")}
+
+
+def _package_paths_read_only():
+    """Package write-paths that are read-only in the current namespace.
+
+    Under an old monitoring.service unit (without ReadWritePaths=/usr /etc
+    /boot /efi), ProtectSystem=full makes these read-only even for root
+    inside the service namespace — the same condition monitoring-package
+    reports as exit 78.
+    """
+    return [p for p in ("/usr", "/etc", "/boot", "/efi")
+            if _mount_is_read_only(p) is True]
+
+
+_READONLY_GUIDANCE = (
+    "package paths are read-only in the service mount namespace: {paths}. "
+    "This is a mount policy, not a file permission. Install the updated "
+    "monitoring.service (it grants ReadWritePaths=/usr /etc /boot /efi), run "
+    "systemctl daemon-reload and restart monitoring before retrying — the "
+    "dashboard does this automatically with 'Repair service mount namespace' "
+    "(monitoring-self-repair). If the host itself is mounted read-only, "
+    "repair/remount that filesystem first; do not chmod /usr.")
+
+
 def check_status():
     """Build the read-only JSON status report."""
     running = os.uname().release
@@ -462,10 +499,26 @@ def _step_initramfs(force=False):
 
 
 def run_repair(force_initramfs=False):
-    """Run the repair sequence; returns (exit_code, output_lines)."""
+    """Run the repair sequence; returns (exit_code, output_lines).
+
+    Exit 78 when the service mount namespace makes package paths read-only
+    (old monitoring.service without ReadWritePaths): the dashboard endpoint
+    then auto-repairs the unit and retries.
+    """
     manager = _pkg_manager()
     lines = []
     failed = []
+
+    if manager:
+        blocked = _package_paths_read_only()
+        if blocked:
+            lines.append("[fail] package-db: " + _READONLY_GUIDANCE.format(
+                paths=", ".join(blocked)))
+            lines.append("[fail] module-map/initramfs/bootloader: package "
+                         "paths are read-only in the service namespace")
+            lines.append("[fail] failed steps: package-db, module-map, "
+                         "initramfs, bootloader")
+            return 78, lines
 
     ok, detail = _step_package_db(manager)
     lines.append(f"[{'ok' if ok else 'fail'}] package-db"
@@ -608,6 +661,18 @@ def run_fix_all(force_initramfs=False, no_upgrade=False):
     lines = []
     required_failed = []
     optional_failed = []
+
+    if manager:
+        blocked = _package_paths_read_only()
+        if blocked:
+            # Same exit-78 contract as monitoring-package: the endpoint
+            # auto-repairs the unit and the UI retries after the restart.
+            lines.append("[fail] package-refresh/full-upgrade/autoremove/"
+                         "clean: " + _READONLY_GUIDANCE.format(
+                             paths=", ".join(blocked)))
+            lines.append("[fail] failed required steps: package-refresh, "
+                         "full-upgrade, autoremove, clean")
+            return 78, lines
 
     def run_step(name, fn, required=True):
         ok, detail = fn()

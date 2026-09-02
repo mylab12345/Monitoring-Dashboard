@@ -405,19 +405,21 @@ async function verifyDiagIssues(ids){
   }catch(e){return{};}
 }
 
-async function fixAllIssues(){
+async function fixAllIssues(autoRetried){
   if(!diagData)return;
   const all=diagAllIssues(diagData).filter(i=>diagFixIdOf(i));
   if(!all.length){toast('No safe fixes available for current issues','info');return;}
   const fixIds=[...new Set(all.map(diagFixIdOf))];
-  const ok=await openModal({
-    title:'Fix all detected issues',
-    text:'This applies '+fixIds.length+' safe fix action(s) for '+all.length+' detected issue(s). Each result is verified automatically afterwards.',
-    html:'<div class="cmd-list">'+fixIds.map(f=>'<code>'+esc(f)+'</code>').join('')+'</div>',
-    confirmText:'Fix all',cancelText:'Cancel',danger:true,icon:'wrench',
-    note:'Post-fix verification runs automatically.'
-  });
-  if(!ok)return;
+  if(!autoRetried){
+    const ok=await openModal({
+      title:'Fix all detected issues',
+      text:'This applies '+fixIds.length+' safe fix action(s) for '+all.length+' detected issue(s). Each result is verified automatically afterwards.',
+      html:'<div class="cmd-list">'+fixIds.map(f=>'<code>'+esc(f)+'</code>').join('')+'</div>',
+      confirmText:'Fix all',cancelText:'Cancel',danger:true,icon:'wrench',
+      note:'Post-fix verification runs automatically.'
+    });
+    if(!ok)return;
+  }
   const btn=$('#fixAllBtn'),old=btn?btn.innerHTML:'';
   if(btn){btn.disabled=true;btn.innerHTML=icon('refresh',16)+' Fixing & verifying…';}
   const ids=all.map(i=>i.id);
@@ -436,7 +438,13 @@ async function fixAllIssues(){
       if(i)diagFixOutcomes[i.id]={status:'failed',message:String(f.output||'Fix failed').slice(0,200)};
     });
     renderFixResults(result,v);
-    if((result.failed||[]).some(f=>detectReadOnlyMount(f.output))){
+    if(result.repair_scheduled&&!autoRetried){
+      // The backend repaired the read-only service namespace (exit 78);
+      // wait for the restart and re-run fix-all automatically.
+      await autoRepairAndRetry(()=>fixAllIssues(true));
+      return;
+    }
+    if((result.failed||[]).some(f=>f.exit_code===78||detectReadOnlyMount(f.output))){
       // One or more fixes were blocked by the read-only service mount
       // namespace; repair it through the service account, then re-run.
       const repaired=await offerSelfRepair(()=>fixAllIssues());

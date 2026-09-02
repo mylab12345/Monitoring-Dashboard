@@ -30,6 +30,7 @@ from .fixes import run_fix_action
 from .metrics import _pretty_distro, _read_temp_c
 from .packages import _updatable_packages
 from .security import rate_limit
+from .selfrepair import auto_repair_readonly
 
 bp = Blueprint("maintain", __name__)
 
@@ -284,6 +285,25 @@ def api_maintain_repair():
         _audit("maintain-repair", outcome="ok", force_initramfs=force_initramfs)
         return jsonify({"result": message[-2000:] or "Repair completed",
                         "exit_code": code, "action": "repair"})
+    if code == 78:
+        # Read-only service mount namespace (old monitoring.service unit):
+        # auto-repair the unit and let the UI retry after the restart.
+        applied, repair_message = auto_repair_readonly()
+        payload = {"error": f"repair blocked (exit 78): package paths are "
+                            f"read-only in the service namespace",
+                   "exit_code": code, "action": "repair",
+                   "read_only_mount": True,
+                   "detail": message[-2000:] or ""}
+        if applied:
+            payload.update({"repair_scheduled": True,
+                            "repair_message": repair_message})
+            _audit("maintain-repair", outcome="repair-scheduled",
+                   exit_code=code, force_initramfs=force_initramfs)
+            return jsonify(payload), 200
+        payload["repair_error"] = repair_message
+        _audit("maintain-repair", outcome="failed", exit_code=code,
+               force_initramfs=force_initramfs)
+        return jsonify(payload), 500
     _audit("maintain-repair", outcome="failed", exit_code=code,
            force_initramfs=force_initramfs)
     return jsonify({"error": f"repair failed (exit {code}): "
@@ -332,6 +352,26 @@ def api_maintain_fix_all():
                force_initramfs=force_initramfs, no_upgrade=no_upgrade)
         return jsonify({"result": message[-6000:] or "Fix-all completed",
                         "exit_code": code, "action": "fix-all"})
+    if code == 78:
+        # Read-only service mount namespace (old monitoring.service unit):
+        # auto-repair the unit and let the UI retry after the restart.
+        applied, repair_message = auto_repair_readonly()
+        payload = {"error": f"fix-all blocked (exit 78): package paths are "
+                            f"read-only in the service namespace",
+                   "exit_code": code, "action": "fix-all",
+                   "read_only_mount": True,
+                   "detail": message[-6000:] or ""}
+        if applied:
+            payload.update({"repair_scheduled": True,
+                            "repair_message": repair_message})
+            _audit("maintain-fix-all", outcome="repair-scheduled",
+                   exit_code=code, force_initramfs=force_initramfs,
+                   no_upgrade=no_upgrade)
+            return jsonify(payload), 200
+        payload["repair_error"] = repair_message
+        _audit("maintain-fix-all", outcome="failed", exit_code=code,
+               force_initramfs=force_initramfs, no_upgrade=no_upgrade)
+        return jsonify(payload), 500
     _audit("maintain-fix-all", outcome="failed", exit_code=code,
            force_initramfs=force_initramfs, no_upgrade=no_upgrade)
     return jsonify({"error": f"fix-all failed (exit {code}): "

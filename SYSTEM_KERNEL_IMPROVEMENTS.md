@@ -75,7 +75,27 @@ counted as warnings, never hidden). Backed by:
 - The existing reversible profiles (balanced / max performance / powersave)
   remain untouched; Fix All deliberately does **not** change tuning knobs.
 
-### 2.4 Honesty & safety guarantees (kept from the existing design)
+### 2.4 Auto-heal of the read-only service namespace (exit 78)
+
+When the installed `monitoring.service` is an **old unit** (pre-`ReadWritePaths=/usr /etc /boot /efi`),
+every package operation fails with exit 78 (`required filesystem is read-only`)
+because `ProtectSystem=full` makes /usr, /etc and /boot read-only in the
+service mount namespace. v2.7.1 makes the dashboard fix this by itself:
+
+- `monitoring-package` and `monitoring-maintain --repair/--fix-all` return the
+  same exit-78 contract with guidance (pre-checked before any transaction).
+- The fix endpoints (`/api/fix`, `/api/maintain/upgrade`, `/api/maintain/repair`,
+  `/api/maintain/fix-all`, `/api/troubleshooting/fix-all`) detect exit 78 and
+  automatically run `monitoring-self-repair --apply` (patch unit + daemon-reload
+  + scheduled restart through systemd), returning `read_only_mount` +
+  `repair_scheduled` flags.
+- The UI waits for the dashboard to come back after the restart, then
+  **re-runs the failed action once** automatically (`autoRepairAndRetry`).
+- Long helper output is no longer tail-truncated: the diagnostic head
+  ("required filesystem is read-only: /usr, /etc") is preserved, and
+  `detectReadOnlyMount()` also matches `ReadWritePaths` / `exit 78`.
+
+### 2.5 Honesty & safety guarantees (kept from the existing design)
 
 - All mutating work goes through whitelisted, argv-validating privileged
   helpers — never a shell, never `sudo ALL`.

@@ -236,21 +236,23 @@ function renderKernelErrors() {
 }
 
 // ---- actions ----------------------------------------------------
-async function runMaintainUpgrade() {
+async function runMaintainUpgrade(autoRetried) {
   const d = maintainData || {};
   const n = (d.updates && d.updates.count) || 0;
-  const ok = await openModal({
-    title: 'Run full system upgrade',
-    text: n
-      ? 'Install ' + n + ' available update(s) — including new kernels and library upgrades that plain "Upgrade" defers.'
-      : 'No updates are currently pending, but the upgrade will refresh package lists and re-sync state.',
-    html: '<div class="fix-preview"><div class="kv"><span>Operation</span><strong>refresh lists + full-upgrade (incl. kernels)</strong></div>'
-      + '<div class="kv"><span>Manager</span><strong>' + esc(d.updates && d.updates.manager || 'n/a') + '</strong></div>'
-      + '<div class="kv"><span>Impact</span><strong>may take several minutes; services may restart</strong></div></div>',
-    confirmText: 'Upgrade now', cancelText: 'Cancel', danger: true, icon: 'up',
-    note: 'A reboot may be required afterwards to activate new kernels.'
-  });
-  if (!ok) return;
+  if (!autoRetried) {
+    const ok = await openModal({
+      title: 'Run full system upgrade',
+      text: n
+        ? 'Install ' + n + ' available update(s) — including new kernels and library upgrades that plain "Upgrade" defers.'
+        : 'No updates are currently pending, but the upgrade will refresh package lists and re-sync state.',
+      html: '<div class="fix-preview"><div class="kv"><span>Operation</span><strong>refresh lists + full-upgrade (incl. kernels)</strong></div>'
+        + '<div class="kv"><span>Manager</span><strong>' + esc(d.updates && d.updates.manager || 'n/a') + '</strong></div>'
+        + '<div class="kv"><span>Impact</span><strong>may take several minutes; services may restart</strong></div></div>',
+      confirmText: 'Upgrade now', cancelText: 'Cancel', danger: true, icon: 'up',
+      note: 'A reboot may be required afterwards to activate new kernels.'
+    });
+    if (!ok) return;
+  }
   const btn = $('#mntUpgradeBtn'), term = $('#mntUpgradeTerm'), out = $('#mntUpgradeResult');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner">' + icon('refresh', 15) + '</span> Upgrading…'; }
   term.hidden = false;
@@ -261,9 +263,15 @@ async function runMaintainUpgrade() {
     const res = (j && (j.result || j.error)) || 'Done';
     out.innerHTML = '<span class="dim">$ monitoring full-upgrade</span>\n' + esc(String(res).slice(0, 2000));
     if (j && j.error) {
+      if (j.repair_scheduled && !autoRetried) {
+        // Backend repaired the read-only service namespace; wait for the
+        // restart and re-run the upgrade automatically.
+        await autoRepairAndRetry(() => runMaintainUpgrade(true));
+        return;
+      }
       toast('Upgrade failed: ' + j.error, 'err');
       logActivity('fix', 'System & Kernel: upgrade failed', false);
-      if (detectReadOnlyMount(j.error)) {
+      if (j.read_only_mount || detectReadOnlyMount(j.error)) {
         const repaired = await offerSelfRepair(() => runMaintainUpgrade());
         if (repaired) return;
       }
@@ -282,19 +290,21 @@ async function runMaintainUpgrade() {
   if (typeof loadTroubleshooting === 'function') loadTroubleshooting(true);
 }
 
-async function runMaintainRepair() {
+async function runMaintainRepair(autoRetried) {
   const force = !!(document.getElementById('mntForceInitramfs') || {}).checked;
-  const ok = await openModal({
-    title: 'Repair system & kernel software',
-    text: 'Runs the safe repair sequence through the whitelisted helper:',
-    html: '<div class="cmd-list">'
-      + '<code>package-db</code> finish interrupted transactions & repair dependencies'
-      + '<code>module-map</code> regenerate kernel module dependencies (depmod)'
-      + '<code>initramfs</code>' + (force ? ' force rebuild all kernels' : ' rebuild stale/missing images only') + '</div>',
-    confirmText: 'Repair now', cancelText: 'Cancel', danger: true, icon: 'wrench',
-    note: force ? 'Force rebuild was selected — this can take a long time.' : 'No reboot is performed.'
-  });
-  if (!ok) return;
+  if (!autoRetried) {
+    const ok = await openModal({
+      title: 'Repair system & kernel software',
+      text: 'Runs the safe repair sequence through the whitelisted helper:',
+      html: '<div class="cmd-list">'
+        + '<code>package-db</code> finish interrupted transactions & repair dependencies'
+        + '<code>module-map</code> regenerate kernel module dependencies (depmod)'
+        + '<code>initramfs</code>' + (force ? ' force rebuild all kernels' : ' rebuild stale/missing images only') + '</div>',
+      confirmText: 'Repair now', cancelText: 'Cancel', danger: true, icon: 'wrench',
+      note: force ? 'Force rebuild was selected — this can take a long time.' : 'No reboot is performed.'
+    });
+    if (!ok) return;
+  }
   const btn = $('#mntRepairBtn'), term = $('#mntRepairTerm'), out = $('#mntRepairResult');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner">' + icon('refresh', 15) + '</span> Repairing…'; }
   term.hidden = false;
@@ -305,9 +315,15 @@ async function runMaintainRepair() {
     const res = (j && (j.result || j.error)) || 'Done';
     out.innerHTML = '<span class="dim">$ monitoring maintain --repair</span>\n' + esc(String(res).slice(0, 2000));
     if (j && j.error) {
+      if (j.repair_scheduled && !autoRetried) {
+        // Backend repaired the read-only service namespace; wait for the
+        // restart and re-run the repair automatically.
+        await autoRepairAndRetry(() => runMaintainRepair(true));
+        return;
+      }
       toast('Repair failed: ' + j.error, 'err');
       logActivity('fix', 'System & Kernel: repair failed', false);
-      if (detectReadOnlyMount(j.error)) {
+      if (j.read_only_mount || detectReadOnlyMount(j.error)) {
         const repaired = await offerSelfRepair(() => runMaintainRepair());
         if (repaired) return;
       }
@@ -326,30 +342,32 @@ async function runMaintainRepair() {
   if (typeof loadTroubleshooting === 'function') loadTroubleshooting(true);
 }
 
-async function runMaintainFixAll() {
+async function runMaintainFixAll(autoRetried) {
   const force = !!(document.getElementById('mntFixAllForceInitramfs') || {}).checked;
   const noUpgrade = !!(document.getElementById('mntFixAllNoUpgrade') || {}).checked;
   const d = maintainData || {};
   const n = ((d.fix_all && d.fix_all.count) || 0);
-  const ok = await openModal({
-    title: 'Fix all system & kernel issues',
-    text: n
-      ? n + ' issue(s) were detected. This runs the complete, verified fix pipeline:'
-      : 'No issues were detected, but Fix All can still re-sync boot state and run the full upgrade. This runs the complete, verified fix pipeline:',
-    html: '<div class="cmd-list">'
-      + '<code>package-db</code> finish interrupted transactions & repair dependencies'
-      + '<code>module-map</code> regenerate kernel module dependencies (depmod)'
-      + '<code>initramfs</code>' + (force ? ' force rebuild all kernels' : ' rebuild stale/missing images only')
-      + '<code>bootloader</code> refresh the boot menu for the newest kernel'
-      + '<code>fwupd</code> refresh firmware metadata (never installs firmware)'
-      + (noUpgrade ? '' : '<code>full-upgrade</code> refresh lists + install all updates including new kernels')
-      + '<code>autoremove</code> remove orphaned/obsolete packages'
-      + '<code>clean</code> clear the package cache'
-      + '</div>',
-    confirmText: 'Fix everything', cancelText: 'Cancel', danger: true, icon: 'wrench',
-    note: noUpgrade ? 'Upgrade skipped — repair, boot, firmware and cleanup only.' : 'A reboot may be required afterwards; no reboot is performed automatically.'
-  });
-  if (!ok) return;
+  if (!autoRetried) {
+    const ok = await openModal({
+      title: 'Fix all system & kernel issues',
+      text: n
+        ? n + ' issue(s) were detected. This runs the complete, verified fix pipeline:'
+        : 'No issues were detected, but Fix All can still re-sync boot state and run the full upgrade. This runs the complete, verified fix pipeline:',
+      html: '<div class="cmd-list">'
+        + '<code>package-db</code> finish interrupted transactions & repair dependencies'
+        + '<code>module-map</code> regenerate kernel module dependencies (depmod)'
+        + '<code>initramfs</code>' + (force ? ' force rebuild all kernels' : ' rebuild stale/missing images only')
+        + '<code>bootloader</code> refresh the boot menu for the newest kernel'
+        + '<code>fwupd</code> refresh firmware metadata (never installs firmware)'
+        + (noUpgrade ? '' : '<code>full-upgrade</code> refresh lists + install all updates including new kernels')
+        + '<code>autoremove</code> remove orphaned/obsolete packages'
+        + '<code>clean</code> clear the package cache'
+        + '</div>',
+      confirmText: 'Fix everything', cancelText: 'Cancel', danger: true, icon: 'wrench',
+      note: noUpgrade ? 'Upgrade skipped — repair, boot, firmware and cleanup only.' : 'A reboot may be required afterwards; no reboot is performed automatically.'
+    });
+    if (!ok) return;
+  }
   mntBusy = true;
   const btn = $('#mntFixAllBtn'), term = $('#mntFixAllTerm'), out = $('#mntFixAllResult');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner">' + icon('refresh', 15) + '</span> Fixing…'; }
@@ -361,9 +379,15 @@ async function runMaintainFixAll() {
     const res = (j && (j.result || j.error)) || 'Done';
     out.innerHTML = '<span class="dim">$ monitoring maintain --fix-all</span>\n' + esc(String(res).slice(0, 6000));
     if (j && j.error) {
+      if (j.repair_scheduled && !autoRetried) {
+        // Backend repaired the read-only service namespace; wait for the
+        // restart and re-run fix-all automatically.
+        await autoRepairAndRetry(() => runMaintainFixAll(true));
+        return;
+      }
       toast('Fix-all failed: ' + j.error, 'err');
       logActivity('fix', 'System & Kernel: fix-all failed', false);
-      if (detectReadOnlyMount(j.error)) {
+      if (j.read_only_mount || detectReadOnlyMount(j.error)) {
         const repaired = await offerSelfRepair(() => runMaintainFixAll());
         if (repaired) return;
       }
