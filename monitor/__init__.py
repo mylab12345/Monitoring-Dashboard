@@ -10,10 +10,7 @@ import importlib
 import logging  # noqa: F401  (re-exported for app.py)
 import os
 
-from flask import Flask
-
 from .common import APP_HOME, LOG, LOAD_ERRORS
-from .security import register_security
 
 # (module_name, blueprint_attribute) for every feature area. Registration
 # order is not significant: each blueprint is registered independently and a
@@ -37,7 +34,18 @@ BLUEPRINTS = [
 
 
 def create_app():
-    """Build the Flask application, registering each feature module safely."""
+    """Build the Flask application, registering each feature module safely.
+
+    Flask and the security integration are imported lazily so lightweight
+    utilities such as :mod:`monitor.common` remain usable by maintenance
+    scripts and tests on systems where the web dependencies are not installed.
+    Calling ``create_app`` still fails clearly when those dependencies are
+    actually needed.
+    """
+    from flask import Flask
+
+    from .security import register_security
+
     app = Flask(
         "monitoring",
         template_folder=os.path.join(APP_HOME, "templates"),
