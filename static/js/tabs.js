@@ -16,6 +16,25 @@ const TAB_LOADERS={
   maintain:()=>loadMaintain(true)
 };
 let currentTab='overview';
+function runTabLoader(name,panel){
+  const fn=TAB_LOADERS[name];
+  if(!fn)return;
+  try{
+    // Most loaders are async. A synchronous try/catch alone does not catch a
+    // rejected Promise, which previously left tab buttons looking unresponsive.
+    Promise.resolve(fn()).catch(err=>{
+      console.error('tab loader failed:',name,err);
+      toast('Failed to load '+name+': '+(err&&err.message?err.message:String(err)),'err');
+      if(panel&&!panel.querySelector('.empty-state')){
+        panel.insertAdjacentHTML('afterbegin','<div class="empty-state"><strong>Tab data unavailable</strong>'
+          +'<span class="dim">'+esc(err&&err.message?err.message:String(err))+'</span></div>');
+      }
+    });
+  }catch(err){
+    console.error('tab loader failed:',name,err);
+    toast('Failed to load '+name+': '+(err&&err.message?err.message:String(err)),'err');
+  }
+}
 function showTab(name){
   if(!TAB_NAMES.includes(name))return;
   currentTab=name;
@@ -27,19 +46,7 @@ function showTab(name){
   if(location.hash!=='#'+name)history.replaceState(null,'','#'+name);
   const panel=$('#tab-'+name);
   if(panel&&!REDUCED){panel.style.animation='none';void panel.offsetWidth;panel.style.animation='';}
-  const fn=TAB_LOADERS[name];
-  if(fn){
-    try{
-      fn();
-    }catch(err){
-      // A broken tab must never break the shell or the other tabs. Show the
-      // error inside this tab's panel and keep the app responsive.
-      console.error('tab loader failed:', name, err);
-      if(panel){panel.innerHTML='<div class="empty err">Failed to load this tab: '
-        +esc(err&&err.message?err.message:String(err))
-        +' <button class="btn btn-sm" onclick="location.reload()">Reload</button></div>';}
-    }
-  }
+  runTabLoader(name,panel);
   drawMainChart();drawSparks();
   if(window.innerWidth<=768){$('.sidebar').classList.remove('open');$('#menuToggle').setAttribute('aria-expanded','false');}
 }

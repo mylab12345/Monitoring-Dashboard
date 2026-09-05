@@ -2,7 +2,11 @@ const VM_STATE_PILL={running:'ok',paused:'warn',shutoff:'neutral'};
 async function loadVMs(){
   const container=$('#vmList');
   const vms=await fetchJSON('/api/vms');
-  if(!vms||vms.length===0){
+  if(!vms){
+    container.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('alert',22)+'</div><strong>VM data unavailable</strong><span class="dim">'+esc(lastApiError||'The API did not respond')+'</span><button class="btn btn-sm" style="margin-top:10px" onclick="loadVMs()">'+icon('refresh',13)+' Retry</button></div>';
+    return;
+  }
+  if(!Array.isArray(vms)||vms.length===0){
     container.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('monitor',22)+'</div><strong>No VMs found</strong><span class="dim">Make sure libvirt is running and you can access it (libvirt group or root).</span></div>';
     return;
   }
