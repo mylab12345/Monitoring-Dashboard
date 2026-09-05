@@ -82,7 +82,7 @@ function openPalette(){
 // ================================================================
 function refreshCurrent(){
   const fn=TAB_LOADERS[currentTab];
-  if(fn)fn();
+  if(fn)runTabLoader(currentTab,$('#tab-'+currentTab));
   if(currentTab==='overview'||!fn){updateStatus();updateChecks();loadHistory();}
 }
 function refreshAll(){

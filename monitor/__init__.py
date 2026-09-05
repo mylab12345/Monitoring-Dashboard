@@ -10,10 +10,7 @@ import importlib
 import logging  # noqa: F401  (re-exported for app.py)
 import os
 
-from flask import Flask
-
 from .common import APP_HOME, LOG, LOAD_ERRORS
-from .security import register_security
 
 # (module_name, blueprint_attribute) for every feature area. Registration
 # order is not significant: each blueprint is registered independently and a
@@ -37,7 +34,18 @@ BLUEPRINTS = [
 
 
 def create_app():
-    """Build the Flask application, registering each feature module safely."""
+    """Build the Flask application, registering each feature module safely.
+
+    Flask and the security integration are imported lazily so lightweight
+    utilities such as :mod:`monitor.common` remain usable by maintenance
+    scripts and tests on systems where the web dependencies are not installed.
+    Calling ``create_app`` still fails clearly when those dependencies are
+    actually needed.
+    """
+    from flask import Flask
+
+    from .security import register_security
+
     app = Flask(
         "monitoring",
         template_folder=os.path.join(APP_HOME, "templates"),
@@ -59,19 +67,29 @@ def create_app():
 
     register_security(app)
 
-    # Start the background metrics sampler once (idempotent).
-    from .metrics import start_sampler
-    start_sampler()
-
     # Register feature blueprints defensively: a broken module must not
     # prevent the rest of the dashboard from starting.
+    loaded_modules = set()
     for mod_name, bp_attr in BLUEPRINTS:
         try:
             mod = importlib.import_module(mod_name)
             bp = getattr(mod, bp_attr)
             app.register_blueprint(bp)
+            loaded_modules.add(mod_name)
         except Exception as exc:  # noqa: BLE001
             LOG.exception("failed to load feature module %s; continuing without it", mod_name)
             LOAD_ERRORS.append({"module": mod_name, "error": str(exc)})
+
+    # Start sampling only after defensive module registration.  Keeping this
+    # inside the same failure boundary is important: metrics are useful, but a
+    # sampler startup failure must not take down services, logs, maintenance,
+    # or the rest of the dashboard.
+    if "monitor.metrics" in loaded_modules:
+        try:
+            from .metrics import start_sampler
+            start_sampler()  # idempotent across repeated create_app() calls
+        except Exception as exc:  # noqa: BLE001
+            LOG.exception("failed to start metrics sampler; continuing without history")
+            LOAD_ERRORS.append({"module": "monitor.metrics.sampler", "error": str(exc)})
 
     return app

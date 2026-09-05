@@ -146,8 +146,15 @@ def api_vm_config():
     ram_mb = None
     if ram_gb is not None:
         try:
-            ram_mb = int(str(ram_gb).strip()) * 1024
-        except (TypeError, ValueError):
+            # The VM tab intentionally accepts quarter-GB values (for small
+            # guests), so do not truncate through int("0.5"). Convert to MiB
+            # and require an exact MiB value instead.
+            ram_value = float(str(ram_gb).strip())
+            ram_mb_value = ram_value * 1024
+            if not ram_value > 0 or not ram_mb_value.is_integer():
+                raise ValueError
+            ram_mb = int(ram_mb_value)
+        except (TypeError, ValueError, OverflowError):
             return jsonify({"error": "invalid ram_gb value"}), 400
         if not 256 <= ram_mb <= 10485760:
             return jsonify({"error": "ram_gb must be 0.25–10240"}), 400

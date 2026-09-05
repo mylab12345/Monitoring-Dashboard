@@ -162,6 +162,13 @@ class InputValidation(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         r = self.client.post("/api/vm_config", json={"name": "vm1", "ram_gb": 0})
         self.assertEqual(r.status_code, 400)
+        # The VM tab offers fractional GB values for small guests. Validation
+        # must accept the documented 0.25 GB minimum rather than int("0.25").
+        with patch("monitor.vms.run_privileged", return_value=(0, "ok", "")), \
+             patch("monitor.vms.run", return_value=(0, "", "")):
+            r = self.client.post("/api/vm_config", json={"name": "vm1", "ram_gb": 0.25})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["ram_gb"], 0.25)
 
     def test_fix_unknown_action(self):
         """Unknown actions must be a hard 400 with an `error` key.
