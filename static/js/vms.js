@@ -2,6 +2,8 @@ const VM_STATE_PILL={running:'ok',paused:'warn',shutoff:'neutral'};
 async function loadVMs(){
   const container=$('#vmList');
   const vms=await fetchJSON('/api/vms');
+  if(vms)stampUpdated('vmUpdated');
+  updatePermBanner('vmPermBanner','monitoring-vm','VM power actions');
   if(!vms){
     container.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('alert',22)+'</div><strong>VM data unavailable</strong><span class="dim">'+esc(lastApiError||'The API did not respond')+'</span><button class="btn btn-sm" style="margin-top:10px" onclick="loadVMs()">'+icon('refresh',13)+' Retry</button></div>';
     return;
@@ -48,12 +50,23 @@ async function loadVMs(){
     b.addEventListener('click',()=>openConfigModal(b.dataset.name,b.dataset.vcpus,b.dataset.mem));
   });
 }
+// Confirmation text for every disruptive VM action (start is non-disruptive).
+const VM_CONFIRM={
+  destroy:{title:'Force off VM',text:n=>'Force power-off “'+n+'”? This is like pulling the plug — unsaved data in the guest will be lost.',danger:true},
+  shutdown:{title:'Shut down VM',text:n=>'Send an ACPI shutdown to “'+n+'”? The guest OS will power off gracefully.',danger:false},
+  reboot:{title:'Reboot VM',text:n=>'Reboot “'+n+'”? The guest OS will restart; open sessions inside it will be interrupted.',danger:false}
+};
 async function vmAction(name,action){
-  if(action==='destroy'&&!await confirmDlg('Force off VM','Force power-off “'+name+'”? Unsaved data in the guest will be lost.',true))return;
-  logActivity('vm',action+' VM '+name);
-  const j=await postJSON('/api/vm/action',{name,action});
-  if(j.error){toast(action+' failed: '+j.error,'err');logActivity('vm',action+' '+name+' failed',false);}
-  else{toast(j.result||'OK');loadVMs();}
+  const key='vm:'+name+':'+action;
+  if(!beginAction(key))return;
+  try{
+    const c=VM_CONFIRM[action];
+    if(c&&!await confirmDlg(c.title,c.text(name),c.danger))return;
+    logActivity('vm',action+' VM '+name);
+    const j=await postJSON('/api/vm/action',{name,action});
+    if(j.error){toast(action+' failed: '+j.error,'err');logActivity('vm',action+' '+name+' failed',false);}
+    else{toast(j.result||'OK');loadVMs();}
+  }finally{endAction(key);}
 }
 async function openResizeModal(name){
   let hint='/var/lib/libvirt/images/'+name+'.qcow2';
@@ -75,10 +88,14 @@ async function openResizeModal(name){
   if(!r)return;
   const size=parseInt(r.values.size,10);
   if(!size||size<1){toast('Enter a valid size in GB','err');return;}
-  logActivity('vm','Resize disk of '+name+' to '+size+' GB');
-  const j=await postJSON('/api/vm_resize',{name,disk_path:r.values.disk_path,new_size_gb:size});
-  if(j.error){toast('Resize failed: '+j.error,'err');logActivity('vm','Resize of '+name+' failed',false);}
-  else toast(j.result||'Resize queued');
+  const key='vmresize:'+name;
+  if(!beginAction(key))return;
+  try{
+    logActivity('vm','Resize disk of '+name+' to '+size+' GB');
+    const j=await postJSON('/api/vm_resize',{name,disk_path:r.values.disk_path,new_size_gb:size});
+    if(j.error){toast('Resize failed: '+j.error,'err');logActivity('vm','Resize of '+name+' failed',false);}
+    else toast(j.result||'Resize queued');
+  }finally{endAction(key);}
 }
 async function openConfigModal(name,currentVcpus,currentMem){
   const memMatch=(currentMem||'').match(/([\d.]+)\s*(GB|MB)/i);
@@ -107,10 +124,14 @@ async function openConfigModal(name,currentVcpus,currentMem){
   const newRamGB=parseFloat(r.values.ram_gb);
   if(!newVcpus||newVcpus<1){toast('Enter a valid vCPU count (1–256)','err');return;}
   if(!newRamGB||newRamGB<0.25){toast('Enter a valid RAM value (≥ 0.25 GB)','err');return;}
-  logActivity('vm','Configure '+name+': vcpus='+newVcpus+' ram='+newRamGB+'GB');
-  const j=await postJSON('/api/vm_config',{name,vcpus:newVcpus,ram_gb:newRamGB});
-  if(j.error){toast('Configure failed: '+j.error,'err');logActivity('vm','Configure '+name+' failed',false);}
-  else{toast(j.result||'Configuration updated');loadVMs();}
+  const key='vmconfig:'+name;
+  if(!beginAction(key))return;
+  try{
+    logActivity('vm','Configure '+name+': vcpus='+newVcpus+' ram='+newRamGB+'GB');
+    const j=await postJSON('/api/vm_config',{name,vcpus:newVcpus,ram_gb:newRamGB});
+    if(j.error){toast('Configure failed: '+j.error,'err');logActivity('vm','Configure '+name+' failed',false);}
+    else{toast(j.result||'Configuration updated');loadVMs();}
+  }finally{endAction(key);}
 }
 
 // ================================================================

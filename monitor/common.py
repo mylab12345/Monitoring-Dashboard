@@ -41,8 +41,18 @@ LOG = logging.getLogger("monitoring")
 
 
 def _audit(event, **fields):
-    """Record a privileged/mutating action for the operator's audit trail."""
+    """Record a privileged/mutating action for the operator's audit trail.
+
+    Includes the requesting client address when called inside a Flask request
+    context (best effort — audit records must never break the action itself).
+    """
     try:
+        try:  # optional: only when Flask is installed and a request is active
+            from flask import has_request_context, request
+            if has_request_context() and "client" not in fields:
+                fields["client"] = request.remote_addr
+        except Exception:
+            pass
         details = " ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
         LOG.info("action=%s%s%s", event, " " if details else "", details)
     except Exception:

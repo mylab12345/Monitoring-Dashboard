@@ -51,5 +51,45 @@ def api_service_action():
         _audit("service-action", action=action, unit=name,
                outcome="failed", exit_code=code)
         return jsonify({"error": escape(detail), "exit_code": code}), 500
-    _audit("service-action", action=action, unit=name, outcome="success")
-    return jsonify({"result": f"{action} {escape(name)}: ok"})
+
+    # Post-action verification: report the unit's actual state so the UI can
+    # confirm the action really took effect instead of trusting exit code 0.
+    state, verified = _verify_service_state(name, action)
+    _audit("service-action", action=action, unit=name, outcome="success",
+           state=state or None)
+    payload = {"result": f"{action} {escape(name)}: ok"}
+    if state:
+        payload["state"] = escape(state)
+        payload["verified"] = verified
+    return jsonify(payload)
+
+
+# Expected post-action states used for verification. "reload" and
+# "reset-failed" have no unambiguous target state, so they verify as long as
+# systemctl can report anything at all.
+_EXPECTED_STATE = {
+    "start": ("active", "activating"),
+    "restart": ("active", "activating"),
+    "stop": ("inactive", "failed", "deactivating"),
+    "enable": ("enabled", "enabled-runtime", "static", "alias"),
+    "disable": ("disabled", "masked"),
+}
+
+
+def _verify_service_state(name, action):
+    """Return (state, verified) for a unit after an action; never raises."""
+    try:
+        if not which("systemctl"):
+            return "", True
+        probe = "is-enabled" if action in ("enable", "disable") else "is-active"
+        _, out, err = run(["systemctl", probe, name], timeout=8)
+        state = (out or err or "").strip().splitlines()
+        state = state[0].strip() if state else ""
+        expected = _EXPECTED_STATE.get(action)
+        if not state:
+            return "", True
+        if expected is None:
+            return state, True
+        return state, state in expected
+    except Exception:
+        return "", True

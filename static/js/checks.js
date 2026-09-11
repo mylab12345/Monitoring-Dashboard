@@ -71,6 +71,10 @@ function renderFixButtons(){
 async function runFix(action,btn,autoRetried){
   const term=$('#fixTerminal'),out=$('#fixResult');
   const meta=FIX_META[action]||{icon:'wrench',desc:action};
+  // Duplicate-click prevention across the whole UI (Quick Admin Actions and
+  // the Maintenance grid share the same backend endpoint).
+  if(!autoRetried&&!beginAction('fix:'+action)){toast('That action is already running…','info');return;}
+  try{
   if(QUICK_CONFIRM[action]){
     const ok=await confirmDlg(meta.label||action,QUICK_CONFIRM[action],true);
     if(!ok)return;
@@ -103,6 +107,7 @@ async function runFix(action,btn,autoRetried){
   }
   else{toast(meta.desc||('Completed: '+action));logActivity('fix','Fix completed: '+meta.label);}
   updateChecks();
+  }finally{if(!autoRetried)endAction('fix:'+action);}
 }
 
 // Waits out the dashboard restart that monitoring-self-repair schedules,

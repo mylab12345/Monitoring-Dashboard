@@ -171,6 +171,101 @@ function fmtRate(bps){
   return (bps/1073741824).toFixed(2)+' GB/s';
 }
 function fmtBytesMB(mb){return mb>=1024?(mb/1024).toFixed(2)+' GB':mb.toFixed(1)+' MB';}
+// ---- Shared action/UX helpers (used by every tab) ----------------
+// Duplicate-click prevention: one Set of in-flight action keys. Actions
+// register a key (e.g. "kill:1234", "svc:nginx:restart") before their API
+// call and release it when done, so double clicks and impatient re-clicks
+// cannot fire the same mutation twice.
+const inFlight=new Set();
+function beginAction(key){
+  if(inFlight.has(key))return false;
+  inFlight.add(key);
+  return true;
+}
+function endAction(key){inFlight.delete(key);}
+// Busy-button helper: disables the button, swaps in a spinner + label, marks
+// aria-busy, and returns a restore function. Safe to call with null.
+function setBtnBusy(btn,label){
+  if(!btn)return()=>{};
+  const old=btn.innerHTML,oldDisabled=btn.disabled;
+  btn.disabled=true;
+  btn.setAttribute('aria-busy','true');
+  btn.innerHTML='<span class="spinner">'+icon('refresh',13)+'</span>'+(label?' '+esc(label):'');
+  return()=>{btn.disabled=oldDisabled;btn.removeAttribute('aria-busy');btn.innerHTML=old;};
+}
+// Clipboard copy with legacy fallback (non-secure contexts / older browsers).
+async function copyText(text,okMsg){
+  try{await navigator.clipboard.writeText(text);toast(okMsg||'Copied to clipboard');return true;}
+  catch(e){}
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+    toast(okMsg||'Copied to clipboard');
+    return true;
+  }catch(e2){toast('Copy failed','err');return false;}
+}
+// Download helper (text blob).
+function downloadText(filename,text,mime){
+  const blob=new Blob([text],{type:mime||'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  a.click();URL.revokeObjectURL(a.href);
+}
+// CSV export: quotes every field, prefixes formula-triggering characters so
+// exported files are safe to open in spreadsheet apps.
+function toCSV(headers,rows){
+  const cell=v=>{
+    let s=String(v??'');
+    if(/^[=+\-@\t]/.test(s))s="'"+s;
+    return '"'+s.replace(/"/g,'""')+'"';
+  };
+  return [headers.map(cell).join(',')]
+    .concat(rows.map(r=>r.map(cell).join(','))).join('\r\n');
+}
+function exportCSV(filename,headers,rows){
+  downloadText(filename,toCSV(headers,rows),'text/csv');
+  toast('Exported '+filename,'info');
+}
+// "Updated HH:MM:SS" stamps shown next to each tab's refresh control.
+function stampUpdated(id){
+  const el=document.getElementById(id);
+  if(el){el.textContent='Updated '+nowTime();el.dateTime=new Date().toISOString();}
+}
+// Permission awareness: cached /api/privileges snapshot so tabs can warn
+// (before the user clicks) when the privileged helper their actions depend
+// on is missing or denied, instead of failing after the fact.
+let privInfo=null,privFetchedAt=0,privInFlight=null;
+async function getPrivileges(){
+  if(privInfo&&Date.now()-privFetchedAt<60000)return privInfo;
+  if(privInFlight)return privInFlight;
+  privInFlight=fetchJSON('/api/privileges').then(d=>{
+    privInFlight=null;
+    if(d&&!d.error){privInfo=d;privFetchedAt=Date.now();}
+    return privInfo;
+  }).catch(()=>{privInFlight=null;return privInfo;});
+  return privInFlight;
+}
+function helperStatus(name){
+  if(!privInfo||!Array.isArray(privInfo.helpers))return null;
+  const h=privInfo.helpers.find(x=>x.name===name);
+  return h?h.status:null;
+}
+// Renders/clears a small warning banner in `elId` when `helper` is not
+// usable. Non-blocking: actions still run (the backend is authoritative).
+async function updatePermBanner(elId,helper,what){
+  const el=document.getElementById(elId);
+  if(!el)return;
+  await getPrivileges();
+  const st=helperStatus(helper);
+  if(st===null){el.hidden=true;el.innerHTML='';return;}
+  const ok=st==='ok'||st==='root-direct-ok';
+  el.hidden=ok;
+  el.innerHTML=ok?'':(icon('shield',13)+' <span>'+esc(what)+' may fail: privileged helper <span class="mono">'+esc(helper)+'</span> is '
+    +esc(st==='missing'?'not installed':st==='denied'?'denied by sudo policy':st)
+    +'. Run <span class="mono">sudo ./update.sh</span> to (re)install helpers, or check Settings → Privileges.</span>');
+}
 function statusClass(v){return v>=85?'hot':v>=60?'warm':'';}
 function nowTime(){const t=new Date();return [t.getHours(),t.getMinutes(),t.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');}
 function todayAt(ts){const d=new Date(ts);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');}
@@ -248,7 +343,14 @@ function openModal({title,text='',html='',fields=[],confirmText='Confirm',cancel
       +'<div class="m-actions"><button class="btn" data-act="cancel">'+esc(cancelText)+'</button>'
       +'<button class="btn '+(danger?'btn-danger':'btn-primary')+'" data-act="ok">'+esc(confirmText)+'</button></div></div>';
     document.body.appendChild(bd);
-    const done=v=>{if(settled)return;settled=true;bd.remove();document.removeEventListener('keydown',escH);res(v);};
+    // Restore focus to the control that opened the dialog when it closes —
+    // essential for keyboard users, otherwise focus falls back to <body>.
+    const opener=document.activeElement;
+    const done=v=>{
+      if(settled)return;settled=true;bd.remove();document.removeEventListener('keydown',escH);
+      if(opener&&opener.focus)try{opener.focus();}catch(e){}
+      res(v);
+    };
     const escH=e=>{if(e.key==='Escape'){e.stopPropagation();done(null);}};
     document.addEventListener('keydown',escH);
     bd.querySelector('[data-act=cancel]').onclick=()=>done(null);
@@ -263,6 +365,15 @@ function openModal({title,text='',html='',fields=[],confirmText='Confirm',cancel
     else bd.querySelector('[data-act=ok]').focus();
     bd.addEventListener('keydown',e=>{
       if(e.key==='Enter'&&e.target.tagName!=='INPUT')bd.querySelector('[data-act=ok]').click();
+      // Focus trap: Tab / Shift+Tab cycle inside the dialog only.
+      if(e.key==='Tab'){
+        const focusables=[...bd.querySelectorAll('input,button,select,textarea,[tabindex]:not([tabindex="-1"])')]
+          .filter(el=>!el.disabled&&el.offsetParent!==null);
+        if(!focusables.length)return;
+        const firstEl=focusables[0],lastEl=focusables[focusables.length-1];
+        if(e.shiftKey&&document.activeElement===firstEl){e.preventDefault();lastEl.focus();}
+        else if(!e.shiftKey&&document.activeElement===lastEl){e.preventDefault();firstEl.focus();}
+      }
     });
   });
 }

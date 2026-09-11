@@ -106,21 +106,38 @@ service.
 - Self-repair: when a package fix hits the service's read-only mount namespace (`required filesystem is read-only: /usr, /etc, /boot`), the dashboard can fix it itself — patch `monitoring.service` with `ReadWritePaths=/usr /etc /boot /efi`, `daemon-reload` and restart — through the service account, no root shell
 - Mounted disks overview + listening ports + system info banner (CPU model, kernel, uptime, live network rate)
 
-**Alerts & Activity** — local threshold alerting (CPU/RAM/disk/temperature with warn & critical levels), alert bell with live breach count, full alert history, and an audit trail of every action taken from the console (stored in your browser only)
+**Alerts & Activity** — local threshold alerting (CPU/RAM/disk/temperature with warn & critical levels), alert bell with live breach count, full alert history with **severity filter (All / Critical / Warnings / Resolved)**, full-date timestamps, **CSV export**, and an audit trail of every action taken from the console (stored in your browser only, also CSV-exportable). Clearing either history asks for confirmation first.
 
-**Processes** — top processes by CPU/RAM with search, adjustable fetch size (25/50/100), sortable columns and kill button
+**Processes** — top processes by CPU/RAM with search, adjustable fetch size (25/50/100), sortable columns (mouse **and keyboard** — headers are focusable, Enter/Space sorts, `aria-sort` announced), auto-refresh toggle, "Updated HH:MM:SS" stamp, **CSV export of the filtered view**, and a kill button with confirmation, duplicate-click protection and **post-kill verification** (the API confirms the PID is actually gone)
 
-**Services** — browse/filter systemd units, start / stop / restart / enable / disable with confirmation and pagination
+**Services** — browse/filter/search systemd units with state filter chips, **sortable Unit/State columns**, pagination, optional auto-refresh, **CSV export**, and start / stop / restart / enable / disable actions with action-specific confirmations, duplicate-click protection and **post-action verification** (`systemctl is-active` / `is-enabled` is checked after every mutation and surfaced in the UI). A **permission banner** warns up front when the privileged helper is missing or denied.
 
-**VMs** — libvirt/QEMU VM list with state, start / shutdown / reboot / force-off and disk resize via `qemu-img`
+**VMs** — libvirt/QEMU VM list with state, start / shutdown / reboot / force-off (each disruptive action has its own confirmation dialog), disk resize via `qemu-img` and vCPU/RAM configuration — all with duplicate-click protection, optional auto-refresh and a permission banner when the VM helper is unavailable
 
-**Network** — per-interface cards (IPv4/IPv6/MAC, up/down, **live RX/TX throughput rates**, totals, speed) + full listening-ports table
+**Network** — per-interface cards (IPv4/IPv6/MAC, up/down, **live RX/TX throughput rates**, totals, speed) + full listening-ports table with **text filter and CSV export**, optional auto-refresh and last-updated stamp
 
-**Logs** — live journal viewer with priority filter, text filter, line count, wrap toggle, copy and download
+**Logs** — live journal viewer with priority filter, text filter, line count, follow (auto-refresh) and wrap toggles, copy, download, and a last-updated stamp
 
 **Diagnose (guided troubleshooting center)** — overall health score with grade, issues grouped by CPU / Memory / Disk / Services / Network / Packages / Kernel, and every problem presented as **Problem → Evidence → Impact → Recommended Fix → Verify** with expandable deep diagnostics (top processes, kernel samples, failed units). Safe fixes require confirmation and are followed by **automatic post-fix verification**; runs are kept as a troubleshooting timeline, and the full report can be copied or exported as Markdown.
 
-**Console UX** — dark/light/system theme (persisted), collapsible sidebar, command palette (Ctrl K), keyboard shortcuts (press `?`), configurable refresh interval and thresholds in **Settings**, consistent loading / empty / error states with retry across every tab — all local, no login required
+**Settings** — theme, refresh interval, chart range, danger-action confirmations, alert thresholds with **warn-below-crit validation**, plus **export/import of all preferences as JSON** and a confirmed reset-to-defaults
+
+**Console UX & accessibility** — dark/light/system theme (persisted), collapsible sidebar, command palette (Ctrl K), keyboard shortcuts (press `?`), configurable refresh interval and thresholds in **Settings**, consistent loading / empty / error states with retry across every tab — all local, no login required. Accessibility is first-class:
+- every icon-only button has a tooltip **and** an `aria-label`; segmented filters expose `aria-pressed`
+- sidebar tabs support **Arrow/Home/End** keys; tables sort from the keyboard and announce order via `aria-sort`
+- confirmation dialogs have a **focus trap**, Esc-to-close, and return focus to the button that opened them
+- toasts render into a `role="status"` live region; per-tab "Updated HH:MM:SS" stamps show data freshness
+
+### Safety model for system-changing buttons
+
+Every mutating control (kill, stop, restart, disable, force-off, upgrade, repair, vacuum, clear) follows the same pipeline:
+
+1. **Permission check** — tabs consult `GET /api/privileges` and show a banner when the required sudo helper is missing/denied, before you click.
+2. **Confirmation dialog** — action-specific wording explains exactly what will happen (skippable via Settings → "Confirm dangerous actions").
+3. **Duplicate-click prevention** — an in-flight registry blocks the same action from firing twice; buttons disable and show a spinner (`aria-busy`).
+4. **Progress indication** — long operations stream into an inline terminal panel; the toolbar refresh icon spins while requests are in flight.
+5. **Post-action verification** — the backend re-checks reality (`systemctl is-active`/`is-enabled`, PID existence) and the UI reports "done", "done but state unexpected", or "failed" accordingly.
+6. **Audit logging** — every privileged action is logged server-side (`action=… client=… outcome=…`, plus `MONITORING_LOG_FILE` when set) and mirrored in the browser-local Activity log (CSV-exportable).
 
 ## 🛠 CLI (`monitoring`)
 
@@ -194,6 +211,23 @@ import, an undefined helper) aborted **everything** — this actually shipped on
 - Check what the service is allowed to do with **`monitoring check-privileges`**; the dashboard also exposes `GET /api/privileges`, including package filesystem mount status.
 - For VM management as a regular user: `sudo usermod -aG libvirt $USER`, then re-login.
 - Change the port any time: edit `/etc/monitoring.env` then `monitoring restart`, or reinstall with `install.sh --port N`.
+
+## 🧪 Tests
+
+```bash
+bash tests/run_all.sh                       # full regression suite (security
+                                            # migration + unit tests + JS parse
+                                            # check + optional pip-audit)
+python3 -m pytest tests/ -q                 # just the Python test suites
+python3 -m pytest tests/test_ui_improvements.py -q   # UI/UX hardening tests only
+```
+
+`tests/test_app.py` covers the API baseline, input validation and security
+regressions; `tests/test_ui_improvements.py` covers post-action verification
+(services + process kill), request-context audit logging, and the template's
+accessibility/UX affordances (ARIA labels, confirmations, CSV exports,
+duplicate-click guards, focus trap). Suites self-skip cleanly when flask or
+psutil are not installed.
 
 ## 🧹 Uninstall
 

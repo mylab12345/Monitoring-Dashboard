@@ -11,6 +11,7 @@ async function loadLogs(){
   const ls=logText.split('\n');
   const tag=$('#logCountTag');
   tag.hidden=false;tag.textContent=ls.length+' lines';
+  stampUpdated('logUpdated');
   view.innerHTML=(logText==='No log output.'?'<span class="ll">No log output.</span>':ls.map(l=>{
     const cls=/\b(error|fail|fatal|critical|panic|segfault|emerg|alert|crit)\b/i.test(l)?'err'
       :/\bwarn/i.test(l)?'warn'
@@ -31,22 +32,12 @@ function toggleLogWrap(){
   S.logWrap=$('#logWrap').checked;saveSettings();
 }
 async function copyLogs(){
-  try{await navigator.clipboard.writeText(logText);toast('Logs copied to clipboard');return;}
-  catch(e){}
-  // Fallback for non-secure contexts / older browsers
-  try{
-    const ta=document.createElement('textarea');
-    ta.value=logText;ta.style.position='fixed';ta.style.opacity='0';
-    document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
-    toast('Logs copied to clipboard');
-  }catch(e2){toast('Copy failed','err');}
+  if(!logText){toast('Nothing to copy yet','info');return;}
+  await copyText(logText,'Logs copied to clipboard');
 }
 function downloadLogs(){
-  const blob=new Blob([logText],{type:'text/plain'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='monitoring-journal-'+new Date().toISOString().replace(/[:.]/g,'-')+'.log';
-  a.click();URL.revokeObjectURL(a.href);
+  if(!logText){toast('Nothing to download yet','info');return;}
+  downloadText('monitoring-journal-'+new Date().toISOString().replace(/[:.]/g,'-')+'.log',logText);
   toast('Log file downloaded','info');
 }
 

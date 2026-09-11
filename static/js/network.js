@@ -10,7 +10,14 @@ async function loadPorts(){
   const txt=portsError?'error':(portsData.length?portsData.length+' open':'');
   if(count){count.textContent=txt;count.className='badge'+(portsError?' fail':'');}
   if(count2){count2.textContent=txt;count2.className='badge'+(portsError?' fail':'');}
+  if(!portsError)stampUpdated('netUpdated');
   renderPortsOverview();renderPortsTable();
+}
+function exportPortsCSV(){
+  if(!portsData.length){toast('Nothing to export','info');return;}
+  exportCSV('monitoring-ports-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.csv',
+    ['Protocol','Address','Port','Process'],
+    portsData.map(p=>[protoLabel(p.proto),p.addr,p.port,cleanProc(p.process)]));
 }
 function protoLabel(p){return p&&p.endsWith('6')?p.slice(0,-1).toUpperCase()+'/6':(p||'').toUpperCase();}
 // `ss` reports listeners as: users:(("python",pid=1415,fd=9),("x",pid=2,fd=3))
@@ -46,9 +53,14 @@ function renderPortsOverview(){
 function renderPortsTable(){
   const tb=$('#portsRows');
   if(!tb)return;
-  if(portsError){tb.innerHTML='<tr><td colspan="4" class="dim">Port data unavailable — '+esc(portsError)+'</td></tr>';return;}
+  if(portsError){tb.innerHTML='<tr><td colspan="4" class="dim">Port data unavailable — '+esc(portsError)+' <a href="#" onclick="loadPorts();return false;">Retry</a></td></tr>';return;}
   if(!portsData.length){tb.innerHTML='<tr><td colspan="4" class="dim">No listening ports</td></tr>';return;}
-  tb.innerHTML=portsData.map(p=>'<tr>'
+  const qEl=$('#portsSearch');
+  const q=(qEl&&qEl.value||'').toLowerCase();
+  const rows=q?portsData.filter(p=>String(p.port).includes(q)||(p.addr||'').toLowerCase().includes(q)
+    ||(p.proto||'').toLowerCase().includes(q)||cleanProc(p.process).toLowerCase().includes(q)):portsData;
+  if(!rows.length){tb.innerHTML='<tr><td colspan="4" class="dim" style="text-align:center;padding:18px">No ports match your filter</td></tr>';return;}
+  tb.innerHTML=rows.map(p=>'<tr>'
     +'<td><span class="pill neutral" style="min-width:56px;justify-content:center">'+esc(protoLabel(p.proto))+'</span></td>'
     +'<td class="mono dim">'+esc(p.addr)+'</td>'
     +'<td class="mono"><b>'+esc(p.port)+'</b></td>'
@@ -61,6 +73,7 @@ async function loadNetwork(){
   const d=await fetchJSON('/api/network');
   if(!d||!d.nics)throw new Error('the API did not respond');
   nicsData=d.nics;
+  stampUpdated('netUpdated');
   const maxTx=Math.max(1,...d.nics.map(n=>Math.max(n.sent_mb,n.recv_mb)));
   const now=Date.now();
   el.innerHTML='<div class="grid g3">'+d.nics.map(n=>{

@@ -62,24 +62,31 @@ function toggleMatrixMode(){
 // treatment kill/service actions already receive.
 const QUICK_CONFIRM={
   'clean':'Clear the package manager caches?',
-  'clear-logs':'Vacuum the systemd journal and remove log files older than 7 days? This permanently deletes log history.'
+  'clear-logs':'Vacuum the systemd journal and remove log files older than 7 days? This permanently deletes log history.',
+  'full-upgrade':'Run a full system upgrade — including new kernels? This may take several minutes and services may restart. A reboot can be required afterwards.',
+  'upgrade':'Install all available package updates? This may take several minutes and services may restart.',
+  'autoremove':'Remove packages that are no longer required? Review the output afterwards to confirm nothing important was removed.'
 };
 async function runQuickAction(action){
-  const label=(FIX_META[action]&&FIX_META[action].label)||action;
-  if(QUICK_CONFIRM[action]){
-    const ok=await confirmDlg(label,QUICK_CONFIRM[action],true);
-    if(!ok)return;
-  }
-  toast('Running: '+label+'…','info');
-  const j=await postJSON('/api/fix',{action});
-  if(j&&j.error){
-    toast('Action failed: '+j.error,'err');
-    logActivity('fix','Quick action failed: '+label,false);
-    return;
-  }
-  toast('Completed: '+label,'ok');
-  logActivity('fix','Quick action: '+label);
-  updateChecks();updateStatus();
+  const key='fix:'+action;
+  if(!beginAction(key)){toast('That action is already running…','info');return;}
+  try{
+    const label=(FIX_META[action]&&FIX_META[action].label)||action;
+    if(QUICK_CONFIRM[action]){
+      const ok=await confirmDlg(label,QUICK_CONFIRM[action],true);
+      if(!ok)return;
+    }
+    toast('Running: '+label+'…','info');
+    const j=await postJSON('/api/fix',{action});
+    if(j&&j.error){
+      toast('Action failed: '+j.error,'err');
+      logActivity('fix','Quick action failed: '+label,false);
+      return;
+    }
+    toast('Completed: '+label,'ok');
+    logActivity('fix','Quick action: '+label);
+    updateChecks();updateStatus();
+  }finally{endAction(key);}
 }
 // Overview "Top Hogs" — sortable by CPU or memory. The API already returns a
 // union of the top-CPU and top-memory processes, so both views are free.
