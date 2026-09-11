@@ -174,6 +174,12 @@ setInterval(()=>{if(!document.hidden)loadDisks();},30000);
 setInterval(()=>{if(!document.hidden)loadOverviewHogs();},15000);
 setInterval(()=>{if(!document.hidden&&$('#procAuto').checked&&$('#tab-processes').classList.contains('active'))loadProcesses();},5000);
 setInterval(()=>{if(!document.hidden&&$('#logAuto').checked&&$('#tab-logs').classList.contains('active'))loadLogs();},5000);
+// Opt-in auto-refresh for the Services, VMs and Network tabs (all off by
+// default: services/VM listings shell out on the backend, so only poll when
+// the operator asks for it).
+setInterval(()=>{const c=$('#svcAuto');if(!document.hidden&&c&&c.checked&&$('#tab-services').classList.contains('active'))loadServices();},10000);
+setInterval(()=>{const c=$('#vmAuto');if(!document.hidden&&c&&c.checked&&$('#tab-vms').classList.contains('active'))loadVMs();},10000);
+setInterval(()=>{const c=$('#netAuto');if(!document.hidden&&c&&c.checked&&$('#tab-network').classList.contains('active')){loadNetwork();loadPorts();}},5000);
 setInterval(tickClock,1000);
 
 // Deep link

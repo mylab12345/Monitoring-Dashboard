@@ -446,15 +446,17 @@
             <div class="toolbar-right">
               <div class="field">
                 <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-                <input type="search" id="procSearch" class="with-icon" placeholder="Filter by name, PID, user…" oninput="renderProcesses()">
+                <input type="search" id="procSearch" class="with-icon" placeholder="Filter by name, PID, user…" aria-label="Filter processes" oninput="renderProcesses()">
               </div>
               <select id="procLimit" onchange="setProcLimit(this.value)" title="Rows to fetch" aria-label="Process count">
                 <option value="25" selected>Top 25</option>
                 <option value="50">Top 50</option>
                 <option value="100">Top 100</option>
               </select>
-              <label class="switch" title="Refresh every 5 seconds">Auto<input type="checkbox" id="procAuto" checked><span class="track"></span></label>
-              <button class="icon-btn" onclick="loadProcesses()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <label class="switch" title="Auto-refresh every 5 seconds">Auto<input type="checkbox" id="procAuto" checked aria-label="Auto-refresh processes"><span class="track"></span></label>
+              <button class="icon-btn" onclick="exportProcessesCSV()" title="Export visible processes as CSV" aria-label="Export processes as CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+              <button class="icon-btn" onclick="loadProcesses()" title="Refresh processes" aria-label="Refresh processes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <time class="updated-stamp" id="procUpdated" aria-live="off"></time>
             </div>
           </div>
           <div class="table-wrap">
@@ -489,22 +491,32 @@
               <span class="badge" id="svcTotal">--</span>
             </div>
             <div class="toolbar-right">
-              <div class="segmented" id="svcFilter">
-                <button class="seg-btn active" data-f="all">All</button>
-                <button class="seg-btn" data-f="active">Running</button>
-                <button class="seg-btn" data-f="failed">Failed</button>
-                <button class="seg-btn" data-f="other">Other</button>
+              <div class="segmented" id="svcFilter" role="group" aria-label="Filter services by state">
+                <button class="seg-btn active" data-f="all" aria-pressed="true">All</button>
+                <button class="seg-btn" data-f="active" aria-pressed="false">Running</button>
+                <button class="seg-btn" data-f="failed" aria-pressed="false">Failed</button>
+                <button class="seg-btn" data-f="other" aria-pressed="false">Other</button>
               </div>
               <div class="field">
                 <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-                <input type="search" id="svcSearch" class="with-icon" placeholder="Filter units…" oninput="svcPage=0;renderServices()">
+                <input type="search" id="svcSearch" class="with-icon" placeholder="Filter units…" aria-label="Filter services" oninput="svcPage=0;renderServices()">
               </div>
-              <button class="icon-btn" onclick="loadServices()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <label class="switch" title="Auto-refresh every 10 seconds">Auto<input type="checkbox" id="svcAuto" aria-label="Auto-refresh services"><span class="track"></span></label>
+              <button class="icon-btn" onclick="exportServicesCSV()" title="Export visible services as CSV" aria-label="Export services as CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+              <button class="icon-btn" onclick="loadServices()" title="Refresh services" aria-label="Refresh services"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <time class="updated-stamp" id="svcUpdated" aria-live="off"></time>
             </div>
           </div>
+          <div class="perm-banner" id="svcPermBanner" role="note" hidden></div>
           <div class="table-wrap">
-            <table class="table">
-              <thead><tr><th>Unit</th><th>Description</th><th>State</th><th>Sub</th><th style="text-align:right">Actions</th></tr></thead>
+            <table class="table" id="svcTable">
+              <thead><tr>
+                <th class="sortable" data-key="unit">Unit <span class="arrow"></span></th>
+                <th>Description</th>
+                <th class="sortable" data-key="active">State <span class="arrow"></span></th>
+                <th>Sub</th>
+                <th style="text-align:right">Actions</th>
+              </tr></thead>
               <tbody id="svcRows">
                 <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
                 <tr><td colspan="5"><div class="skel" style="height:16px"></div></td></tr>
@@ -512,10 +524,10 @@
               </tbody>
             </table>
           </div>
-          <div class="pagination" id="svcPager">
-            <span id="svcRange">--</span>
-            <button class="pg-btn" id="svcPrev" onclick="svcPageGo(-1)" title="Previous page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
-            <button class="pg-btn" id="svcNext" onclick="svcPageGo(1)" title="Next page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+          <div class="pagination" id="svcPager" role="navigation" aria-label="Services pagination">
+            <span id="svcRange" aria-live="polite">--</span>
+            <button class="pg-btn" id="svcPrev" onclick="svcPageGo(-1)" title="Previous page" aria-label="Previous page of services"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+            <button class="pg-btn" id="svcNext" onclick="svcPageGo(1)" title="Next page" aria-label="Next page of services"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
           </div>
         </article>
       </section>
@@ -529,8 +541,13 @@
               Virtual Machines
               <span class="badge">libvirt / qemu</span>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="loadVMs()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>Refresh VMs</button>
+            <div class="toolbar-right">
+              <label class="switch" title="Auto-refresh every 10 seconds">Auto<input type="checkbox" id="vmAuto" aria-label="Auto-refresh virtual machines"><span class="track"></span></label>
+              <button class="btn btn-primary btn-sm" onclick="loadVMs()" aria-label="Refresh virtual machines"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>Refresh VMs</button>
+              <time class="updated-stamp" id="vmUpdated" aria-live="off"></time>
+            </div>
           </div>
+          <div class="perm-banner" id="vmPermBanner" role="note" hidden></div>
           <div id="vmList"><div class="skel" style="height:90px"></div></div>
         </article>
       </section>
@@ -544,7 +561,11 @@
               Interfaces
               <span class="badge">live throughput</span>
             </div>
-            <button class="icon-btn" onclick="loadNetwork()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            <div class="toolbar-right">
+              <label class="switch" title="Auto-refresh every 5 seconds">Auto<input type="checkbox" id="netAuto" aria-label="Auto-refresh network"><span class="track"></span></label>
+              <button class="icon-btn" onclick="loadNetwork()" title="Refresh interfaces" aria-label="Refresh interfaces"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <time class="updated-stamp" id="netUpdated" aria-live="off"></time>
+            </div>
           </div>
           <div id="nicList"><div class="skel" style="height:120px"></div></div>
         </article>
@@ -555,7 +576,14 @@
               Listening Ports
               <span class="badge" id="portsCount2"></span>
             </div>
-            <button class="icon-btn" onclick="loadPorts()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            <div class="toolbar-right">
+              <div class="field">
+                <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+                <input type="search" id="portsSearch" class="with-icon" placeholder="Filter ports…" aria-label="Filter listening ports" oninput="renderPortsTable()">
+              </div>
+              <button class="icon-btn" onclick="exportPortsCSV()" title="Export ports as CSV" aria-label="Export listening ports as CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+              <button class="icon-btn" onclick="loadPorts()" title="Refresh listening ports" aria-label="Refresh listening ports"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="table">
@@ -576,24 +604,25 @@
               <span class="badge">journal</span>
             </div>
             <div class="log-tools">
-              <select id="logPrio" onchange="loadLogs()" title="Minimum priority">
+              <select id="logPrio" onchange="loadLogs()" title="Minimum priority" aria-label="Minimum log priority">
                 <option value="0">All priorities</option>
                 <option value="3">Errors (err+)</option>
                 <option value="4">Warnings (warning+)</option>
                 <option value="6">Info+</option>
               </select>
-              <select id="logLines" onchange="loadLogs()" title="Line count">
+              <select id="logLines" onchange="loadLogs()" title="Line count" aria-label="Number of log lines">
                 <option>50</option><option selected>100</option><option>200</option><option>500</option>
               </select>
               <div class="field">
                 <svg class="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-                <input type="search" id="logGrep" class="with-icon" placeholder="Filter text…" onkeydown="if(event.key==='Enter')loadLogs()">
+                <input type="search" id="logGrep" class="with-icon" placeholder="Filter text… (Enter)" aria-label="Filter log text, press Enter to apply" onkeydown="if(event.key==='Enter')loadLogs()">
               </div>
-              <label class="switch" title="Refresh every 5 seconds">Follow<input type="checkbox" id="logAuto" checked><span class="track"></span></label>
-              <label class="switch" title="Toggle line wrapping">Wrap<input type="checkbox" id="logWrap" checked onchange="toggleLogWrap()"><span class="track"></span></label>
-              <button class="icon-btn" onclick="copyLogs()" title="Copy to clipboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
-              <button class="icon-btn" onclick="downloadLogs()" title="Download as file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
-              <button class="icon-btn" onclick="loadLogs()" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <label class="switch" title="Auto-refresh every 5 seconds and follow new lines">Follow<input type="checkbox" id="logAuto" checked aria-label="Follow logs (auto-refresh)"><span class="track"></span></label>
+              <label class="switch" title="Toggle line wrapping">Wrap<input type="checkbox" id="logWrap" checked onchange="toggleLogWrap()" aria-label="Wrap long log lines"><span class="track"></span></label>
+              <button class="icon-btn" onclick="copyLogs()" title="Copy logs to clipboard" aria-label="Copy logs to clipboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              <button class="icon-btn" onclick="downloadLogs()" title="Download logs as file" aria-label="Download logs as file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+              <button class="icon-btn" onclick="loadLogs()" title="Refresh logs" aria-label="Refresh logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
+              <time class="updated-stamp" id="logUpdated" aria-live="off"></time>
             </div>
           </div>
           <div class="log-window">
@@ -619,7 +648,16 @@
                 Alert History
                 <span class="badge" id="alertStatusBadge">on</span>
               </div>
-              <button class="btn btn-sm" onclick="clearAlerts()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear all</button>
+              <div class="toolbar-right">
+                <div class="segmented" id="alertFilterSeg" role="group" aria-label="Filter alerts by severity">
+                  <button class="seg-btn active" data-f="all" aria-pressed="true" onclick="setAlertFilter('all')">All</button>
+                  <button class="seg-btn" data-f="crit" aria-pressed="false" onclick="setAlertFilter('crit')">Critical</button>
+                  <button class="seg-btn" data-f="warn" aria-pressed="false" onclick="setAlertFilter('warn')">Warnings</button>
+                  <button class="seg-btn" data-f="ok" aria-pressed="false" onclick="setAlertFilter('ok')">Resolved</button>
+                </div>
+                <button class="icon-btn" onclick="exportAlertsCSV()" title="Export alert history as CSV" aria-label="Export alert history as CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+                <button class="btn btn-sm" onclick="clearAlerts()" aria-label="Clear alert history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear all</button>
+              </div>
             </div>
             <p class="dim" style="font-size:.74rem">Threshold breaches are detected locally while the console is open. Tune thresholds in <a href="#settings" onclick="showTab('settings');return false;">Settings</a>.</p>
             <div id="alertList" style="margin-top:12px"></div>
@@ -632,7 +670,10 @@
                 Activity Log
                 <span class="badge" id="activityBadge2"></span>
               </div>
-              <button class="btn btn-sm" onclick="clearActivity()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear all</button>
+              <div class="toolbar-right">
+                <button class="icon-btn" onclick="exportActivityCSV()" title="Export activity log as CSV" aria-label="Export activity log as CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></button>
+                <button class="btn btn-sm" onclick="clearActivity()" aria-label="Clear activity log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear all</button>
+              </div>
             </div>
             <p class="dim" style="font-size:.74rem">Local audit trail of every action performed from this console (kept in this browser only).</p>
             <div id="activityFull" style="margin-top:12px;max-height:520px;overflow:auto"></div>
@@ -971,6 +1012,13 @@
               <div class="set-ctl"><button class="btn btn-sm" onclick="clearActivity()">Clear</button></div>
             </div>
             <div class="set-row">
+              <div class="set-info"><div class="set-k">Export / import settings</div><div class="set-d">Back up your preferences and thresholds as a JSON file, or restore them.</div></div>
+              <div class="set-ctl">
+                <button class="btn btn-sm" onclick="exportSettings()" title="Download settings as JSON">Export</button>
+                <button class="btn btn-sm" onclick="importSettings()" title="Restore settings from a JSON file">Import</button>
+              </div>
+            </div>
+            <div class="set-row">
               <div class="set-info"><div class="set-k">Reset all settings</div><div class="set-d">Restore defaults (theme, thresholds, intervals).</div></div>
               <div class="set-ctl"><button class="btn btn-danger btn-sm" onclick="resetSettings()">Reset</button></div>
             </div>
@@ -1090,7 +1138,7 @@ sudo ./update.sh --remote
 </div>
 
 <!-- Toasts -->
-<div id="toasts" aria-live="polite"></div>
+<div id="toasts" role="status" aria-live="polite" aria-label="Notifications"></div>
 
 <script src="{{ url_for('static', filename='js/core.js') }}"></script>
 <script src="{{ url_for('static', filename='js/tabs.js') }}"></script>

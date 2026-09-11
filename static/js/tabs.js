@@ -51,6 +51,25 @@ function showTab(name){
   if(window.innerWidth<=768){$('.sidebar').classList.remove('open');$('#menuToggle').setAttribute('aria-expanded','false');}
 }
 $$('.nav-btn').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
+// Tooltips for nav buttons: visible labels are hidden in collapsed (rail)
+// mode, so every button needs a title for hover discovery.
+$$('.nav-btn').forEach(b=>{
+  const label=b.querySelector('span');
+  if(label&&!b.title)b.title=label.textContent+(b.dataset.sub?' — '+b.dataset.sub:'');
+});
+// Arrow-key navigation between sidebar tabs: focus a nav button, then use
+// Up/Down (or Left/Right) to move, Home/End to jump — complements Ctrl+1–0.
+(()=>{
+  const navBtns=$$('.nav-btn');
+  navBtns.forEach((b,i)=>b.addEventListener('keydown',e=>{
+    let target=null;
+    if(e.key==='ArrowDown'||e.key==='ArrowRight')target=navBtns[(i+1)%navBtns.length];
+    else if(e.key==='ArrowUp'||e.key==='ArrowLeft')target=navBtns[(i-1+navBtns.length)%navBtns.length];
+    else if(e.key==='Home')target=navBtns[0];
+    else if(e.key==='End')target=navBtns[navBtns.length-1];
+    if(target){e.preventDefault();target.focus();}
+  }));
+})();
 
 // ================================================================
 // Sidebar rail (collapse) + mobile drawer

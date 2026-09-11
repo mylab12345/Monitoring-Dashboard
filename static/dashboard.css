@@ -1069,6 +1069,14 @@ select{
 .dim{color:var(--text-3)}
 .small{font-size:.8rem}
 .toolbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* Permission-awareness banner (privileged helper missing/denied) */
+.perm-banner{display:flex;align-items:flex-start;gap:8px;margin:0 0 12px;padding:9px 12px;border:1px solid rgba(251,191,36,.35);border-radius:9px;background:rgba(251,191,36,.08);color:var(--text-2);font-size:.74rem;line-height:1.5}
+.perm-banner svg{flex:none;margin-top:2px;color:#fbbf24}
+.perm-banner[hidden]{display:none}
+/* "Updated HH:MM:SS" stamps next to refresh controls */
+.updated-stamp{font-family:var(--font-mono);font-size:.64rem;color:var(--text-3);white-space:nowrap}
+.updated-stamp:empty{display:none}
+@media(max-width:600px){.updated-stamp{display:none}}
 @keyframes shrink{to{transform:scaleX(0)}}
 
 /* ================================================================

@@ -76,6 +76,20 @@ def api_processes():
         return jsonify({"error": str(e)}), 500
 
 
+def _pid_gone(pid):
+    """True when the pid no longer exists (or only lingers as a zombie)."""
+    try:
+        import psutil
+        if not psutil.pid_exists(pid):
+            return True
+        try:
+            return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+        except psutil.NoSuchProcess:
+            return True
+    except Exception:
+        return True  # cannot verify — do not fail the action over it
+
+
 @bp.route("/api/process/kill", methods=["POST"])
 @rate_limit("30 per minute")
 def api_process_kill():
@@ -103,15 +117,26 @@ def api_process_kill():
             p.wait(timeout=3)
         except psutil.TimeoutExpired:
             p.kill()
-        _audit("process-kill", pid=pid, name=name, via="direct")
-        return jsonify({"result": f"Terminated {escape(name)} (pid {pid})"})
+            try:
+                p.wait(timeout=2)
+            except psutil.TimeoutExpired:
+                pass
+        # Post-action verification: confirm the pid is actually gone (a zombie
+        # entry may briefly remain until the parent reaps it).
+        verified = _pid_gone(pid)
+        _audit("process-kill", pid=pid, name=name, via="direct",
+               verified=verified)
+        return jsonify({"result": f"Terminated {escape(name)} (pid {pid})",
+                        "verified": verified})
     except psutil.NoSuchProcess:
         return jsonify({"error": f"No process with pid {pid}"}), 404
     except (psutil.AccessDenied, psutil.TimeoutExpired, PermissionError):
         code, out, err = run_privileged("monitoring-kill", ["--force", str(pid)], timeout=15)
         if code != 0:
             return jsonify({"error": escape(((err or out) or "kill failed").strip()[:200])}), 403
-        _audit("process-kill", pid=pid, via="helper")
-        return jsonify({"result": f"Killed pid {pid} (privileged helper)"})
+        verified = _pid_gone(pid)
+        _audit("process-kill", pid=pid, via="helper", verified=verified)
+        return jsonify({"result": f"Killed pid {pid} (privileged helper)",
+                        "verified": verified})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

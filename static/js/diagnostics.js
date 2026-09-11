@@ -407,6 +407,8 @@ async function verifyDiagIssues(ids){
 
 async function fixAllIssues(autoRetried){
   if(!diagData)return;
+  if(!autoRetried&&!beginAction('diag:fix-all')){toast('Fix All is already running…','info');return;}
+  try{
   const all=diagAllIssues(diagData).filter(i=>diagFixIdOf(i));
   if(!all.length){toast('No safe fixes available for current issues','info');return;}
   const fixIds=[...new Set(all.map(diagFixIdOf))];
@@ -463,6 +465,7 @@ async function fixAllIssues(autoRetried){
   }finally{
     if(btn){btn.disabled=false;btn.innerHTML=old;}
   }
+  }finally{if(!autoRetried)endAction('diag:fix-all');}
 }
 
 function renderFixResults(result,v){
@@ -498,7 +501,11 @@ function addDiagHistory(e){
   saveDiagHistory();
   renderDiagHistory();
 }
-function clearDiagHistory(){
+async function clearDiagHistory(){
+  if(!diagHistory.length){toast('Troubleshooting history is already empty','info');return;}
+  const ok=await confirmDlg('Clear troubleshooting history',
+    'Delete all '+diagHistory.length+' recorded scan/fix event(s) from this browser? This cannot be undone.',true);
+  if(!ok)return;
   diagHistory=[];saveDiagHistory();renderDiagHistory();
   toast('Troubleshooting history cleared','info');
 }

@@ -62,6 +62,28 @@ function refreshAlertBadge(){
   const badge=$('#alertStatusBadge');
   if(badge){badge.textContent=S.alerts?'on':'off';badge.className='badge '+(S.alerts?(n?'fail':'ok'):'');}
 }
+let alertFilter='all';
+function setAlertFilter(f){
+  alertFilter=f;
+  $$('#alertFilterSeg .seg-btn').forEach(b=>{
+    const on=b.dataset.f===f;
+    b.classList.toggle('active',on);
+    b.setAttribute('aria-pressed',on?'true':'false');
+  });
+  renderAlerts();
+}
+// Full date+time for alert entries: alerts can be days old, so a bare HH:MM
+// timestamp was ambiguous.
+function alertWhen(ts){
+  const d=new Date(ts),now=new Date();
+  const sameDay=d.toDateString()===now.toDateString();
+  return sameDay?todayAt(ts):(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+todayAt(ts));
+}
+function filteredAlerts(){
+  if(alertFilter==='all')return alertRecords;
+  if(alertFilter==='ok')return alertRecords.filter(a=>a.level==='ok');
+  return alertRecords.filter(a=>a.level===alertFilter);
+}
 function renderAlerts(){
   const crit=alertRecords.filter(a=>a.level==='crit').length;
   const warn=alertRecords.filter(a=>a.level==='warn').length;
@@ -73,17 +95,33 @@ function renderAlerts(){
     el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('shield',22)+'</div><strong>No alerts recorded</strong><span class="dim">Everything looks healthy. Alerts appear when thresholds set in Settings are exceeded.</span></div>';
     return;
   }
-  el.innerHTML=alertRecords.map(a=>`
+  const rows=filteredAlerts();
+  if(!rows.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">'+icon('shield',22)+'</div><strong>No '+esc(alertFilter)+' alerts</strong><span class="dim">Change the filter to see other events.</span></div>';
+    return;
+  }
+  el.innerHTML=rows.map(a=>`
     <div class="alert-item ${a.level==='ok'?'ok':a.level}">
       <span class="ai-dot"></span>
       <div class="ai-body"><div class="ai-title">${esc(a.msg)}</div>
       <div class="ai-sub">${esc(a.metric)} · ${esc(a.level)}</div></div>
-      <span class="ai-time">${todayAt(a.t)}</span>
+      <span class="ai-time" title="${esc(new Date(a.t).toLocaleString())}">${alertWhen(a.t)}</span>
     </div>`).join('');
 }
-function clearAlerts(){
+function exportAlertsCSV(){
+  if(!alertRecords.length){toast('Nothing to export','info');return;}
+  exportCSV('monitoring-alerts-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.csv',
+    ['Time','Level','Metric','Message','Value'],
+    alertRecords.map(a=>[new Date(a.t).toISOString(),a.level,a.metric,a.msg,a.value??'']));
+}
+async function clearAlerts(){
+  if(!alertRecords.length){toast('Alert history is already empty','info');return;}
+  const ok=await confirmDlg('Clear alert history',
+    'Delete all '+alertRecords.length+' recorded alert event(s) from this browser? This cannot be undone.',true);
+  if(!ok)return;
   alertRecords=[];persistAlerts();renderAlerts();refreshAlertBadge();
   toast('Alert history cleared','info');
+  logActivity('system','Cleared alert history');
 }
 
 // ================================================================

@@ -26,7 +26,20 @@ function renderActivity(){
     const b=$('#activityBadge2');if(b)b.textContent=activity.length+' events';
   }
 }
-function clearActivity(){activity=[];try{localStorage.setItem('monitoring:activity','[]');}catch(e){}renderActivity();toast('Activity log cleared','info');}
+async function clearActivity(){
+  if(!activity.length){toast('Activity log is already empty','info');return;}
+  const ok=await confirmDlg('Clear activity log',
+    'Delete all '+activity.length+' recorded action(s) from this browser? This local audit trail cannot be recovered.',true);
+  if(!ok)return;
+  activity=[];try{localStorage.setItem('monitoring:activity','[]');}catch(e){}
+  renderActivity();toast('Activity log cleared','info');
+}
+function exportActivityCSV(){
+  if(!activity.length){toast('Nothing to export','info');return;}
+  exportCSV('monitoring-activity-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.csv',
+    ['Time','Kind','Action','Outcome'],
+    activity.map(a=>[new Date(a.t).toISOString(),a.kind,a.title,a.ok?'ok':'failed']));
+}
 
 // ================================================================
 // Health checks
