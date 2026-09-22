@@ -1,9 +1,12 @@
-"""VM / libvirt management (list, actions, info, resize, config)."""
+"""VM / libvirt management (list, actions, info, resize, config).
+
+No server-side HTML-escaping in this module: the frontend esc()s every value
+it renders (escaping here as well would double-escape the display).
+"""
 import importlib.util
 import os
 
 from flask import Blueprint, jsonify, request
-from markupsafe import escape
 
 from .commands import run, run_privileged, validate_disk_path, validate_vm_name, which
 from .common import _audit
@@ -17,29 +20,41 @@ if not os.environ.get("LIBVIRT_DEFAULT_URI"):
     os.environ["LIBVIRT_DEFAULT_URI"] = "qemu:///system"
 
 
+def _parse_dominfo_mem_vcpus(dominfo):
+    """Extract (mem, vcpus) display strings from `virsh dominfo` output."""
+    mem, vcpus = "N/A", "N/A"
+    for line in (dominfo or "").splitlines():
+        if "Max memory" in line:
+            try:
+                # virsh reports KiB; convert to GiB for display.
+                mem = f"{int(line.split(':')[1].strip().split()[0]) // 1024 // 1024} GB"
+            except (IndexError, ValueError):
+                mem = line.split(":", 1)[1].strip() if ":" in line else "N/A"
+        elif "CPU(s)" in line:
+            vcpus = line.split(":", 1)[1].strip() if ":" in line else "N/A"
+    return mem, vcpus
+
+
 @bp.route("/api/vms")
 @rate_limit("60 per minute")
 def api_vms():
     vms = []
-    code, out, err = run(["virsh", "list", "--all", "--name"])
+    # One `virsh list --all` already yields name + state for every domain, so
+    # only a single `dominfo` per VM is needed for mem/vCPUs (previously this
+    # ran dominfo AND domstate per VM — 2N+1 subprocesses for N VMs).
+    code, out, err = run(["virsh", "list", "--all"])
     if code == 0 and out.strip():
-        names = [n.strip() for n in out.splitlines() if n.strip()]
-        for n in names:
-            if not validate_vm_name(n):
+        for line in out.splitlines()[2:]:  # skip "Id Name State" header + dashes
+            parts = line.split()
+            if len(parts) < 3:
                 continue
-            _, info, _ = run(["virsh", "dominfo", n])
-            _, state_raw, _ = run(["virsh", "domstate", n])
-            state = state_raw.strip().splitlines()[0] if state_raw else "unknown"
-            mem, vcpus = "N/A", "N/A"
-            for line in info.splitlines():
-                if "Max memory" in line:
-                    try:
-                        mem = f"{int(line.split(':')[1].strip().split()[0]) // 1024 // 1024} GB"
-                    except Exception:
-                        mem = escape(line.split(":")[1].strip())
-                if "CPU(s)" in line:
-                    vcpus = escape(line.split(":")[1].strip())
-            vms.append({"name": escape(n), "state": escape(state), "mem": mem, "vcpus": vcpus})
+            name = parts[1]
+            state = " ".join(parts[2:])  # states may contain spaces ("shut off")
+            if not validate_vm_name(name):
+                continue
+            _, dominfo, _ = run(["virsh", "dominfo", name])
+            mem, vcpus = _parse_dominfo_mem_vcpus(dominfo)
+            vms.append({"name": name, "state": state, "mem": mem, "vcpus": vcpus})
     if not vms:
         try:
             import libvirt
@@ -49,8 +64,9 @@ def api_vms():
                              4: "shutdown", 5: "shutoff", 6: "crashed", 7: "pmsuspended"}
                 for dom in conn.listAllDomains():
                     info = dom.info()
-                    vms.append({"name": escape(dom.name()), "state": escape(state_map.get(info[0], "unknown")),
-                                "mem": f"{info[1] // 1024 // 1024} MB", "vcpus": str(info[3])})
+                    # info()[1] is max memory in KiB, hence GiB after //1024//1024.
+                    vms.append({"name": dom.name(), "state": state_map.get(info[0], "unknown"),
+                                "mem": f"{info[1] // 1024 // 1024} GB", "vcpus": str(info[3])})
                 conn.close()
         except Exception:
             pass
@@ -78,9 +94,9 @@ def api_vm_action():
         detail = ((err or "") + (out or "")).strip()[:300] or "helper failed"
         _audit("vm-action", action=action, name=name,
                outcome="failed", exit_code=code)
-        return jsonify({"error": escape(detail), "exit_code": code}), 500
+        return jsonify({"error": detail, "exit_code": code}), 500
     _audit("vm-action", action=action, name=name, outcome="success")
-    return jsonify({"result": escape((out or err or f"{action} {escape(name)}: ok").strip()[:300])})
+    return jsonify({"result": (out or err or f"{action} {name}: ok").strip()[:300]})
 
 
 @bp.route("/api/vm_info/<name>")
@@ -122,11 +138,11 @@ def api_vm_resize():
         detail = ((err or "") + (msg or "")).strip()[:400] or "helper failed"
         _audit("vm-resize", name=name, disk=disk_path, size_gb=new_size_int,
                outcome="failed", exit_code=code)
-        return jsonify({"error": escape(detail), "exit_code": code}), 500
+        return jsonify({"error": detail, "exit_code": code}), 500
     _audit("vm-resize", name=name, disk=disk_path, size_gb=new_size_int,
            outcome="success")
-    return jsonify({"result": escape((msg or err or "Resize complete").strip()[:400]),
-                    "disk": escape(disk_path), "size_gb": new_size_int})
+    return jsonify({"result": (msg or err or "Resize complete").strip()[:400],
+                    "disk": disk_path, "size_gb": new_size_int})
 
 
 @bp.route("/api/vm_config", methods=["POST"])
@@ -171,19 +187,26 @@ def api_vm_config():
     _, state_raw, _ = run(["virsh", "-c", "qemu:///system", "domstate", name], timeout=10)
     is_running = "running" in (state_raw or "").lower()
 
+    # One dominfo call serves both the memory and the vCPU section below.
+    _, dominfo, _ = run(["virsh", "-c", "qemu:///system", "dominfo", name], timeout=15)
+    current_max_kb = 0
+    current_max_vcpus = 0
+    for line in (dominfo or "").splitlines():
+        if "Max memory" in line:
+            try:
+                current_max_kb = int(line.split(":")[1].strip().split()[0])
+            except (IndexError, ValueError):
+                pass
+        elif "CPU(s)" in line:
+            try:
+                current_max_vcpus = int(line.split(":")[1].strip())
+            except (IndexError, ValueError):
+                pass
+
     errors = []
     notes = []
     # --- Memory ---
     if ram_mb is not None:
-        _, dominfo, _ = run(["virsh", "-c", "qemu:///system", "dominfo", name], timeout=15)
-        current_max_kb = 0
-        for line in (dominfo or "").splitlines():
-            if "Max memory" in line:
-                try:
-                    current_max_kb = int(line.split(":")[1].strip().split()[0])
-                except Exception:
-                    pass
-
         new_max_kb = ram_mb * 1024
         if new_max_kb > current_max_kb:
             code, out, err = run_privileged(
@@ -213,15 +236,6 @@ def api_vm_config():
 
     # --- vCPUs ---
     if vcpu_count is not None:
-        _, dominfo2, _ = run(["virsh", "-c", "qemu:///system", "dominfo", name], timeout=15)
-        current_max_vcpus = 0
-        for line in (dominfo2 or "").splitlines():
-            if "CPU(s)" in line:
-                try:
-                    current_max_vcpus = int(line.split(":")[1].strip())
-                except Exception:
-                    pass
-
         if vcpu_count > current_max_vcpus:
             code, out, err = run_privileged(
                 "monitoring-vm-config",
@@ -253,8 +267,8 @@ def api_vm_config():
         return jsonify({"error": "; ".join(errors)}), 500
 
     _audit("vm-config", name=name, ram_gb=ram_gb, vcpus=vcpus)
-    result_msg = f"Configuration updated for {escape(name)}"
+    result_msg = f"Configuration updated for {name}"
     if notes:
         result_msg += " (" + "; ".join(notes) + ")"
-    return jsonify({"result": result_msg, "name": escape(name),
+    return jsonify({"result": result_msg, "name": name,
                      "ram_gb": ram_gb, "vcpus": vcpus, "live": is_running})

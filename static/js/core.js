@@ -96,7 +96,7 @@ async function promptApiToken(){
   try{localStorage.setItem('monitoring:token',apiToken);}catch(e){}
   return true;
 }
-async function fetchJSON(url,opts){
+async function fetchJSON(url,opts,_retried){
   busy++;spinRefresh();
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),15000);
@@ -104,7 +104,9 @@ async function fetchJSON(url,opts){
     const r=await fetch(url,Object.assign({},opts||{},{signal:controller.signal,headers:authHeaders(Object.assign({},(opts&&opts.headers)||{}, {'Accept':'application/json'}))}));
     if(r.status===401){
       lastApiError='Authentication required';
-      if(await promptApiToken())return fetchJSON(url,opts);
+      // One re-prompt + retry only: a still-rejected token must surface as
+      // an error, not loop the unlock dialog forever.
+      if(!_retried&&await promptApiToken())return fetchJSON(url,opts,true);
       throw new Error('Authentication required');
     }
     const text=await r.text();
@@ -119,7 +121,7 @@ async function fetchJSON(url,opts){
     return null;
   }finally{clearTimeout(timeout);busy--;spinRefresh();}
 }
-async function postJSON(url,body){
+async function postJSON(url,body,_retried){
   busy++;spinRefresh();
   const controller=new AbortController();
   // Privileged actions (apt upgrade, vm resize, fix-all) can legitimately run
@@ -128,7 +130,8 @@ async function postJSON(url,body){
   try{
     const r=await fetch(url,{method:'POST',signal:controller.signal,headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body)});
     if(r.status===401){
-      if(await promptApiToken())return postJSON(url,body);
+      // One re-prompt + retry only (see fetchJSON).
+      if(!_retried&&await promptApiToken())return postJSON(url,body,true);
       return {error:'Authentication required'};
     }
     const text=await r.text();
@@ -140,16 +143,21 @@ async function postJSON(url,body){
     // callers that only test `j.error` cannot mistake a 4xx/5xx for success.
     if(!r.ok)return {error:(data&&data.error)||('Request failed (HTTP '+r.status+')')};
     return data||{};
-  }catch(e){return {error:'request failed'};}
+  }catch(e){
+    // Distinguish a timeout from a transport failure: after 320s the server
+    // may still be running the operation, so the message must say so.
+    if(e&&e.name==='AbortError')return {error:'Request timed out — the operation may still be running on the server. Re-check its status before retrying.'};
+    return {error:'request failed'+(e&&e.message?': '+e.message:'')};
+  }
   finally{clearTimeout(timeout);busy--;spinRefresh();}
 }
 // Auth-aware plain fetch for endpoints that return JSON but are not wrapped
 // by fetchJSON/postJSON (e.g. the diagnostics report). Attaches the Bearer
 // token, prompts once on 401, and never recurses forever.
-async function apiFetch(url,opts){
+async function apiFetch(url,opts,_retried){
   const r=await fetch(url,Object.assign({},opts||{},{headers:authHeaders(Object.assign({},(opts&&opts.headers)||{}, {'Accept':'application/json'}))}));
   if(r.status===401){
-    if(await promptApiToken())return apiFetch(url,opts);
+    if(!_retried&&await promptApiToken())return apiFetch(url,opts,true);
     throw new Error('Authentication required');
   }
   return r;

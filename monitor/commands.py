@@ -35,28 +35,31 @@ def _sudo_list():
 PASSWORDLESS_SUDO = _sudo_list()
 
 
+# Single source of truth for every privileged helper the dashboard may invoke.
+# privileges.py renders this same list as the Settings → Privileges report.
+PRIVILEGED_HELPERS = frozenset({
+    "monitoring-systemctl",
+    "monitoring-self-repair",
+    "monitoring-package",
+    "monitoring-maintain",
+    "monitoring-perf",
+    "monitoring-self-update",
+    "monitoring-journal-vacuum",
+    "monitoring-clean-old-logs",
+    "monitoring-vm",
+    "monitoring-vm-config",
+    "monitoring-qemu",
+    "monitoring-kill",
+    "monitoring-zombie-clean",
+    "monitoring-privilege-check",
+})
+
+
 def privileged_tool(name):
     """Return the absolute path to an installed monitoring helper."""
     if os.sep in name or name.startswith("."):
         raise ValueError("invalid privileged helper name")
-    # Only allow known helpers
-    allowed = {
-        "monitoring-systemctl",
-        "monitoring-self-repair",
-        "monitoring-package",
-        "monitoring-maintain",
-        "monitoring-perf",
-        "monitoring-self-update",
-        "monitoring-journal-vacuum",
-        "monitoring-clean-old-logs",
-        "monitoring-vm",
-        "monitoring-vm-config",
-        "monitoring-qemu",
-        "monitoring-kill",
-        "monitoring-zombie-clean",
-        "monitoring-privilege-check",
-    }
-    if name not in allowed:
+    if name not in PRIVILEGED_HELPERS:
         raise ValueError(f"privileged helper not whitelisted: {name}")
     return os.path.join(PRIVILEGE_DIR, name)
 

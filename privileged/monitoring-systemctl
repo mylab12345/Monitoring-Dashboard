@@ -46,7 +46,7 @@ def main(argv):
     if action not in ACTIONS:
         print(f"monitoring-systemctl: invalid action: {action}", file=sys.stderr)
         return 2
-    if action != "reset-failed" and not _validate_unit(unit):
+    if unit is not None and not _validate_unit(unit):
         print("monitoring-systemctl: invalid unit name", file=sys.stderr)
         return 2
 
@@ -55,7 +55,9 @@ def main(argv):
         print("monitoring-systemctl: systemctl not found", file=sys.stderr)
         return 127
     cmd = [systemctl, action]
-    if action != "reset-failed":
+    if unit is not None:
+        # Bare "reset-failed" resets all units; with a (validated) unit it
+        # resets just that one — never silently ignore the argument.
         cmd.append(unit)
     return subprocess.run(cmd, shell=False).returncode
 

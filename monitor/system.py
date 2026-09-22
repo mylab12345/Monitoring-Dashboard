@@ -78,11 +78,11 @@ def _build_checks():
         broken = "none" if dpkg_healthy else "incomplete package state"
         detail = broken if dpkg_healthy else (dpkg_detail.splitlines()[0][:240] if dpkg_detail else broken)
         results.append({"name": "Broken Packages", "status": "warn" if not dpkg_healthy else "ok", "detail": detail})
-    failed = "0"
+    failed = 0
     if which("systemctl"):
         code, out, err = run(["systemctl", "--failed", "--no-pager", "--quiet"])
-        failed = str(len([l for l in out.splitlines() if l.strip()]))
-        results.append({"name": "Failed Services", "status": "warn" if _int_or(failed) > 0 else "ok",
+        failed = len([l for l in out.splitlines() if l.strip()])
+        results.append({"name": "Failed Services", "status": "warn" if failed > 0 else "ok",
                         "detail": f"{failed} failed"})
     code, out, err = run(["journalctl", "-k", "-b", "-p", "err..alert", "--no-pager", "-q"]) \
         if which("journalctl") else run(["dmesg", "--level=err,crit,alert,emerg"])

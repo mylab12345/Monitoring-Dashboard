@@ -1,6 +1,5 @@
 """Process listing and bounded kill control."""
 from flask import Blueprint, jsonify, request
-from markupsafe import escape
 
 from .commands import run_privileged
 from .common import MY_PID, _audit, _cached, _int_or
@@ -108,10 +107,6 @@ def api_process_kill():
         import psutil
         p = psutil.Process(pid)
         name = p.name()
-        # Prevent killing critical system processes by name
-        if name in ("systemd", "init", "sshd", "monitoring"):
-            # Allow but log warning; still proceed with terminate for user confirmation
-            pass
         p.terminate()
         try:
             p.wait(timeout=3)
@@ -126,14 +121,16 @@ def api_process_kill():
         verified = _pid_gone(pid)
         _audit("process-kill", pid=pid, name=name, via="direct",
                verified=verified)
-        return jsonify({"result": f"Terminated {escape(name)} (pid {pid})",
+        # No server-side HTML-escaping: the frontend esc()s every value it
+        # renders (escaping here as well would double-escape the display).
+        return jsonify({"result": f"Terminated {name} (pid {pid})",
                         "verified": verified})
     except psutil.NoSuchProcess:
         return jsonify({"error": f"No process with pid {pid}"}), 404
     except (psutil.AccessDenied, psutil.TimeoutExpired, PermissionError):
         code, out, err = run_privileged("monitoring-kill", ["--force", str(pid)], timeout=15)
         if code != 0:
-            return jsonify({"error": escape(((err or out) or "kill failed").strip()[:200])}), 403
+            return jsonify({"error": (((err or out) or "kill failed").strip()[:200])}), 403
         verified = _pid_gone(pid)
         _audit("process-kill", pid=pid, via="helper", verified=verified)
         return jsonify({"result": f"Killed pid {pid} (privileged helper)",

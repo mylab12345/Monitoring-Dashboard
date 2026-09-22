@@ -12,6 +12,10 @@ import sys
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ACTIONS = {"setvcpus", "setmaxmem", "setmem"}
 ALLOWED_FLAGS = {"--live", "--config", "--maximum"}
+# Memory values are KiB (virsh setmem/setmaxmem units). The ceiling covers the
+# dashboard maximum of 10240 GiB (monitor/vms.py: ram_mb <= 10485760):
+# 10485760 MiB * 1024 = 10737418240 KiB. Keep the two in sync.
+VALUE_MAX_KB = 10737418240
 
 
 def main(argv):
@@ -46,7 +50,7 @@ def main(argv):
         print("monitoring-vm-config: value must be an integer", file=sys.stderr)
         return 2
 
-    if value < 0 or value > 20971520:
+    if value < 0 or value > VALUE_MAX_KB:
         print("monitoring-vm-config: value out of range", file=sys.stderr)
         return 2
 

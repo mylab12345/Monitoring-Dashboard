@@ -21,10 +21,15 @@ import sys
 
 SUDOERS_FILE = "/etc/sudoers.d/monitoring"
 PRIV_DIR = os.environ.get("MONITORING_PRIVILEGE_DIR", "/usr/local/lib/monitoring")
+# Every helper the monitoring account may invoke through passwordless sudo.
+# Must match sudoers/monitoring and monitor/commands.py PRIVILEGED_HELPERS.
 HELPERS = [
     "monitoring-systemctl",
     "monitoring-self-repair",
     "monitoring-package",
+    "monitoring-maintain",
+    "monitoring-perf",
+    "monitoring-self-update",
     "monitoring-journal-vacuum",
     "monitoring-clean-old-logs",
     "monitoring-vm",
@@ -32,6 +37,7 @@ HELPERS = [
     "monitoring-qemu",
     "monitoring-kill",
     "monitoring-zombie-clean",
+    "monitoring-privilege-check",
 ]
 
 

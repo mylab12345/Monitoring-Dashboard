@@ -7,6 +7,7 @@ in tests and in a WSGI reloader).
 import os
 import threading
 import time
+from collections import deque
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -17,7 +18,9 @@ from .security import rate_limit
 bp = Blueprint("metrics", __name__)
 
 HISTORY_MAX = 1800  # 60 min @ 2s
-_HISTORY = {"samples": [], "lock": threading.Lock()}
+# A bounded deque evicts the oldest sample in O(1) on append; the previous
+# list + slice-delete re-copied up to 1800 samples on every 2s tick.
+_HISTORY = {"samples": deque(maxlen=HISTORY_MAX), "lock": threading.Lock()}
 _last_cpu = {"value": 0.0}
 _sampler_started = False
 _cpu_primed = False
@@ -87,8 +90,6 @@ def _sampler_loop():
             }
             with _HISTORY["lock"]:
                 _HISTORY["samples"].append(sample)
-                if len(_HISTORY["samples"]) > HISTORY_MAX:
-                    del _HISTORY["samples"][:len(_HISTORY["samples"]) - HISTORY_MAX]
         except Exception:
             pass
         time.sleep(2)
@@ -154,45 +155,33 @@ def _battery():
         return None
 
 
+def _temp_string():
+    """CPU temperature as a display string ("42.0°C") or "N/A"."""
+    temp_c = _read_temp_c()
+    return f"{temp_c:.1f}°C" if temp_c is not None else "N/A"
+
+
 def _build_status():
     try:
         import psutil
         _prime_cpu()
-        # On first call cpu_percent returns 0.0; try to get a quick blocking sample if needed
-        cpu = _last_cpu["value"]
+        # Prefer the sampler's last reading; on a cold start (no samples yet
+        # and a 0.0 reading) take one short blocking sample instead of
+        # showing a bogus 0%.
+        cpu = _last_cpu["value"] or psutil.cpu_percent(interval=None)
         if cpu == 0.0 and not _HISTORY["samples"]:
-            # First request after startup: take a short blocking sample (0.1s) to avoid showing 0%
             try:
                 cpu = psutil.cpu_percent(interval=0.1)
-                _last_cpu["value"] = cpu
             except Exception:
                 cpu = psutil.cpu_percent(interval=None)
-        else:
-            cpu = cpu or psutil.cpu_percent(interval=None)
+            _last_cpu["value"] = cpu
         mem = psutil.virtual_memory()
         swap = psutil.swap_memory()
         disk = psutil.disk_usage("/")
         uptime = time.time() - psutil.boot_time()
         load = os.getloadavg()
         freq = psutil.cpu_freq()
-        temp = "N/A"
-        try:
-            temps = psutil.sensors_temperatures() if hasattr(psutil, "sensors_temperatures") else {}
-            if temps:
-                for _, entries in temps.items():
-                    if entries:
-                        cur = getattr(entries[0], "current", None)
-                        if cur is not None:
-                            temp = f"{float(cur):.1f}°C"
-                            break
-        except Exception:
-            pass
-        if temp == "N/A":
-            try:
-                with open("/sys/class/thermal/thermal_zone0/temp") as f:
-                    temp = f"{int(f.read().strip()) / 1000:.1f}°C"
-            except Exception:
-                pass
+        temp = _temp_string()
         net = psutil.net_io_counters()
         net_sent = f"{net.bytes_sent / (1024**2):.1f} MB"
         net_recv = f"{net.bytes_recv / (1024**2):.1f} MB"

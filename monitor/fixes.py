@@ -6,7 +6,6 @@ failed maintenance must never be reported to the browser as a successful
 "Done" response.
 """
 from flask import Blueprint, jsonify, request
-from markupsafe import escape
 
 from .commands import run_privileged
 from .common import _audit, _cache_clear
@@ -112,8 +111,10 @@ def run_fix_action(requested_action, manager=None):
     """
     action = FIX_ALIASES.get(requested_action, requested_action)
     if action not in FIX_ACTIONS:
-        return (jsonify({"error": f"Unknown action: "
-                                   f"{escape(str(action))[:60]}"}), 400)
+        # No server-side HTML-escaping: the frontend esc()s every value it
+        # renders (escaping here as well would double-escape the display).
+        return (jsonify({"error": "Unknown action: "
+                                   f"{str(action)[:60]}"}), 400)
 
     manager = manager or _pkg_manager()
 
