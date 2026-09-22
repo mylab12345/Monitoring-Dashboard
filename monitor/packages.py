@@ -21,43 +21,22 @@ def _pkg_manager():
 
 # Internal argv lists for the monitoring-package privileged helper. These are
 # never concatenated with user input and never go through a shell.
+# Generated (not hand-written per manager) so all six managers stay in sync
+# by construction — adding a manager or action is a one-line change.
+PACKAGE_MANAGERS = ("apt", "dnf", "yum", "zypper", "pacman", "apk")
+PACKAGE_ACTIONS = ("update", "upgrade", "full-upgrade", "autoremove",
+                   "clean", "fix-broken")
+
+
+def _helper_argv(manager, action):
+    """Build the argv list for one monitoring-package helper invocation."""
+    return ["monitoring-package", "--manager", manager, "--action", action]
+
+
 FIX_COMMANDS = {
-    "apt":    {"update": ["monitoring-package", "--manager", "apt", "--action", "update"],
-               "upgrade": ["monitoring-package", "--manager", "apt", "--action", "upgrade"],
-               "full-upgrade": ["monitoring-package", "--manager", "apt", "--action", "full-upgrade"],
-               "autoremove": ["monitoring-package", "--manager", "apt", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "apt", "--action", "clean"],
-               "fix-broken": ["monitoring-package", "--manager", "apt", "--action", "fix-broken"]},
-    "dnf":    {"update": ["monitoring-package", "--manager", "dnf", "--action", "update"],
-               "upgrade": ["monitoring-package", "--manager", "dnf", "--action", "upgrade"],
-               "full-upgrade": ["monitoring-package", "--manager", "dnf", "--action", "full-upgrade"],
-               "autoremove": ["monitoring-package", "--manager", "dnf", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "dnf", "--action", "clean"],
-               "fix-broken": ["monitoring-package", "--manager", "dnf", "--action", "fix-broken"]},
-    "yum":    {"update": ["monitoring-package", "--manager", "yum", "--action", "update"],
-               "upgrade": ["monitoring-package", "--manager", "yum", "--action", "upgrade"],
-               "full-upgrade": ["monitoring-package", "--manager", "yum", "--action", "full-upgrade"],
-               "autoremove": ["monitoring-package", "--manager", "yum", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "yum", "--action", "clean"],
-               "fix-broken": ["monitoring-package", "--manager", "yum", "--action", "fix-broken"]},
-    "zypper": {"update": ["monitoring-package", "--manager", "zypper", "--action", "update"],
-               "upgrade": ["monitoring-package", "--manager", "zypper", "--action", "upgrade"],
-               "full-upgrade": ["monitoring-package", "--manager", "zypper", "--action", "full-upgrade"],
-               "autoremove": ["monitoring-package", "--manager", "zypper", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "zypper", "--action", "clean"],
-               "fix-broken": ["monitoring-package", "--manager", "zypper", "--action", "fix-broken"]},
-    "pacman": {"update": ["monitoring-package", "--manager", "pacman", "--action", "update"],
-               "upgrade": ["monitoring-package", "--manager", "pacman", "--action", "upgrade"],
-               "full-upgrade": ["monitoring-package", "--manager", "pacman", "--action", "full-upgrade"],
-               "autoremove": ["monitoring-package", "--manager", "pacman", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "pacman", "--action", "clean"],
-               "fix-broken": ["monitoring-package", "--manager", "pacman", "--action", "fix-broken"]},
-    "apk":    {"update": ["monitoring-package", "--manager", "apk", "--action", "update"],
-               "upgrade": ["monitoring-package", "--manager", "apk", "--action", "upgrade"],
-               "full-upgrade": ["monitoring-package", "--manager", "apk", "--action", "full-upgrade"],
-               "autoremove": ["monitoring-package", "--manager", "apk", "--action", "autoremove"],
-               "clean": ["monitoring-package", "--manager", "apk", "--action", "clean"],
-               "fix-broken": ["monitoring-package", "--manager", "apk", "--action", "fix-broken"]},
+    manager: {action: _helper_argv(manager, action)
+              for action in PACKAGE_ACTIONS}
+    for manager in PACKAGE_MANAGERS
 }
 
 # Package managers keep global locks and must never be driven concurrently by

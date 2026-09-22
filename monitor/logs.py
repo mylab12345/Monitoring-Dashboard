@@ -1,6 +1,5 @@
 """Journal log viewer (journalctl with syslog fallback)."""
 import os
-import re
 
 from flask import Blueprint, jsonify, request
 
@@ -16,14 +15,10 @@ bp = Blueprint("logs", __name__)
 def api_logs():
     lines = min(max(_int_or(request.args.get("lines", 60), 60), 10), 500)
     prio = min(max(_int_or(request.args.get("prio", 0), 0), 0), 7)  # journalctl -p range
-    grep = request.args.get("grep", "")
-    if grep:
-        # Sanitize grep input to prevent injection and limit length
-        # Only allow alphanumeric, space, dash, dot, brackets, slash, colon, underscore
-        grep = re.sub(r"[^\w\s\-\.\[\]/:]", "", grep)[:80].strip()
-        # Reject if grep is only special chars after sanitization
-        if len(grep) < 2:
-            grep = ""
+    # Plain length-limit only: matching is a Python substring test (never a
+    # shell/regex), so stripping characters would just corrupt searches like
+    # "C++", "a=b" or "foo|bar".
+    grep = (request.args.get("grep", "") or "")[:80].strip()
     if which("journalctl"):
         argv = ["journalctl", "--no-pager", "-n", str(lines), "-o", "short"]
         if prio:

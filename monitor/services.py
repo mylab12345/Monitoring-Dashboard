@@ -1,6 +1,5 @@
 """systemd service listing and bounded control."""
 from flask import Blueprint, jsonify, request
-from markupsafe import escape
 
 from .commands import run, run_privileged, validate_service_name, validate_systemctl_action, which
 from .common import _audit
@@ -50,16 +49,18 @@ def api_service_action():
         detail = ((err or "") + (out or "")).strip()[:300] or "helper failed"
         _audit("service-action", action=action, unit=name,
                outcome="failed", exit_code=code)
-        return jsonify({"error": escape(detail), "exit_code": code}), 500
+        # No server-side HTML-escaping: the frontend esc()s every value it
+        # renders (escaping here as well would double-escape the display).
+        return jsonify({"error": detail, "exit_code": code}), 500
 
     # Post-action verification: report the unit's actual state so the UI can
     # confirm the action really took effect instead of trusting exit code 0.
     state, verified = _verify_service_state(name, action)
     _audit("service-action", action=action, unit=name, outcome="success",
            state=state or None)
-    payload = {"result": f"{action} {escape(name)}: ok"}
+    payload = {"result": f"{action} {name}: ok"}
     if state:
-        payload["state"] = escape(state)
+        payload["state"] = state
         payload["verified"] = verified
     return jsonify(payload)
 

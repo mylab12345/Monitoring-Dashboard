@@ -21,39 +21,16 @@ from .selfrepair import auto_repair_readonly
 
 bp = Blueprint("diagnostics", __name__)
 
-# Internal argv lists for the monitoring-package privileged helper. These are
-# never concatenated with user input and never go through a shell.
+# Diagnostics fix argv lists, derived from the canonical FIX_COMMANDS map in
+# packages.py so the two can never drift out of sync (same helper, same args;
+# only the issue-oriented key names differ).
 TROUBLESHOOT_FIXES = {
-    "apt": {
-        "broken_packages": ["monitoring-package", "--manager", "apt", "--action", "fix-broken"],
-        "clean_cache": ["monitoring-package", "--manager", "apt", "--action", "clean"],
-        "autoremove": ["monitoring-package", "--manager", "apt", "--action", "autoremove"],
-    },
-    "dnf": {
-        "broken_packages": ["monitoring-package", "--manager", "dnf", "--action", "fix-broken"],
-        "clean_cache": ["monitoring-package", "--manager", "dnf", "--action", "clean"],
-        "autoremove": ["monitoring-package", "--manager", "dnf", "--action", "autoremove"],
-    },
-    "yum": {
-        "broken_packages": ["monitoring-package", "--manager", "yum", "--action", "fix-broken"],
-        "clean_cache": ["monitoring-package", "--manager", "yum", "--action", "clean"],
-        "autoremove": ["monitoring-package", "--manager", "yum", "--action", "autoremove"],
-    },
-    "zypper": {
-        "broken_packages": ["monitoring-package", "--manager", "zypper", "--action", "fix-broken"],
-        "clean_cache": ["monitoring-package", "--manager", "zypper", "--action", "clean"],
-        "autoremove": ["monitoring-package", "--manager", "zypper", "--action", "autoremove"],
-    },
-    "pacman": {
-        "broken_packages": ["monitoring-package", "--manager", "pacman", "--action", "fix-broken"],
-        "clean_cache": ["monitoring-package", "--manager", "pacman", "--action", "clean"],
-        "autoremove": ["monitoring-package", "--manager", "pacman", "--action", "autoremove"],
-    },
-    "apk": {
-        "broken_packages": ["monitoring-package", "--manager", "apk", "--action", "fix-broken"],
-        "clean_cache": ["monitoring-package", "--manager", "apk", "--action", "clean"],
-        "autoremove": ["monitoring-package", "--manager", "apk", "--action", "autoremove"],
-    },
+    manager: {
+        "broken_packages": commands["fix-broken"],
+        "clean_cache": commands["clean"],
+        "autoremove": commands["autoremove"],
+    }
+    for manager, commands in FIX_COMMANDS.items()
 }
 
 TROUBLESHOOT_CATEGORIES = {

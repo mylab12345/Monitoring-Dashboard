@@ -50,11 +50,29 @@ def _helper_path(name):
         return ""
 
 
-def _run_helper(name, args=None, timeout=120):
-    """Run a whitelisted helper, returning (code, out, err) even on failure."""
-    if not os.path.isfile(_helper_path(name)):
-        return -1, "", f"{name} helper is not installed — run install.sh or update.sh (sudo) and retry"
-    return run_privileged(name, args, timeout=timeout)
+def _readonly_78_response(action, message, code, detail_limit, **audit_fields):
+    """Shared exit-78 (read-only service mount namespace) response.
+
+    Used by the repair and fix-all endpoints: attempt the self-repair unit
+    patch and tell the UI to wait for the restart and retry the action.
+    Returns a (payload, status) tuple ready to return from the view.
+    """
+    applied, repair_message = auto_repair_readonly()
+    payload = {"error": f"{action} blocked (exit 78): package paths are "
+                        f"read-only in the service namespace",
+               "exit_code": code, "action": action,
+               "read_only_mount": True,
+               "detail": message[-detail_limit:] or ""}
+    if applied:
+        payload.update({"repair_scheduled": True,
+                        "repair_message": repair_message})
+        _audit(f"maintain-{action}", outcome="repair-scheduled",
+               exit_code=code, **audit_fields)
+        return jsonify(payload), 200
+    payload["repair_error"] = repair_message
+    _audit(f"maintain-{action}", outcome="failed",
+           exit_code=code, **audit_fields)
+    return jsonify(payload), 500
 
 
 def _maintain_status():
@@ -288,22 +306,8 @@ def api_maintain_repair():
     if code == 78:
         # Read-only service mount namespace (old monitoring.service unit):
         # auto-repair the unit and let the UI retry after the restart.
-        applied, repair_message = auto_repair_readonly()
-        payload = {"error": f"repair blocked (exit 78): package paths are "
-                            f"read-only in the service namespace",
-                   "exit_code": code, "action": "repair",
-                   "read_only_mount": True,
-                   "detail": message[-2000:] or ""}
-        if applied:
-            payload.update({"repair_scheduled": True,
-                            "repair_message": repair_message})
-            _audit("maintain-repair", outcome="repair-scheduled",
-                   exit_code=code, force_initramfs=force_initramfs)
-            return jsonify(payload), 200
-        payload["repair_error"] = repair_message
-        _audit("maintain-repair", outcome="failed", exit_code=code,
-               force_initramfs=force_initramfs)
-        return jsonify(payload), 500
+        return _readonly_78_response("repair", message, code, 2000,
+                                     force_initramfs=force_initramfs)
     _audit("maintain-repair", outcome="failed", exit_code=code,
            force_initramfs=force_initramfs)
     return jsonify({"error": f"repair failed (exit {code}): "
@@ -355,23 +359,9 @@ def api_maintain_fix_all():
     if code == 78:
         # Read-only service mount namespace (old monitoring.service unit):
         # auto-repair the unit and let the UI retry after the restart.
-        applied, repair_message = auto_repair_readonly()
-        payload = {"error": f"fix-all blocked (exit 78): package paths are "
-                            f"read-only in the service namespace",
-                   "exit_code": code, "action": "fix-all",
-                   "read_only_mount": True,
-                   "detail": message[-6000:] or ""}
-        if applied:
-            payload.update({"repair_scheduled": True,
-                            "repair_message": repair_message})
-            _audit("maintain-fix-all", outcome="repair-scheduled",
-                   exit_code=code, force_initramfs=force_initramfs,
-                   no_upgrade=no_upgrade)
-            return jsonify(payload), 200
-        payload["repair_error"] = repair_message
-        _audit("maintain-fix-all", outcome="failed", exit_code=code,
-               force_initramfs=force_initramfs, no_upgrade=no_upgrade)
-        return jsonify(payload), 500
+        return _readonly_78_response("fix-all", message, code, 6000,
+                                     force_initramfs=force_initramfs,
+                                     no_upgrade=no_upgrade)
     _audit("maintain-fix-all", outcome="failed", exit_code=code,
            force_initramfs=force_initramfs, no_upgrade=no_upgrade)
     return jsonify({"error": f"fix-all failed (exit {code}): "

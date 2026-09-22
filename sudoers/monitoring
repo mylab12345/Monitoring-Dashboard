@@ -26,3 +26,4 @@ monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm-config
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-qemu
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-kill
 monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-zombie-clean
+monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-privilege-check

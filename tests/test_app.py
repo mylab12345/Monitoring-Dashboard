@@ -549,6 +549,23 @@ class HelperValidation(unittest.TestCase):
         self.assertEqual(self._helper("monitoring-vm-config", "setvcpus", "vm1", "-1").returncode, 2)
         self.assertEqual(self._helper("monitoring-vm-config", "setvcpus", "vm1", "2", "--bogus").returncode, 2)
 
+    def test_vm_config_accepts_dashboard_ram_range(self):
+        # The dashboard allows up to 10240 GB (monitor/vms.py); the helper
+        # takes KiB, so multi-GB values must pass *validation*. Without virsh
+        # this fails later with 127, on a libvirt host with a virsh error —
+        # but it must never be rejected with 2 ("value out of range").
+        r = self._helper("monitoring-vm-config", "setmem", "vm1", "33554432", "--config")
+        self.assertNotEqual(r.returncode, 2, r.stderr)
+        r = self._helper("monitoring-vm-config", "setmem", "vm1", "10737418240", "--config")
+        self.assertNotEqual(r.returncode, 2, r.stderr)
+
+    def test_systemctl_reset_failed_with_unit(self):
+        # reset-failed accepts an optional unit; a bad unit must be rejected
+        # before systemctl is touched (it used to be silently ignored while
+        # ALL failed units were reset).
+        self.assertEqual(self._helper("monitoring-systemctl", "reset-failed", "$(id)").returncode, 2)
+        self.assertEqual(self._helper("monitoring-systemctl", "reset-failed", "-oProxy=x").returncode, 2)
+
     def test_package_validation(self):
         self.assertEqual(self._helper("monitoring-package", "--manager", "evil", "--action", "update").returncode, 2)
         self.assertEqual(self._helper("monitoring-package", "--manager", "apt", "--action", "explode").returncode, 2)
@@ -610,6 +627,45 @@ class HelperValidation(unittest.TestCase):
                      "monitoring-privilege-check"):
             r = self._helper(name, "--check")
             self.assertEqual(r.returncode, 0, f"{name} --check failed: {r.stderr}")
+
+
+class SudoersCoverage(unittest.TestCase):
+    """Every whitelisted helper must have exactly one sudoers grant.
+
+    The dashboard probes each PRIVILEGED_HELPERS member through passwordless
+    sudo; a helper missing from sudoers/monitoring would show as "denied" on
+    real installs even though the app expects it to work — and a stale line
+    for a removed helper would silently widen sudo. Both directions are
+    pinned here so the three lists (allowlist, sudoers, privilege report)
+    cannot drift apart.
+    """
+
+    def test_sudoers_covers_allowlist_exactly(self):
+        from monitor.commands import PRIVILEGED_HELPERS
+        with open(os.path.join(REPO, "sudoers", "monitoring")) as fh:
+            lines = [l.strip() for l in fh if l.strip() and not l.strip().startswith("#")]
+        self.assertTrue(lines, "sudoers/monitoring has no rules")
+        granted = set()
+        for line in lines:
+            m = re.fullmatch(
+                r"monitoring ALL=\(root\) NOPASSWD: /usr/local/lib/monitoring/([A-Za-z0-9][A-Za-z0-9_.-]*)",
+                line)
+            self.assertIsNotNone(m, f"unexpected sudoers line: {line!r}")
+            granted.add(m.group(1))
+        self.assertEqual(granted, set(PRIVILEGED_HELPERS),
+                         f"sudoers/allowlist drift: only-in-sudoers={granted - set(PRIVILEGED_HELPERS)} "
+                         f"only-in-allowlist={set(PRIVILEGED_HELPERS) - granted}")
+
+    def test_privilege_check_helper_lists_all_helpers(self):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(REPO, "privileged", "monitoring-privilege-check")
+        loader = importlib.machinery.SourceFileLoader("monitoring_privilege_check", path)
+        spec = importlib.util.spec_from_loader("monitoring_privilege_check", loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        from monitor.commands import PRIVILEGED_HELPERS
+        self.assertEqual(set(mod.HELPERS), set(PRIVILEGED_HELPERS))
 
 
 class SelfRepairUnit(unittest.TestCase):

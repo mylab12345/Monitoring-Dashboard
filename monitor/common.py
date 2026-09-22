@@ -83,36 +83,58 @@ def _int_or(value, default=0):
 # Response cache — prevents duplicate work when multiple browser tabs or the
 # desktop app poll the same endpoint simultaneously.
 # Includes periodic eviction of expired entries to avoid unbounded growth.
-_resp_cache = {}  # key -> (expiry, payload)
+_resp_cache = {}  # key -> (expiry_monotonic, payload)
 _resp_lock = threading.Lock()
 _CACHE_MAX_SIZE = 128
 _CACHE_CLEAN_INTERVAL = 60
 _last_cache_clean = 0
 
+# Per-key locks against cache stampedes: without them, N concurrent requests
+# for an expired key (e.g. 5 tabs polling /api/troubleshooting) would each
+# run the expensive scan instead of one running it and the rest waiting.
+_key_locks = {}
+_key_locks_guard = threading.Lock()
+
+
+def _key_lock(key):
+    with _key_locks_guard:
+        lock = _key_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _key_locks[key] = lock
+        return lock
+
 
 def _cached(key, ttl, fn):
-    """Return cached result of fn() if called within ttl seconds."""
+    """Return cached result of fn() if called within ttl seconds.
+
+    Uses a monotonic clock (immune to wall-clock jumps) and stamps the TTL
+    *after* fn() completes, so a slow scan does not eat its own cache time.
+    Concurrent misses for the same key block on a per-key lock instead of
+    stampeding fn().
+    """
     global _last_cache_clean
-    now = time.time()
-    with _resp_lock:
-        # Periodic cleanup of expired entries
-        if now - _last_cache_clean > _CACHE_CLEAN_INTERVAL:
-            expired = [k for k, (exp, _) in _resp_cache.items() if exp <= now]
-            for k in expired:
-                _resp_cache.pop(k, None)
-            # If still too large, evict oldest (by expiry)
-            if len(_resp_cache) > _CACHE_MAX_SIZE:
-                sorted_keys = sorted(_resp_cache.keys(), key=lambda k: _resp_cache[k][0])
-                for k in sorted_keys[: len(_resp_cache) - _CACHE_MAX_SIZE]:
+    with _key_lock(key):
+        now = time.monotonic()
+        with _resp_lock:
+            # Periodic cleanup of expired entries
+            if now - _last_cache_clean > _CACHE_CLEAN_INTERVAL:
+                expired = [k for k, (exp, _) in _resp_cache.items() if exp <= now]
+                for k in expired:
                     _resp_cache.pop(k, None)
-            _last_cache_clean = now
-        entry = _resp_cache.get(key)
-        if entry and entry[0] > now:
-            return entry[1]
-    result = fn()
-    with _resp_lock:
-        _resp_cache[key] = (now + ttl, result)
-    return result
+                # If still too large, evict oldest (by expiry)
+                if len(_resp_cache) > _CACHE_MAX_SIZE:
+                    sorted_keys = sorted(_resp_cache.keys(), key=lambda k: _resp_cache[k][0])
+                    for k in sorted_keys[: len(_resp_cache) - _CACHE_MAX_SIZE]:
+                        _resp_cache.pop(k, None)
+                _last_cache_clean = now
+            entry = _resp_cache.get(key)
+            if entry and entry[0] > now:
+                return entry[1]
+        result = fn()
+        with _resp_lock:
+            _resp_cache[key] = (time.monotonic() + ttl, result)
+        return result
 
 
 def _cache_clear(key):

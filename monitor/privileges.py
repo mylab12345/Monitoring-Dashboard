@@ -5,26 +5,17 @@ import pwd
 
 from flask import Blueprint, jsonify
 
-from .commands import PASSWORDLESS_SUDO, mount_status, privileged_tool, run
+from .commands import (PASSWORDLESS_SUDO, PRIVILEGED_HELPERS, mount_status,
+                       privileged_tool, run)
 from .common import SUDOERS_FILE, _cached, PRIVILEGE_DIR
 from .security import rate_limit
 
 bp = Blueprint("privileges", __name__)
 
-_PRIVILEGE_HELPERS = [
-    "monitoring-systemctl",
-    "monitoring-self-repair",
-    "monitoring-package",
-    "monitoring-maintain",
-    "monitoring-perf",
-    "monitoring-journal-vacuum",
-    "monitoring-clean-old-logs",
-    "monitoring-vm",
-    "monitoring-vm-config",
-    "monitoring-qemu",
-    "monitoring-kill",
-    "monitoring-zombie-clean",
-]
+# Render the same allowlist privileged_tool() enforces, so the report can
+# never silently omit a helper (previously monitoring-self-update and
+# monitoring-privilege-check were missing here).
+_PRIVILEGE_HELPERS = sorted(PRIVILEGED_HELPERS)
 
 
 def _check_sudo_helper(helper):

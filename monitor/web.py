@@ -1,5 +1,6 @@
 """Index page and liveness/version endpoints (no system data)."""
 import os
+import sys
 from datetime import datetime
 
 from flask import Blueprint, jsonify, render_template
@@ -41,7 +42,7 @@ def api_version():
     return jsonify({
         "app": "Monitoring",
         "version": APP_VERSION,
-        "python": os.sys.version.split()[0],
+        "python": sys.version.split()[0],
         "home": APP_HOME,
         "euid": os.geteuid(),
         "root": os.geteuid() == 0,

@@ -52,13 +52,20 @@ def rate_limit(limit_string):
     def decorator(f):
         # If limiter is already available, apply directly for efficiency
         if HAS_LIMITER and limiter is not None:
-            return limiter.limit(limit_string)(f)
+            applied = limiter.limit(limit_string)(f)
+            applied._rate_limit = limit_string
+            return applied
+
+        # Otherwise resolve lazily, but only ONCE: re-wrapping per request
+        # would re-register the limit with the limiter on every call.
+        state = {"wrapped": None}
 
         @wraps(f)
         def wrapped(*args, **kwargs):
-            if HAS_LIMITER and limiter:
-                # Apply limit on each request via limiter's wrapper
-                return limiter.limit(limit_string)(f)(*args, **kwargs)
+            if HAS_LIMITER and limiter is not None:
+                if state["wrapped"] is None:
+                    state["wrapped"] = limiter.limit(limit_string)(f)
+                return state["wrapped"](*args, **kwargs)
             return f(*args, **kwargs)
         # Preserve original function for introspection
         wrapped._rate_limit = limit_string
