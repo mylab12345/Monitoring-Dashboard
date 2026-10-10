@@ -62,6 +62,12 @@ import subprocess
 import sys
 import time
 
+# Shared, root-owned helper module installed next to this script (optional).
+try:
+    import monitoring_hostns as hostns
+except ImportError:  # pragma: no cover - partial/old install
+    hostns = None
+
 MODULES_DIR = "/lib/modules"
 BOOT_DIR = "/boot"
 KERNEL_RE = re.compile(r"^[0-9][A-Za-z0-9._+-]*$")
@@ -304,7 +310,7 @@ def _package_paths_read_only():
 _READONLY_GUIDANCE = (
     "package paths are read-only in the service mount namespace: {paths}. "
     "This is a mount policy, not a file permission. Install the updated "
-    "monitoring.service (it grants ReadWritePaths=/usr /etc /boot /efi), run "
+    "monitoring.service (it grants ReadWritePaths=/usr /etc -/boot -/efi), run "
     "systemctl daemon-reload and restart monitoring before retrying — the "
     "dashboard does this automatically with 'Repair service mount namespace' "
     "(monitoring-self-repair). If the host itself is mounted read-only, "
@@ -717,6 +723,14 @@ def main(argv):
     if argv in (["--repair"], ["--repair", "--force-initramfs"],
                 ["--force-initramfs", "--repair"]):
         force = "--force-initramfs" in argv
+        # Package/boot paths read-only in the service namespace (stale unit):
+        # run the same validated argv in the host namespace instead of failing.
+        if hostns is not None and hostns.available() and \
+                hostns.read_only_paths(("/usr", "/etc", "/boot", "/efi")):
+            code, _reason = hostns.run_in_host(os.path.realpath(__file__), argv,
+                                               "maintain")
+            if code is not None:
+                return code
         code, lines = run_repair(force)
         print("\n".join(lines))
         return code
@@ -724,6 +738,14 @@ def main(argv):
         allowed = {"--fix-all", "--force-initramfs", "--no-upgrade"}
         if set(argv) <= allowed:
             force = "--force-initramfs" in argv
+            # Package/boot paths read-only in the service namespace (stale unit):
+            # run the same validated argv in the host namespace instead of failing.
+            if hostns is not None and hostns.available() and \
+                    hostns.read_only_paths(("/usr", "/etc", "/boot", "/efi")):
+                code, _reason = hostns.run_in_host(os.path.realpath(__file__), argv,
+                                                   "maintain")
+                if code is not None:
+                    return code
             no_upgrade = "--no-upgrade" in argv
             code, lines = run_fix_all(force, no_upgrade)
             print("\n".join(lines))
@@ -738,4 +760,6 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    if hostns is not None:
+        sys.exit(hostns.main_wrapper(main, sys.argv[1:]))
     sys.exit(main(sys.argv[1:]))

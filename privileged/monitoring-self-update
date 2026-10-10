@@ -24,8 +24,10 @@ details in the JSON payload.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 DEFAULT_REPO = "mylab12345/Monitoring-Dashboard"
@@ -110,6 +112,35 @@ def check():
     return 0
 
 
+def _start_in_host(argv, branch):
+    """Launch update.sh as a transient systemd unit; return its name or None.
+
+    Started from the dashboard, a plain child process would inherit the
+    service mount namespace (where /usr and /etc can be read-only under an
+    older unit, so installing the helpers and the new unit fails) and the
+    monitoring.service cgroup (so update.sh's own `systemctl restart
+    monitoring` would kill it half-way). A transient unit runs in the host
+    namespace and outside that cgroup. Falls back (None) when systemd-run is
+    unavailable or too old for append: output (systemd < 240).
+    """
+    if os.geteuid() != 0 or not os.path.isdir("/run/systemd/system"):
+        return None
+    if not shutil.which("systemd-run"):
+        return None
+    unit = "monitoring-self-update-%d-%d" % (int(time.time()), os.getpid())
+    cmd = ["systemd-run", "--quiet", "--collect", "--unit", unit,
+           "--description", "Monitoring dashboard self-update (%s)" % branch,
+           "--property", "StandardInput=null",
+           "--property", "StandardOutput=append:" + UPDATE_LOG,
+           "--property", "StandardError=inherit"] + argv
+    try:
+        res = subprocess.run(cmd, shell=False, capture_output=True, text=True,
+                             timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return unit if res.returncode == 0 else None
+
+
 def start_update(branch):
     home = _installed_home()
     if not home:
@@ -129,6 +160,18 @@ def start_update(branch):
         log_fh = open(UPDATE_LOG, "ab")
     except OSError:
         log_fh = None
+    launched = _start_in_host(argv, branch)
+    if launched is not None:
+        if log_fh is not None:
+            log_fh.close()
+        print(json.dumps({
+            "result": "update started (unit %s); the dashboard service will "
+                      "restart automatically — wait about a minute and "
+                      "reload" % launched,
+            "unit": launched,
+            "log": UPDATE_LOG,
+        }))
+        return 0
     try:
         kwargs = {}
         if log_fh is not None:

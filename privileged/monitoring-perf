@@ -37,6 +37,12 @@ import shutil
 import subprocess
 import sys
 
+# Shared, root-owned helper module installed next to this script (optional).
+try:
+    import monitoring_hostns as hostns
+except ImportError:  # pragma: no cover - partial/old install
+    hostns = None
+
 CONF_FILE = "/etc/monitoring-perf.conf"
 ORIG_FILE = "/etc/monitoring-perf.orig"
 SYSCTL_DROPIN = "/etc/sysctl.d/99-monitoring-perf.conf"
@@ -407,6 +413,14 @@ def main(argv):
     if argv == ["--apply-at-boot"]:
         return apply_at_boot()
     if argv == ["--revert"]:
+        # /etc read-only in the service namespace (stale unit): persist the
+        # tuning by running the same validated argv in the host namespace.
+        if hostns is not None and hostns.available() and \
+                hostns.read_only_paths(("/etc",)):
+            code, _reason = hostns.run_in_host(os.path.realpath(__file__), argv,
+                                               "perf")
+            if code is not None:
+                return code
         print("\n".join(revert()))
         return 0
     if argv[:2] == ["--apply", "--profile"] and len(argv) in (3, 5, 7) \
@@ -433,6 +447,14 @@ def main(argv):
                 print(f"monitoring-perf: unknown option: {flag}",
                       file=sys.stderr)
                 return KERNEL_ERROR
+        # /etc read-only in the service namespace (stale unit): persist the
+        # tuning by running the same validated argv in the host namespace.
+        if hostns is not None and hostns.available() and \
+                hostns.read_only_paths(("/etc",)):
+            code, _reason = hostns.run_in_host(os.path.realpath(__file__), argv,
+                                               "perf")
+            if code is not None:
+                return code
         print("\n".join(apply_profile(profile, swappiness, iosched)))
         return 0
     print("usage: monitoring-perf --check | --apply --profile <balanced|performance|powersave> "
@@ -442,4 +464,6 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    if hostns is not None:
+        sys.exit(hostns.main_wrapper(main, sys.argv[1:]))
     sys.exit(main(sys.argv[1:]))

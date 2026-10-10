@@ -162,7 +162,15 @@ install_privileges() {
   mkdir -p "$PRIVILEGE_DIR"
   install -m 755 "$src_helper_dir"/monitoring-* "$PRIVILEGE_DIR/" \
     || { cp -f "$src_helper_dir"/monitoring-* "$PRIVILEGE_DIR/" && chmod 755 "$PRIVILEGE_DIR"/monitoring-*; }
+  # Shared module imported by the helpers (not executable, not in sudoers):
+  # lets them run a validated transaction in the host mount namespace when
+  # the running service's namespace is read-only.
+  if [ -f "$src_helper_dir/monitoring_hostns.py" ]; then
+    install -m 644 "$src_helper_dir/monitoring_hostns.py" "$PRIVILEGE_DIR/" \
+      || { cp -f "$src_helper_dir/monitoring_hostns.py" "$PRIVILEGE_DIR/" && chmod 644 "$PRIVILEGE_DIR/monitoring_hostns.py"; }
+  fi
   chown -R root:root "$PRIVILEGE_DIR"
+  chmod 755 "$PRIVILEGE_DIR"
   local sudo_src="$SRC/sudoers/monitoring"
   [ -f "$sudo_src" ] || die "sudoers/monitoring template missing from sources"
   install -m 440 "$sudo_src" "$SUDOERS_FILE" \

@@ -95,6 +95,37 @@ service mount namespace. v2.7.1 makes the dashboard fix this by itself:
   ("required filesystem is read-only: /usr, /etc") is preserved, and
   `detectReadOnlyMount()` also matches `ReadWritePaths` / `exit 78`.
 
+### 2.4.1 v2.7.2 — package operations no longer depend on the unit being current
+
+v2.7.1 still failed with exit 78 whenever the *running* service had a stale
+namespace (unit not yet patched, or patched but not restarted), and the
+repair itself had four defects. v2.7.2:
+
+- **Host-namespace execution.** `monitoring-package`, `monitoring-maintain
+  --repair/--fix-all` and `monitoring-perf --apply/--revert` detect read-only
+  package paths and re-run the *same validated argv* as a transient
+  `systemd-run` unit (`privileged/monitoring_hostns.py`). That unit runs in
+  the host mount namespace and outside the `monitoring.service` cgroup, so the
+  transaction succeeds immediately and a dashboard restart (needrestart,
+  self-repair, self-update) can no longer kill dpkg half-way. Output and exit
+  code are relayed through a root-only file in `/run/monitoring-helpers`.
+  Exit 78 now only means "no systemd" or "the host itself is read-only".
+- **Self-update** launches `update.sh` the same way, so it can install helpers
+  under `/usr/local` and the unit under `/etc` even from a stale namespace,
+  and survives its own `systemctl restart monitoring`.
+- **`-/boot -/efi`.** `ReadWritePaths=/usr /etc /boot /efi` made the service
+  fail to start (226/NAMESPACE) on every host without `/efi`. The unit and the
+  repair now use the ignore-if-missing prefix, and bare entries in installed
+  units are rewritten.
+- **Repair fixes.** Unique transient unit names (a second repair no longer
+  fails with "Unit … already exists"); the non-existent `systemctl verify`
+  call is replaced by a real check that systemd loaded the new directive; and
+  after the restart the helper waits for the service to stay up, restoring
+  the previous unit if it crash-loops.
+
+No permission was widened: the `monitoring` account still has no write access
+under /usr or /etc, no `sudo ALL`, and the sudoers allowlist is unchanged.
+
 ### 2.5 Honesty & safety guarantees (kept from the existing design)
 
 - All mutating work goes through whitelisted, argv-validating privileged

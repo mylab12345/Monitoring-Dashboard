@@ -8,15 +8,26 @@ exception: pacman autoremove enumerates orphans itself).
 
 The systemd unit intentionally keeps the dashboard process locked down while
 allowing the package helper's mount namespace to write the paths a real
-package transaction needs. If an older unit still presents /usr or /etc as
-read-only, fail with an actionable message instead of letting dpkg produce a
-misleading half-installed package state.
+package transaction needs. If the running service still presents /usr or
+/etc as read-only (older unit, or the unit was updated without a restart),
+the helper re-runs the same validated transaction as a transient systemd
+unit in the host mount namespace (see monitoring_hostns). Only when that is
+impossible - no systemd, or the host itself is mounted read-only - does it
+fail with exit 78 and an actionable message, instead of letting dpkg produce
+a misleading half-installed package state.
 """
 import os
 import re
 import shutil
 import subprocess
 import sys
+
+# Shared, root-owned helper module installed next to this script. Optional:
+# without it the helper keeps the old behaviour (exit 78 + guidance).
+try:
+    import monitoring_hostns as hostns
+except ImportError:  # pragma: no cover - partial/old install
+    hostns = None
 
 ACTIONS = {"update", "upgrade", "full-upgrade", "autoremove", "clean", "fix-broken"}
 MANAGERS = {"apt", "dnf", "yum", "zypper", "pacman", "apk"}
@@ -123,24 +134,53 @@ def _mount_is_read_only(path):
     return "ro" in options
 
 
-def _check_write_paths(action):
-    """Explain a read-only mount before apt/dpkg can corrupt its state."""
-    blocked = [path for path in WRITE_PATHS.get(action, ())
-               if _mount_is_read_only(path) is True]
+def _blocked_paths(action):
+    return [path for path in WRITE_PATHS.get(action, ())
+            if _mount_is_read_only(path) is True]
+
+
+def _check_write_paths(action, argv=None):
+    """Make sure the package paths are writable before apt/dpkg runs.
+
+    Returns True when the transaction may run here. When the service mount
+    namespace is read-only, the transaction is handed to a transient unit in
+    the host namespace; the process then exits with that unit's result via
+    SystemExit. False means the paths are genuinely not writable (exit 78).
+    """
+    blocked = _blocked_paths(action)
     if not blocked:
         return True
+    if hostns is not None and argv is not None and hostns.available():
+        print("monitoring-package: {} read-only in the service namespace; "
+              "running the transaction in the host namespace".format(
+                  ", ".join(blocked)), file=sys.stderr)
+        sys.stderr.flush()
+        code, reason = hostns.run_in_host(
+            os.path.realpath(__file__), argv, "package")
+        if code is not None:
+            raise SystemExit(code)
+        print("monitoring-package: host-namespace run unavailable: "
+              + str(reason), file=sys.stderr)
     print(
         "monitoring-package: required filesystem is read-only: "
         + ", ".join(blocked), file=sys.stderr)
+    if hostns is not None and hostns.in_host_namespace():
+        print(
+            "These paths are read-only on the host itself (not only in the "
+            "Monitoring service namespace). Repair/remount that filesystem "
+            "first (e.g. check dmesg for filesystem errors); do not chmod "
+            "/usr.", file=sys.stderr)
+        return False
     print(
         "This is a mount policy, not a file permission. If this is the "
         "Monitoring service namespace, install the updated monitoring.service "
-        "(it grants ReadWritePaths=/usr /etc /boot /efi to this helper), then "
-        "run systemctl daemon-reload and restart monitoring before retrying. "
-        "The dashboard can do this for you: open the Maintenance card and run "
-        "'Repair service mount namespace' (it performs these steps through "
-        "the monitoring service account). If the host itself is mounted "
-        "read-only, repair/remount that filesystem first; do not chmod /usr.",
+        "(it grants ReadWritePaths=/usr /etc -/boot -/efi to this helper), "
+        "then run systemctl daemon-reload and restart monitoring before "
+        "retrying. The dashboard can do this for you: open the Maintenance "
+        "card and run 'Repair service mount namespace' (it performs these "
+        "steps through the monitoring service account). If the host itself "
+        "is mounted read-only, repair/remount that filesystem first; do not "
+        "chmod /usr.",
         file=sys.stderr)
     return False
 
@@ -241,7 +281,7 @@ def main(argv):
     if action not in ACTIONS:
         print(f"monitoring-package: invalid action: {action}", file=sys.stderr)
         return 2
-    if not _check_write_paths(action):
+    if not _check_write_paths(action, argv):
         return READ_ONLY_EXIT
 
     # apt fix-broken is a three-pass operation with no injection surface.
@@ -259,4 +299,6 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    if hostns is not None:
+        sys.exit(hostns.main_wrapper(main, sys.argv[1:]))
     sys.exit(main(sys.argv[1:]))
