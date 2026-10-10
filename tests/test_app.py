@@ -715,6 +715,37 @@ class SelfRepairUnit(unittest.TestCase):
         # idempotent
         self.assertEqual(m._insert_rwp(patched), patched)
 
+    def test_has_rwp_accepts_ignore_missing_prefix(self):
+        m = self.mod
+        self.assertTrue(m._unit_has_rwp("[Service]\nReadWritePaths=/usr /etc -/boot -/efi\n"))
+        self.assertFalse(m._unit_needs_patch("[Service]\nReadWritePaths=/usr /etc -/boot -/efi\n"))
+        self.assertIn("-/efi", m.RWP_DIRECTIVE)
+        self.assertIn("-/boot", m.RWP_DIRECTIVE)
+
+    def test_bare_efi_is_rewritten_to_ignore_missing(self):
+        """A bare /efi entry makes the unit fail with 226/NAMESPACE on hosts
+        without /efi; the repair must rewrite it and keep other entries."""
+        m = self.mod
+        content = ("[Unit]\nDescription=x\n[Service]\nExecStart=/opt/monitoring/app.py\n"
+                   "ProtectSystem=full\nReadWritePaths=/usr /etc /boot /efi /var/lib/extra\n"
+                   "[Install]\nWantedBy=multi-user.target\n")
+        self.assertTrue(m._unit_has_rwp(content))
+        self.assertTrue(m._unit_needs_patch(content))
+        patched = m._insert_rwp(content)
+        self.assertIn("ReadWritePaths=/usr /etc -/boot -/efi /var/lib/extra", patched)
+        self.assertFalse(m._unit_needs_patch(patched))
+        self.assertEqual(m._insert_rwp(patched), patched)
+        # [Unit]/[Install] untouched
+        self.assertIn("WantedBy=multi-user.target", patched)
+
+    def test_transient_unit_names_are_unique(self):
+        import time as _t
+        a = self.mod._transient_unit_name()
+        _t.sleep(1.1)
+        b = self.mod._transient_unit_name()
+        self.assertNotEqual(a, b)
+        self.assertRegex(a, r"^monitoring-self-repair-apply-\d+-\d+$")
+
     def test_insert_rwp_without_service_section_refuses(self):
         self.assertIsNone(self.mod._insert_rwp("[Unit]\nDescription=x\n"))
 
@@ -839,7 +870,9 @@ class RepoConsistency(unittest.TestCase):
             txt = fh.read()
         self.assertIn("User=monitoring", txt)
         self.assertIn("ProtectSystem=full", txt)
-        self.assertIn("ReadWritePaths=/usr /etc /boot /efi", txt)
+        # "-" prefix: hosts without /efi (or /boot) must still start the unit
+        self.assertIn("ReadWritePaths=/usr /etc -/boot -/efi", txt)
+        self.assertNotRegex(txt, r"(?m)^ReadWritePaths=.*(?<![-\w])/efi\b")
         self.assertNotIn("NoNewPrivileges=true", txt)  # would break sudo helpers
         self.assertNotIn("RestrictSUIDSGID=true", txt)
 
@@ -1265,3 +1298,161 @@ class MaintainKernelLogic(unittest.TestCase):
         text = "\n".join(lines)
         self.assertIn("package paths are read-only", text)
         self.assertIn("monitoring-self-repair", text)
+
+
+class HostNamespaceEscape(unittest.TestCase):
+    """Package helpers must not fail when the running service still has a
+    read-only mount namespace: they hand the *same validated argv* to a
+    transient systemd unit in the host namespace (monitoring_hostns)."""
+
+    PRIV = os.path.join(REPO, "privileged")
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib
+        import importlib.machinery
+        import importlib.util
+        if cls.PRIV not in sys.path:
+            sys.path.insert(0, cls.PRIV)
+        cls.hostns = importlib.import_module("monitoring_hostns")
+        path = os.path.join(cls.PRIV, "monitoring-package")
+        loader = importlib.machinery.SourceFileLoader("monitoring_package_t", path)
+        spec = importlib.util.spec_from_loader("monitoring_package_t", loader)
+        cls.pkg = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.pkg)
+
+    def setUp(self):
+        os.environ.pop(self.hostns.ENV_FLAG, None)
+        os.environ.pop(self.hostns.ENV_STATUS, None)
+
+    tearDown = setUp
+
+    def test_package_helper_uses_shared_module(self):
+        self.assertIs(self.pkg.hostns, self.hostns)
+
+    def test_not_available_inside_transient_unit(self):
+        os.environ[self.hostns.ENV_FLAG] = "1"
+        self.assertFalse(self.hostns.available())
+
+    def test_report_status_only_writes_inside_run_dir(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = os.path.join(tmp, "run")
+            work = os.path.join(run_dir, "run-x")
+            os.makedirs(work)
+            outside = os.path.join(tmp, "status")
+            with patch.object(self.hostns, "RUN_DIR", run_dir):
+                os.environ[self.hostns.ENV_FLAG] = "1"
+                os.environ[self.hostns.ENV_STATUS] = outside
+                self.hostns.report_status(5)
+                self.assertFalse(os.path.exists(outside))
+                inside = os.path.join(work, "status")
+                os.environ[self.hostns.ENV_STATUS] = inside
+                self.hostns.report_status(5)
+                with open(inside) as fh:
+                    self.assertEqual(fh.read(), "5")
+
+    def test_blocked_paths_escape_to_host_namespace(self):
+        argv = ["--manager", "apt", "--action", "full-upgrade"]
+        with patch.object(self.pkg, "_blocked_paths", return_value=["/usr", "/etc", "/boot"]), \
+             patch.object(self.hostns, "available", return_value=True), \
+             patch.object(self.hostns, "run_in_host", return_value=(0, None)) as rih:
+            with self.assertRaises(SystemExit) as ctx:
+                self.pkg._check_write_paths("full-upgrade", argv)
+        self.assertEqual(ctx.exception.code, 0)
+        helper, passed_argv, label = rih.call_args[0]
+        self.assertEqual(passed_argv, argv)
+        self.assertEqual(label, "package")
+        self.assertTrue(helper.endswith("monitoring-package"))
+
+    def test_blocked_without_systemd_keeps_exit78_contract(self):
+        with patch.object(self.pkg, "_blocked_paths", return_value=["/usr"]), \
+             patch.object(self.hostns, "available", return_value=False):
+            self.assertFalse(self.pkg._check_write_paths(
+                "upgrade", ["--manager", "apt", "--action", "upgrade"]))
+
+    def test_host_itself_read_only_gets_host_guidance(self):
+        import io
+        os.environ[self.hostns.ENV_FLAG] = "1"
+        err = io.StringIO()
+        with patch.object(self.pkg, "_blocked_paths", return_value=["/usr"]), \
+             patch("sys.stderr", err):
+            self.assertFalse(self.pkg._check_write_paths("upgrade", ["x"]))
+        self.assertIn("read-only on the host itself", err.getvalue())
+
+    def test_run_in_host_relays_output_and_exit_code(self):
+        """End-to-end with fake systemd-run/systemctl: the transient side's
+        output reaches the caller and its exit code is propagated."""
+        import tempfile
+        import textwrap
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = os.path.join(tmp, "bin")
+            os.makedirs(bindir)
+            fake_run = os.path.join(bindir, "systemd-run")
+            with open(fake_run, "w") as fh:
+                fh.write(textwrap.dedent(f"""\
+                    #!{sys.executable}
+                    import os, subprocess, sys
+                    args = sys.argv[1:]; env = dict(os.environ); out = None
+                    while args and args[0].startswith("-"):
+                        flag = args.pop(0)
+                        if flag in ("--quiet", "--collect"):
+                            continue
+                        val = args.pop(0)
+                        if flag == "--setenv":
+                            k, _, v = val.partition("="); env[k] = v
+                        elif flag == "--property" and val.startswith("StandardOutput=file:"):
+                            out = val.split(":", 1)[1]
+                    fh = open(out, "ab")
+                    subprocess.Popen(args, env=env, stdout=fh, stderr=fh,
+                                     stdin=subprocess.DEVNULL, start_new_session=True)
+                    """))
+            fake_ctl = os.path.join(bindir, "systemctl")
+            with open(fake_ctl, "w") as fh:
+                fh.write("#!/bin/sh\necho inactive\nexit 3\n")
+            inner = os.path.join(tmp, "inner-helper")
+            with open(inner, "w") as fh:
+                fh.write(textwrap.dedent(f"""\
+                    #!{sys.executable}
+                    import sys
+                    sys.path.insert(0, {self.PRIV!r})
+                    import monitoring_hostns as h
+                    h.RUN_DIR = {os.path.join(tmp, "run")!r}
+                    def main(argv):
+                        print("transaction output", " ".join(argv))
+                        return 7
+                    sys.exit(h.main_wrapper(main, sys.argv[1:]))
+                    """))
+            for f in (fake_run, fake_ctl, inner):
+                os.chmod(f, 0o755)
+            run_dir = os.path.join(tmp, "run")
+            out_buf = tempfile.TemporaryFile()
+            fake_stdout = type("S", (), {"buffer": out_buf,
+                                         "write": lambda *a: None,
+                                         "flush": lambda *a: None})()
+            env_path = bindir + os.pathsep + os.environ.get("PATH", "")
+            with patch.dict(os.environ, {"PATH": env_path}), \
+                 patch.object(self.hostns, "RUN_DIR", run_dir), \
+                 patch.object(self.hostns, "available", return_value=True), \
+                 patch("sys.stdout", fake_stdout):
+                code, reason = self.hostns.run_in_host(inner, ["--a", "b"], "test")
+            self.assertIsNone(reason)
+            self.assertEqual(code, 7)
+            out_buf.seek(0)
+            self.assertIn(b"transaction output --a b", out_buf.read())
+            # the per-run work directory is cleaned up
+            self.assertEqual(os.listdir(run_dir), [])
+
+    def test_installers_ship_the_shared_module(self):
+        for script in ("install.sh", "update.sh"):
+            with open(os.path.join(REPO, script)) as fh:
+                self.assertIn("monitoring_hostns.py", fh.read(), script)
+
+    def test_privileged_writers_wire_the_escape(self):
+        for name in ("monitoring-package", "monitoring-maintain", "monitoring-perf"):
+            with open(os.path.join(self.PRIV, name)) as fh:
+                txt = fh.read()
+            self.assertIn("import monitoring_hostns as hostns", txt, name)
+            self.assertIn("hostns.main_wrapper(main", txt, name)
+        with open(os.path.join(self.PRIV, "monitoring-self-update")) as fh:
+            self.assertIn("systemd-run", fh.read())

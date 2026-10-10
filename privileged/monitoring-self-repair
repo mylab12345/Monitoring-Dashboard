@@ -6,8 +6,9 @@ and /boot read-only inside the service's mount namespace. The validated
 package helper (monitoring-package) refuses to run apt/dpkg (or dnf/rpm,
 pacman, ...) while those paths are read-only so an interrupted transaction can
 never leave half-installed packages. Older monitoring.service units did not
-grant ReadWritePaths=/usr /etc /boot /efi, so package operations fail with
-"required filesystem is read-only".
+grant ReadWritePaths=/usr /etc -/boot -/efi, so package operations fail with
+"required filesystem is read-only". (Current package helpers also escape a
+stale namespace on their own; this repair makes the unit itself correct.)
 
 This helper performs the remediation that error message describes - install
 the updated unit (surgical patch, preserving operator settings), daemon-reload
@@ -32,8 +33,13 @@ import time
 UNIT_PATH = "/etc/systemd/system/monitoring.service"
 PRIVILEGE_DIR = "/usr/local/lib/monitoring"
 REQUIRED_PATHS = ("/usr", "/etc", "/boot", "/efi")
-RWP_DIRECTIVE = "ReadWritePaths=/usr /etc /boot /efi"
+# /boot and /efi do not exist on every host (most Debian/Ubuntu systems have
+# no /efi). systemd refuses to start a unit whose ReadWritePaths= names a
+# missing path (status=226/NAMESPACE) unless the entry is prefixed with "-".
+OPTIONAL_PATHS = ("/boot", "/efi")
+RWP_DIRECTIVE = "ReadWritePaths=/usr /etc -/boot -/efi"
 RESTART_DELAY_S = 2
+HEALTH_SETTLE_S = 6  # seconds the restarted service must stay running
 EX_READ_ONLY = 78  # sysexits EX_CONFIG (same value as monitoring-package)
 
 
@@ -132,6 +138,13 @@ def _mount_ro(path):
     return "ro" in {p.strip() for p in out.strip().split(",")}
 
 
+def _transient_unit_name():
+    """Unique name per attempt: an elapsed timer from an earlier repair would
+    otherwise make systemd-run fail with "Unit ... already exists"."""
+    return "monitoring-self-repair-apply-{}-{}".format(int(time.time()),
+                                                        os.getpid())
+
+
 def _self_path():
     """Absolute path of this helper for the systemd-run escalation."""
     if sys.argv and sys.argv[0]:
@@ -172,8 +185,46 @@ def _unit_has_rwp(content):
         key, _, values = stripped.partition("=")
         if key.strip().lower() != "readwritepaths":
             continue
-        covered |= {v for v in values.split() if v}
+        covered |= {v.lstrip("-+") for v in values.split() if v}
     return all(p in covered for p in REQUIRED_PATHS)
+
+
+def _rwp_line_parts(line):
+    """(key, tokens) for a ReadWritePaths= line, else None."""
+    stripped = line.strip()
+    key, sep, values = stripped.partition("=")
+    if not sep or key.strip().lower() != "readwritepaths":
+        return None
+    return key, values.split()
+
+
+def _unit_has_unsafe_rwp(content):
+    """True when /boot or /efi is listed without the "-" (ignore-missing)
+    prefix - such a unit fails to start on hosts that lack the directory."""
+    for _, line in _service_lines(content):
+        parts = _rwp_line_parts(line)
+        if parts and any(t in OPTIONAL_PATHS for t in parts[1]):
+            return True
+    return False
+
+
+def _unit_needs_patch(content):
+    return not _unit_has_rwp(content) or _unit_has_unsafe_rwp(content)
+
+
+def _make_optional_safe(content):
+    """Rewrite bare /boot and /efi ReadWritePaths entries to -/boot, -/efi."""
+    if not _unit_has_unsafe_rwp(content):
+        return content
+    lines = content.splitlines()
+    for i, line in _service_lines(content):
+        parts = _rwp_line_parts(line)
+        if not parts:
+            continue
+        key, tokens = parts
+        tokens = ["-" + t if t in OPTIONAL_PATHS else t for t in tokens]
+        lines[i] = "{}={}".format(key.strip(), " ".join(tokens))
+    return "\n".join(lines) + "\n"
 
 
 def _insert_rwp(content):
@@ -183,6 +234,7 @@ def _insert_rwp(content):
     at the end of the [Service] section when there is no ProtectSystem line.
     Returns None when the unit has no [Service] section (refuse to guess).
     """
+    content = _make_optional_safe(content)
     if _unit_has_rwp(content):
         return content
     out = content.splitlines()
@@ -227,7 +279,7 @@ def _check():
         except OSError:
             content = None
     recognized = _unit_recognized(content)
-    needs_patch = bool(content) and recognized and not _unit_has_rwp(content)
+    needs_patch = bool(content) and recognized and _unit_needs_patch(content)
     systemd = _systemd_active()
     active = systemd and _service_active()
     stale = active and _service_stale(unit_mtime)
@@ -246,8 +298,8 @@ def _check():
                        "dashboard unit; refusing to modify it")
     else:
         if needs_patch:
-            message.append("installed unit is missing "
-                           "ReadWritePaths=/usr /etc /boot /efi")
+            message.append("installed unit is missing (or has an unsafe) "
+                           "ReadWritePaths=/usr /etc -/boot -/efi")
         if blocked:
             message.append("service mount namespace makes required package "
                            "paths read-only")
@@ -331,7 +383,7 @@ def _apply():
         return 1, ("{} does not look like the monitoring dashboard unit; "
                    "refusing to modify it".format(UNIT_PATH))
 
-    needs_patch = not _unit_has_rwp(content)
+    needs_patch = _unit_needs_patch(content)
     writable = _dir_writable(os.path.dirname(UNIT_PATH))
     if not writable:
         # Broken-service namespace: /etc is read-only even for root. Re-execute
@@ -346,7 +398,7 @@ def _apply():
         code, out, err = _capture(
             ["systemd-run", "--collect",
              "--on-active", "{}s".format(RESTART_DELAY_S),
-             "--unit", "monitoring-self-repair-apply",
+             "--unit", _transient_unit_name(),
              _self_path(), "--apply"],
             timeout=20)
         if code != 0:
@@ -372,22 +424,23 @@ def _apply():
         return 1, ("systemctl daemon-reload failed: {}"
                    .format((err or out or "").strip()))
 
-    # Never restart a working service on a broken unit: validate first. Very
-    # old systemd builds have no `systemctl verify` (Unknown command verb) —
-    # for those, fall back to the structural sanity of our own one-line patch
-    # (daemon-reload already re-reads and would have failed on a broken file).
-    vcode, vout, verr = _capture(["systemctl", "verify", "monitoring"],
-                                 timeout=30)
-    if vcode != 0 and "unknown command" not in (verr or "").lower():
+    # Never restart a working service on a broken unit: confirm that systemd
+    # actually loaded the patched unit and parsed the new directive.
+    load_state = _systemctl_show("LoadState")
+    loaded_rwp = _systemctl_show("ReadWritePaths")
+    if load_state != "loaded" or not all(p in loaded_rwp
+                                         for p in REQUIRED_PATHS):
         _restore_backup(backup)
-        return 1, ("updated unit failed validation (systemctl verify): {}"
-                   .format((verr or vout or "").strip()[:400]))
+        return 1, ("systemd did not load the updated unit (LoadState='{}', "
+                   "ReadWritePaths='{}'); restored the previous unit"
+                   .format(load_state, loaded_rwp))
     try:
         with open(UNIT_PATH, encoding="utf-8") as fh:
             patched_content = fh.read()
     except OSError as exc:
         return 1, "could not re-read {}: {}".format(UNIT_PATH, exc)
-    if not (_unit_recognized(patched_content) and _unit_has_rwp(patched_content)):
+    if not (_unit_recognized(patched_content)
+            and not _unit_needs_patch(patched_content)):
         _restore_backup(backup)
         return 1, "updated unit did not survive the patch; restored the backup"
 
@@ -398,7 +451,7 @@ def _apply():
     if not restart_needed:
         if backup:
             return 0, ("monitoring.service updated with "
-                       "ReadWritePaths=/usr /etc /boot /efi; no restart was "
+                       "ReadWritePaths=/usr /etc -/boot -/efi; no restart was "
                        "needed (service is not running) — it will pick up the "
                        "writable namespace when next started")
         return 0, ("monitoring.service is already correct; package paths are "
@@ -413,7 +466,7 @@ def _apply():
         code, out, err = _capture(
             ["systemd-run", "--collect",
              "--on-active", "{}s".format(RESTART_DELAY_S),
-             "--unit", "monitoring-self-repair-apply",
+             "--unit", _transient_unit_name(),
              _self_path(), "--apply"],
             timeout=20)
         if code != 0:
@@ -426,15 +479,51 @@ def _apply():
     # Host/transient context: restart directly, then verify the result.
     code, out, err = _capture(["systemctl", "restart", "monitoring"],
                               timeout=120)
-    if code != 0:
-        return 1, ("systemctl restart monitoring failed: {}"
-                   .format((err or out or "").strip()[:400]))
+    healthy, detail = (False, (err or out or "").strip()[:400]) if code != 0 \
+        else _wait_service_healthy()
+    if not healthy:
+        # A Type=simple restart "succeeds" before the namespace is built; a
+        # unit that cannot set up its namespace then crash-loops. Never leave
+        # the dashboard down: put the previous unit back and start it again.
+        if backup:
+            _restore_backup(backup)
+            _capture(["systemctl", "reset-failed", "monitoring"], timeout=10)
+            _capture(["systemctl", "restart", "monitoring"], timeout=120)
+            return 1, ("monitoring.service did not come up with the updated "
+                       "unit ({}); restored the previous unit and restarted "
+                       "it. Inspect: journalctl -u monitoring -n 50"
+                       .format(detail))
+        return 1, ("monitoring.service did not come up after the restart "
+                   "({}). Inspect: journalctl -u monitoring -n 50"
+                   .format(detail))
     rwp = _systemctl_show("ReadWritePaths")
-    if _service_active() and all(p in (rwp or "") for p in REQUIRED_PATHS):
+    if all(p in (rwp or "") for p in REQUIRED_PATHS):
         return 0, ("monitoring.service restarted; ReadWritePaths now covers "
                    "/usr /etc /boot /efi — package operations are writable")
     return 1, ("monitoring.service restarted but the new namespace was not "
                "confirmed (ReadWritePaths='{}')".format(rwp))
+
+
+def _wait_service_healthy(settle_s=HEALTH_SETTLE_S):
+    """After a restart: (True, '') once the service stays running, else
+    (False, reason). Detects namespace failures (226/NAMESPACE) that only
+    show up after systemctl restart already returned."""
+    deadline = time.monotonic() + settle_s
+    restarts = _systemctl_show("NRestarts")
+    while True:
+        time.sleep(1)
+        state = _systemctl_show("ActiveState")
+        sub = _systemctl_show("SubState")
+        now_restarts = _systemctl_show("NRestarts")
+        if state in ("failed", "inactive") or sub == "auto-restart" or \
+                (restarts and now_restarts and now_restarts != restarts):
+            return False, "state={}/{} result={} exit-status={}".format(
+                state, sub, _systemctl_show("Result"),
+                _systemctl_show("ExecMainStatus"))
+        if time.monotonic() >= deadline:
+            if state == "active" and sub == "running":
+                return True, ""
+            return False, "state={}/{}".format(state, sub)
 
 
 def main(argv):

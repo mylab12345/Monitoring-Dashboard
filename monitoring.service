@@ -34,7 +34,14 @@ ProtectSystem=full
 # monitoring user; only the root-owned, argument-validating helper can use
 # root privileges to write them. /var remains writable under ProtectSystem=full
 # for package databases, caches and logs.
-ReadWritePaths=/usr /etc /boot /efi
+# The "-" prefix is required for /boot and /efi: many hosts have no /efi (or
+# no separate /boot in containers), and systemd refuses to start a service
+# whose ReadWritePaths= names a missing path (status=226/NAMESPACE) unless
+# the entry is prefixed with "-".
+# If a running service still has an older, read-only namespace, the package
+# helpers do not fail: they run the validated transaction as a transient
+# systemd unit in the host namespace (privileged/monitoring_hostns.py).
+ReadWritePaths=/usr /etc -/boot -/efi
 ProtectHome=read-only
 PrivateTmp=true
 # Supplementary groups are granted via usermod during install, not here.
