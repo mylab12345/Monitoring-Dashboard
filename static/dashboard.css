@@ -1476,3 +1476,138 @@ select{
 .linklike{background:none;border:0;padding:0;color:var(--teal);font-size:inherit;cursor:pointer;text-decoration:underline}
 .linklike:hover{color:var(--cyan)}
 .mnt-perf-kv{margin-top:10px}
+
+/* ================================================================
+   10. VISUAL UPGRADE — aurora backdrop, spotlight cards, glowing
+       gauges, shimmer accents and staggered entrance motion.
+   Purely presentational: no markup or behaviour changes. Every
+   animation is disabled by the reduced-motion rule above.
+   ================================================================ */
+:root{
+  --aur-a:rgba(34,211,238,.30);
+  --aur-b:rgba(167,139,250,.27);
+  --aur-c:rgba(45,212,191,.22);
+  --spot-rgb:34,211,238;
+}
+:root[data-theme="light"]{
+  --aur-a:rgba(34,211,238,.26);
+  --aur-b:rgba(167,139,250,.22);
+  --aur-c:rgba(45,212,191,.20);
+  --spot-rgb:14,116,144;
+}
+
+/* Registered custom property so the spotlight can fade in smoothly. */
+@property --spot{syntax:'<color>';inherits:false;initial-value:transparent}
+
+/* ---- Aurora backdrop: three slow, GPU-composited blobs ---- */
+.bg-layer{overflow:hidden}
+.bg-layer::before,.bg-layer::after{
+  content:'';position:absolute;border-radius:50%;pointer-events:none;
+  filter:blur(80px);will-change:transform;opacity:.9;
+}
+.bg-layer::before{
+  width:52vmax;height:52vmax;right:-14vmax;top:-22vmax;
+  background:radial-gradient(circle,var(--aur-a) 0%,transparent 68%);
+  animation:auroraDrift1 28s ease-in-out infinite alternate;
+}
+.bg-layer::after{
+  width:44vmax;height:44vmax;left:-12vmax;bottom:-20vmax;
+  background:radial-gradient(circle,var(--aur-b) 0%,transparent 68%);
+  animation:auroraDrift2 34s ease-in-out infinite alternate;
+}
+.app-shell::before{
+  content:'';position:fixed;z-index:-1;left:40%;top:45%;width:36vmax;height:36vmax;border-radius:50%;
+  transform:translate(-50%,-50%);pointer-events:none;filter:blur(90px);will-change:transform;
+  background:radial-gradient(circle,var(--aur-c) 0%,transparent 70%);
+  animation:auroraDrift3 40s ease-in-out infinite alternate;
+}
+@keyframes auroraDrift1{
+  0%{transform:translate3d(0,0,0) scale(1)}
+  100%{transform:translate3d(-9vmax,7vmax,0) scale(1.18)}
+}
+@keyframes auroraDrift2{
+  0%{transform:translate3d(0,0,0) scale(1)}
+  100%{transform:translate3d(10vmax,-6vmax,0) scale(1.14)}
+}
+@keyframes auroraDrift3{
+  0%{transform:translate(-50%,-50%) translate3d(-4vmax,3vmax,0)}
+  100%{transform:translate(-50%,-50%) translate3d(5vmax,-4vmax,0)}
+}
+
+/* ---- Cards: cursor-following spotlight + lift on hover ---- */
+.card{
+  background:
+    radial-gradient(420px circle at var(--mx,50%) var(--my,0%),var(--spot),transparent 70%),
+    var(--surface);
+  transition:border-color .25s ease,box-shadow .3s ease,transform .3s var(--ease),--spot .45s ease;
+}
+.card.hoverable:hover{
+  --spot:rgba(var(--spot-rgb),.10);
+  border-color:rgba(var(--spot-rgb),.32);
+  box-shadow:var(--shadow-2),0 0 0 1px rgba(var(--spot-rgb),.06),0 18px 46px -20px rgba(var(--spot-rgb),.28);
+}
+.metric-card.hoverable:hover{transform:translateY(-2px)}
+.metric-card::after{opacity:.16;width:220px;height:220px;top:-90px;right:-90px}
+
+/* ---- Gauges: glowing arc in each metric's accent colour ---- */
+.ring-wrap .bar{filter:drop-shadow(0 0 5px var(--mc,rgba(34,211,238,.6)));transition:stroke-dashoffset .9s var(--ease),stroke .6s ease}
+.ring-wrap .track{opacity:.85}
+
+/* ---- Hero numbers: soft glow in the metric accent ---- */
+.metric-card .hero .val{text-shadow:0 0 28px color-mix(in srgb,var(--mc,#22d3ee) 35%,transparent)}
+:root[data-theme="light"] .metric-card .hero .val{text-shadow:none}
+
+/* ---- Topbar: animated hairline + gradient page title ---- */
+.topbar::after{
+  content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,transparent 0%,var(--cyan) 25%,var(--violet) 50%,var(--teal) 75%,transparent 100%);
+  background-size:200% 100%;opacity:.55;
+  animation:hairline 7s linear infinite;
+}
+@keyframes hairline{from{background-position:200% 0}to{background-position:-200% 0}}
+.topbar h2{
+  background:linear-gradient(110deg,var(--text) 35%,#5eead4 60%,#a5b4fc 85%);
+  background-size:220% 100%;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  animation:titleSheen 9s ease-in-out infinite alternate;
+}
+:root[data-theme="light"] .topbar h2{
+  background:linear-gradient(110deg,#16202f 35%,#0f766e 60%,#4338ca 85%);
+  background-size:220% 100%;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+}
+@keyframes titleSheen{from{background-position:0% 0}to{background-position:100% 0}}
+
+/* ---- Live chip and sidebar: subtle glow on the active item ---- */
+.live-chip{box-shadow:0 0 0 1px rgba(52,211,153,.10),0 6px 18px -10px rgba(52,211,153,.55)}
+.nav-btn.active{box-shadow:0 8px 22px -14px rgba(45,212,191,.7),inset 0 1px 0 rgba(255,255,255,.04)}
+.nav-btn.active svg{filter:drop-shadow(0 0 6px rgba(45,212,191,.55))}
+
+/* ---- System strip: traveling light sweep ---- */
+.sys-strip{position:relative;overflow:hidden;isolation:isolate}
+.sys-strip::before{
+  content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:linear-gradient(105deg,transparent 40%,rgba(94,234,212,.09) 50%,transparent 60%);
+  transform:translateX(-100%);animation:sweep 7s var(--ease) infinite;
+}
+@keyframes sweep{0%,55%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+
+/* ---- Primary buttons: glossy sheen on hover ---- */
+.btn-primary{position:relative;overflow:hidden;isolation:isolate}
+.btn-primary::after{
+  content:'';position:absolute;inset:0;z-index:-1;pointer-events:none;
+  background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,.5) 50%,transparent 70%);
+  transform:translateX(-120%);transition:transform .7s var(--ease);
+}
+.btn-primary:hover::after{transform:translateX(120%)}
+.btn-primary:hover{box-shadow:0 8px 26px -6px rgba(34,211,238,.6)}
+
+/* ---- Entrance: cards rise in with a gentle stagger on tab open ---- */
+@keyframes cardRise{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
+.tab-panel.active .grid > .card{animation:cardRise .6s var(--ease) backwards}
+.tab-panel.active .grid > .card:nth-child(2){animation-delay:.05s}
+.tab-panel.active .grid > .card:nth-child(3){animation-delay:.10s}
+.tab-panel.active .grid > .card:nth-child(4){animation-delay:.15s}
+.tab-panel.active .grid > .card:nth-child(5){animation-delay:.20s}
+.tab-panel.active .grid > .card:nth-child(n+6){animation-delay:.24s}
+
