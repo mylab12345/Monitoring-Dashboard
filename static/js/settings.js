@@ -9,7 +9,7 @@ async function fillHelp(){
   $('#helpVersion').textContent='v'+(v.version||'--');
   $('#helpHome').textContent=v.home||'--';
   $('#helpPython').textContent='Python '+(v.python||'--');
-  $('#helpUser').textContent=v.root?'root (full control)':'user'+(v.sudo?' (passwordless sudo)':'');
+  $('#helpUser').textContent=v.root?'root (full control)':'user'+(v.sudo?' (passwordless sudo'+(v.sudo_full_access?', full access':'')+')':'');
   $('#helpUrl').textContent=location.origin;
   if(typeof loadAppUpdate==='function')loadAppUpdate(true);
 }

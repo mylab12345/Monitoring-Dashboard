@@ -187,6 +187,9 @@ install_privileges() {
   else
     "$VISUDO_BIN" -cf "$SUDOERS_FILE" || die "sudoers validation failed: $SUDOERS_FILE"
   fi
+  log "sudoers installed: FULL passwordless sudo for '$MONITORING_USER' (NOPASSWD: ALL)."
+  log "  Any process running as this account is root-equivalent: keep the"
+  log "  dashboard localhost-bound or token-protected (see SECURITY.md)."
 }
 
 while [ $# -gt 0 ]; do

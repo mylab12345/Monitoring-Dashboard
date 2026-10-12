@@ -1,7 +1,11 @@
 """Safe command runners and input validators.
 
-All subprocesses are argv lists (never shell strings) and privileged
-operations go through whitelisted helper scripts under PRIVILEGE_DIR.
+All subprocesses are argv lists (never shell strings). Privileged
+operations go through the helper scripts under PRIVILEGE_DIR, which the
+full-access sudoers profile (/etc/sudoers.d/monitoring grants the
+"monitoring" account NOPASSWD: ALL) permits. The helper routing is an
+application-level convention for input validation and permission
+reporting, not a sudo-layer restriction.
 """
 import os
 import re
@@ -13,26 +17,42 @@ from .common import PRIVILEGE_DIR
 HAVE_SUDO = shutil.which("sudo") is not None
 
 
-def _sudo_list():
-    """Best-effort detection of passwordless sudo without running 'true'.
+def _parse_sudo_list_output(out):
+    """Detect a full-access grant in `sudo -l` output.
 
-    `sudo -n -l` only reports whether a passwordless sudo rule applies to the
-    caller; it does not grant or execute anything. It is never used to obtain
-    the `true` privilege.
+    The full-access profile is a `NOPASSWD: ALL` rule (any command, no
+    password). Absolute-path listings from the least-privilege profile
+    (e.g. `NOPASSWD: /usr/local/lib/monitoring/monitoring-kill`) and
+    look-alike command names (e.g. `/usr/bin/allocate`) must NOT match.
+    """
+    return bool(re.search(r"NOPASSWD:\s*ALL(?![\w/.-])", out or ""))
+
+
+def _sudo_probe():
+    """Best-effort probe of the caller's passwordless sudo grant.
+
+    `sudo -n -l` only reports what the caller may run; it does not grant
+    or execute anything. Returns (passwordless, full_access):
+      passwordless — some passwordless sudo rule applies (or we are root)
+      full_access  — a NOPASSWD: ALL rule applies (full-access profile)
+                    rather than a listing of specific commands
     """
     if os.geteuid() == 0:
-        return True
+        # Root needs no sudo; nothing is restricted for this process.
+        return True, True
     if not HAVE_SUDO:
-        return False
+        return False, False
     try:
         r = subprocess.run(["sudo", "-n", "-l"], capture_output=True,
                            text=True, timeout=5)
-        return r.returncode == 0
     except Exception:
-        return False
+        return False, False
+    if r.returncode != 0:
+        return False, False
+    return True, _parse_sudo_list_output(r.stdout)
 
 
-PASSWORDLESS_SUDO = _sudo_list()
+PASSWORDLESS_SUDO, SUDO_FULL_ACCESS = _sudo_probe()
 
 
 # Single source of truth for every privileged helper the dashboard may invoke.

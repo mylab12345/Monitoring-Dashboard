@@ -6,15 +6,16 @@ Useful as `monitoring check-privileges`. When run as the `monitoring` account
 
   * the running account / uid / groups
   * whether the sudoers fragment is present
+  * which sudo profile is active: full access (NOPASSWD: ALL) or the
+    least-privilege helper whitelist
   * whether each privileged helper exists
   * whether passwordless sudo actually allows each helper (best-effort)
-
-It never requires and never uses `sudo ALL`.
 """
 import grp
 import json
 import os
 import pwd
+import re
 import shutil
 import subprocess
 import sys
@@ -83,6 +84,30 @@ def _mount_status(path):
     return item
 
 
+def _sudo_grant():
+    """(passwordless, full_access) for the calling account.
+
+    `sudo -n -l` only reports what the caller may run; it grants nothing.
+    full_access is True when a NOPASSWD: ALL rule applies (the full-access
+    profile in /etc/sudoers.d/monitoring) rather than a listing of specific
+    whitelisted commands (the least-privilege profile).
+    """
+    if os.geteuid() == 0:
+        return True, True
+    sudo = shutil.which("sudo")
+    if not sudo:
+        return False, False
+    try:
+        r = subprocess.run([sudo, "-n", "-l"], capture_output=True,
+                           text=True, timeout=8)
+    except Exception:
+        return False, False
+    if r.returncode != 0:
+        return False, False
+    full = bool(re.search(r"NOPASSWD:\s*ALL(?![\w/.-])", r.stdout or ""))
+    return True, full
+
+
 def _sudo_check(helper):
     exe = os.path.join(PRIV_DIR, helper)
     if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
@@ -115,6 +140,10 @@ def main(argv):
             print("monitoring-privilege-check: --dir requires a path", file=sys.stderr)
             return 2
     pretty = "--json" not in argv
+    passwordless, full_access = _sudo_grant()
+    sudo_mode = ("full" if full_access
+                 else "whitelisted-helpers" if passwordless
+                 else "none")
     report = {
         "service_user": "monitoring",
         "uid": os.geteuid(),
@@ -123,6 +152,11 @@ def main(argv):
         "sudoers_file": SUDOERS_FILE,
         "sudoers_present": os.path.isfile(SUDOERS_FILE),
         "privilege_dir": PRIV_DIR,
+        "sudo_access": {
+            "passwordless": passwordless,
+            "full": full_access,
+            "mode": sudo_mode,
+        },
         "helpers": [],
     }
     for helper in HELPERS:
@@ -149,6 +183,15 @@ def main(argv):
         print(f"Groups: {', '.join(report['groups']) or '(none)'}")
         print(f"Sudoers fragment: {report['sudoers_file']} "
               f"({'present' if report['sudoers_present'] else 'missing'})")
+        if sudo_mode == "full":
+            print("Sudo grant: FULL — unrestricted passwordless root "
+                  "(NOPASSWD: ALL). Any process running as this account can "
+                  "create, modify or delete any resource on the host.")
+        elif sudo_mode == "whitelisted-helpers":
+            print("Sudo grant: whitelisted helper commands only "
+                  "(least-privilege profile)")
+        else:
+            print("Sudo grant: none (no passwordless sudo available)")
         print("Privileged helpers:")
         for h in report["helpers"]:
             status = "OK" if h["status"] == "ok" else h["status"]

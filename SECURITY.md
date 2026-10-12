@@ -27,15 +27,16 @@ We aim to acknowledge within 48h and provide a fix or mitigation within 7 days.
 ### Service Account
 
 - Runs as dedicated non-login system account `monitoring`
-- No shell, no home, minimal privileges
-- Supplementary groups (`systemd-journal`, `adm`, `libvirt`, `docker`, `kvm`) provide read-only access where possible instead of sudo
+- No shell, no home, minimal base privileges
+- Supplementary groups (`systemd-journal`, `adm`, `libvirt`, `docker`, `kvm`) provide read-only *data* access (journal, logs, libvirt, `/proc`, `/sys`) without needing sudo
 
 ### Privilege Escalation
 
-- Only **whitelisted helper scripts** in `/usr/local/lib/monitoring/` may be executed via passwordless sudo
-- Each helper validates its own arguments (PID range, unit-name regex, VM-name regex, disk-path ownership via `virsh domblklist`)
-- No `sudo ALL`, no `shell=True` anywhere
-- Sudoers file validated with `visudo -cf` during install
+- **Profile (operator-selected): FULL ACCESS.** `/etc/sudoers.d/monitoring` grants `monitoring ALL=(ALL:ALL) NOPASSWD: ALL` — unrestricted passwordless root. The account can create, modify and delete **any** resource on the host: services, packages, files, VMs, kernel state. Nothing is restricted at the sudo layer.
+- **Risk you accept with this profile:** any code execution as `monitoring` — a compromised dashboard, a stolen bearer token, an injected request, a rogue cron job — is equivalent to full root on the host. Mitigate by keeping the dashboard bound to `127.0.0.1` (default) or, on a LAN, **always** token-protected. Never expose it to untrusted networks.
+- The application itself still routes every operation through the helper scripts in `/usr/local/lib/monitoring/` (argv lists only — no `shell=True` anywhere — with per-helper argument validation: PID ranges, unit-name regex, VM-name regex, disk ownership via `virsh domblklist`). This is an application-level convention that keeps input validation and the UI's permission reporting intact; it is **not** a restriction on what the account may do.
+- **Least-privilege alternative:** the previous per-helper whitelist (19 absolute-path `NOPASSWD` entries, no `sudo ALL`) is preserved as a commented block inside `sudoers/monitoring`. Restore it by commenting out the full-access line, uncommenting the block, running `visudo -cf /etc/sudoers.d/monitoring` and restarting the service. Recommended for multi-user or exposed deployments.
+- Sudoers file validated with `visudo -cf` during install; the installer logs and verifies the active profile
 
 ### Authentication
 
@@ -74,7 +75,7 @@ We aim to acknowledge within 48h and provide a fix or mitigation within 7 days.
 2. **For LAN access**: `sudo bash install.sh --bind 0.0.0.0 --token <strong-random>`
 3. **Behind reverse proxy**: Configure TLS, forward `X-Forwarded-For`, keep token enabled
 4. **Firewall**: Keep closed unless needed; installer handles ufw/firewalld only when token-protected
-5. **Check privileges**: `monitoring check-privileges` or `GET /api/privileges`
+5. **Check privileges**: `monitoring check-privileges` or `GET /api/privileges` — confirms the active sudo profile (full access vs. helper whitelist)
 6. **Keep updated**: `sudo ./update.sh` after any code change
 
 ## Known Limitations
@@ -86,6 +87,6 @@ We aim to acknowledge within 48h and provide a fix or mitigation within 7 days.
 
 ## Audit
 
-- `tests/security_migration.sh` — 42 checks for injection, sudo, shell, permissions
-- `tests/test_app.py` — 67 regression tests including input validation, rate limiting, token auth
+- `tests/security_migration.sh` — 90 checks for injection, sudo profile, shell, permissions
+- `tests/test_app.py` — 121 regression tests including input validation, rate limiting, token auth, sudo-profile detection
 - Run: `bash tests/run_all.sh`

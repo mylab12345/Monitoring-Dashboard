@@ -2,9 +2,11 @@
 # ============================================================================
 #  Monitoring — security migration self-test
 #  Validates that the app no longer runs as root, uses argv-only subprocesses,
-#  installs a non-login service account, and only exposes whitelisted sudo
-#  helper commands (validated with visudo). Run as a normal user; root-only
-#  checks are reported as SKIP without failing.
+#  installs a non-login service account, and that the sudoers fragment matches
+#  the operator-selected privilege profile (full access: NOPASSWD: ALL, with
+#  the least-privilege helper whitelist preserved as a commented fallback;
+#  validated with visudo). Run as a normal user; root-only checks are reported
+#  as SKIP without failing.
 # ============================================================================
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,16 +52,26 @@ else
   bad "systemd unit is not configured for User=monitoring"
 fi
 
-# 4. sudoers fragment: absolute paths, no sudo ALL, NOPASSWD only
-if grep -Eq 'NOPASSWD:[[:space:]]*ALL|ALL[[:space:]]*=[[:space:]]*.*ALL' "$ROOT/sudoers/monitoring"; then
-  bad "sudoers fragment contains ALL"
+# 4. sudoers fragment: full-access grant (operator-selected profile)
+#    — exactly one active rule: unrestricted passwordless sudo for the
+#    service account, with the previous least-privilege whitelist preserved
+#    as a commented fallback so reverting is copy/paste.
+if grep -Eq '^monitoring[[:space:]]+ALL=\(ALL:ALL\)[[:space:]]+NOPASSWD:[[:space:]]+ALL[[:space:]]*$' "$ROOT/sudoers/monitoring"; then
+  ok "sudoers grants the service account full passwordless sudo (NOPASSWD: ALL)"
 else
-  ok "sudoers fragment has no ALL"
+  bad "sudoers fragment lacks the full-access grant 'monitoring ALL=(ALL:ALL) NOPASSWD: ALL'"
 fi
-if grep -qE '^[^#[:space:]].*ALL=.*NOPASSWD:[[:space:]]*[/]' "$ROOT/sudoers/monitoring"; then
-  ok "sudoers fragment uses absolute NOPASSWD commands"
+ACTIVE_RULES=$(grep -cE '^[^#[:space:]]' "$ROOT/sudoers/monitoring" || true)
+if [ "${ACTIVE_RULES:-0}" -eq 1 ]; then
+  ok "sudoers fragment has exactly one active rule"
 else
-  bad "sudoers fragment lacks absolute-path NOPASSWD entries"
+  bad "sudoers fragment must have exactly 1 active rule (found ${ACTIVE_RULES:-0})"
+fi
+if grep -q '^# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-systemctl' "$ROOT/sudoers/monitoring" \
+   && grep -q '^# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-snap' "$ROOT/sudoers/monitoring"; then
+  ok "least-privilege fallback whitelist is preserved (commented)"
+else
+  bad "least-privilege fallback block missing from sudoers/monitoring"
 fi
 
 # 5. visudo validation (skip if visudo unavailable)
