@@ -30,6 +30,11 @@ BLUEPRINTS = [
     ("monitor.diagnostics", "bp"),
     ("monitor.desktop", "bp"),
     ("monitor.vms", "bp"),
+    ("monitor.osinfo", "bp"),
+    ("monitor.notify", "bp"),
+    ("monitor.diskhealth", "bp"),
+    ("monitor.hostsec", "bp"),
+    ("monitor.automation", "bp"),
 ]
 
 
@@ -91,5 +96,15 @@ def create_app():
         except Exception as exc:  # noqa: BLE001
             LOG.exception("failed to start metrics sampler; continuing without history")
             LOAD_ERRORS.append({"module": "monitor.metrics.sampler", "error": str(exc)})
+
+    # Automation tick thread (schedules, maintenance windows, rules). Same
+    # defensive contract: a failure degrades to no automation, not a crash.
+    if "monitor.automation" in loaded_modules:
+        try:
+            from .automation import start_automation
+            start_automation(app)  # idempotent across repeated create_app()
+        except Exception as exc:  # noqa: BLE001
+            LOG.exception("failed to start automation thread; continuing without it")
+            LOAD_ERRORS.append({"module": "monitor.automation.thread", "error": str(exc)})
 
     return app

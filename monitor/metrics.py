@@ -59,6 +59,48 @@ def _prime_cpu():
         pass
 
 
+_minute_acc = {"key": 0, "rows": []}
+
+
+def _persist_tick(sample):
+    """Once per minute: roll up samples, record top processes, keep alerts in
+    sync with the thresholds. Every step is best-effort."""
+    try:
+        from . import store
+        if not store.available():
+            return
+        key = int(sample["t"] // 60)
+        acc = _minute_acc
+        if acc["key"] and key != acc["key"] and acc["rows"]:
+            rows = acc["rows"]
+            avg = {k: round(sum(r.get(k) or 0 for r in rows) / len(rows), 2)
+                   for k in ("cpu", "ram", "disk", "load1", "sent_bps",
+                             "recv_bps", "temp")}
+            try:
+                import psutil
+                swap = psutil.swap_memory().percent
+            except Exception:  # noqa: BLE001
+                swap = None
+            store.record_metric({
+                "t": acc["key"] * 60, "cpu": avg["cpu"], "ram": avg["ram"],
+                "swap": swap, "disk": avg["disk"], "load1": avg["load1"],
+                "rx": avg["recv_bps"], "tx": avg["sent_bps"],
+                "temp": avg["temp"] or None,
+            })
+            try:
+                from .processes import top_processes_snapshot
+                store.record_processes(top_processes_snapshot(limit=8))
+            except Exception:  # noqa: BLE001
+                pass
+            acc["rows"] = []
+        acc["key"] = key
+        acc["rows"].append(sample)
+        if len(acc["rows"]) > 120:  # safety cap (~2 min of 2s samples)
+            acc["rows"] = acc["rows"][-120:]
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _sampler_loop():
     import psutil
     psutil.cpu_percent(interval=None)  # prime
@@ -90,6 +132,13 @@ def _sampler_loop():
             }
             with _HISTORY["lock"]:
                 _HISTORY["samples"].append(sample)
+            # Persistent rollups + server-side threshold alerting ride along
+            # on the same tick; both are best-effort and cannot break sampling.
+            try:
+                _persist_tick(sample)
+                evaluate_alerts(sample)
+            except Exception:  # noqa: BLE001
+                pass
         except Exception:
             pass
         time.sleep(2)
@@ -142,6 +191,161 @@ def _pretty_distro():
     except Exception:
         pass
     return f"{os.uname().sysname} {os.uname().release}"
+
+
+def _psi():
+    """Pressure Stall Information from /proc/pressure (kernel 4.20+).
+
+    Returns {cpu/memory/io: {some: {avg10, avg60, avg300}, full: {...}}} or
+    None when the kernel does not expose PSI.
+    """
+    out = {}
+    for res in ("cpu", "memory", "io"):
+        entry = {}
+        try:
+            with open(f"/proc/pressure/{res}") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    vals = {}
+                    for tok in parts[1:]:
+                        if "=" in tok:
+                            k, v = tok.split("=", 1)
+                            try:
+                                vals[k] = float(v)
+                            except ValueError:
+                                pass
+                    if vals:
+                        entry[parts[0]] = vals
+        except Exception:  # noqa: BLE001 — PSI absent on older kernels
+            continue
+        if entry:
+            out[res] = entry
+    return out or None
+
+
+def _mem_breakdown():
+    """Memory detail from /proc/meminfo (page cache, slab, commit, ...)."""
+    wanted = ("MemTotal", "MemFree", "MemAvailable", "Buffers", "Cached",
+              "SReclaimable", "Shmem", "Slab", "SwapTotal", "SwapFree",
+              "CommitLimit", "Committed_AS")
+    out = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key = line.split(":", 1)[0]
+                if key in wanted:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            out[key.lower()] = int(parts[1]) * 1024  # bytes
+                        except ValueError:
+                            pass
+    except Exception:  # noqa: BLE001
+        return {}
+    return out
+
+
+_oom_cache = {"ts": 0, "data": None}
+
+
+def _oom_events():
+    """Recent OOM-killer activity (journal), cached 5 minutes."""
+    now = time.time()
+    if _oom_cache["data"] is not None and now - _oom_cache["ts"] < 300:
+        return _oom_cache["data"]
+    data = {"count": 0, "events": [], "known": False}
+    try:
+        from .commands import run, which
+        if which("journalctl"):
+            code, out, _ = run(["journalctl", "-k", "--since", "-24h",
+                                "--no-pager", "-o", "short"], timeout=10,
+                               sudo=False)
+            if code == 0 and out:
+                data["known"] = True
+                hits = [l for l in out.splitlines()
+                        if ("Out of memory" in l or "oom-kill" in l
+                            or "oom_reaper" in l)]
+                data["count"] = len(hits)
+                data["events"] = hits[-5:]
+    except Exception:  # noqa: BLE001
+        pass
+    _oom_cache["data"] = data
+    _oom_cache["ts"] = now
+    return data
+
+
+# Server-side threshold alerting (mirrors the UI defaults in core.js). The
+# operator may override them via the Automation tab; they live in the store.
+_DEFAULT_THRESHOLDS = {"cpuWarn": 80, "cpuCrit": 92, "ramWarn": 85,
+                       "ramCrit": 95, "diskWarn": 85, "diskCrit": 93,
+                       "tempWarn": 75}
+_alert_state = {}          # metric name -> current level (ok/warn/crit)
+_alert_notify_ts = {}      # metric name -> last notification time
+
+
+def _thresholds():
+    from . import store
+    cfg = store.kv_get("alert_thresholds", {}) or {}
+    out = dict(_DEFAULT_THRESHOLDS)
+    for key, val in cfg.items():
+        if key in out:
+            try:
+                out[key] = float(val)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _level_for(name, value, warn, crit):
+    if value is None:
+        return "ok"
+    if value >= crit:
+        return "crit"
+    if value >= warn:
+        return "warn"
+    return "ok"
+
+
+def evaluate_alerts(sample):
+    """Compare one metric sample against thresholds; record + notify on
+    transitions only (warn/crit entered, or recovery). Never raises."""
+    try:
+        from . import store, notify  # lazy: avoids import cycles at startup
+        th = _thresholds()
+        checks = (
+            ("cpu", "CPU usage", sample.get("cpu"), th["cpuWarn"], th["cpuCrit"]),
+            ("ram", "Memory usage", sample.get("ram"), th["ramWarn"], th["ramCrit"]),
+            ("disk", "Disk usage", sample.get("disk"), th["diskWarn"], th["diskCrit"]),
+            ("temp", "CPU temperature", sample.get("temp"), th["tempWarn"],
+             th["tempWarn"] + 15),
+        )
+        now = time.time()
+        for key, label, value, warn, crit in checks:
+            if value is None:
+                continue
+            level = _level_for(key, value, warn, crit)
+            prev = _alert_state.get(key, "ok")
+            _alert_state[key] = level
+            if level == prev:
+                continue
+            if level == "ok":
+                store.resolve_alert(label)
+                continue
+            msg = (f"{label} is {value}{'°C' if key == 'temp' else '%'} "
+                   f"({level == 'crit' and 'critical' or 'warning'} threshold: "
+                   f"{warn:g} / {crit:g})")
+            store.add_alert("critical" if level == "crit" else "warning",
+                            label, msg, value=value,
+                            threshold=crit if level == "crit" else warn)
+            # Cooldown: at most one notification per metric per 15 minutes.
+            if now - _alert_notify_ts.get(key, 0) > 900:
+                _alert_notify_ts[key] = now
+                notify.send_notification(
+                    f"Monitoring: {label} {level}", msg)
+    except Exception:  # noqa: BLE001 — alerting must never break sampling
+        pass
 
 
 def _battery():
@@ -218,6 +422,7 @@ def _build_status():
             "kernel": f"{os.uname().sysname} {os.uname().release}",
             "time": datetime.now().strftime("%H:%M:%S"),
             "version": APP_VERSION,
+            "psi": _psi(),
         }
         return data
     except Exception as e:
@@ -231,3 +436,51 @@ def api_status():
     if isinstance(data, dict) and "error" in data:
         return jsonify(data), 500
     return jsonify(data)
+
+
+@bp.route("/api/history/long")
+@rate_limit("30 per minute")
+def api_history_long():
+    """Persistent minute-rollup history for long-range charts (?hours=1..168).
+
+    Backed by the SQLite store, so day/week trends survive dashboard and
+    machine restarts (the in-memory /api/history ring only holds 60 minutes).
+    """
+    hours = min(max(_int_or(request.args.get("hours", 24), 24), 1), 168)
+    try:
+        from . import store
+        samples = store.metric_history(time.time() - hours * 3600, limit=400)
+        return jsonify({"samples": samples, "hours": hours,
+                        "resolution_s": 60,
+                        "available": store.available()})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/memory")
+@rate_limit("60 per minute")
+def api_memory():
+    """Memory breakdown (page cache/slab/commit) + recent OOM-killer events."""
+    try:
+        return jsonify({"breakdown": _mem_breakdown(), "oom": _oom_events(),
+                        "psi": _psi()})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/alerts/history")
+@rate_limit("60 per minute")
+def api_alerts_history():
+    """Persistent server-side alert history (?limit=1..500).
+
+    The browser-local alert log is convenient but per-device; this is the
+    authoritative record that survives restarts and is shared with
+    notifications.
+    """
+    try:
+        from . import store
+        limit = min(max(_int_or(request.args.get("limit", 50), 50), 1), 500)
+        return jsonify({"alerts": store.recent_alerts(limit),
+                        "available": store.available()})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500

@@ -108,6 +108,18 @@ service.
 
 **Alerts & Activity** — local threshold alerting (CPU/RAM/disk/temperature with warn & critical levels), alert bell with live breach count, full alert history with **severity filter (All / Critical / Warnings / Resolved)**, full-date timestamps, **CSV export**, and an audit trail of every action taken from the console (stored in your browser only, also CSV-exportable). Clearing either history asks for confirmation first.
 
+**OS handling & visibility (v2.8.0)**
+- **Persistent history (SQLite)** — minute-level metric rollups (7 days), process top-consumer snapshots, alert history and the server-side audit trail survive dashboard and machine restarts (`data/monitoring.db`; `MONITORING_DB` overrides the path)
+- **Pressure & memory detail** — PSI (`/proc/pressure` cpu/memory/io), page-cache/slab/commit breakdown and OOM-killer activity (24h) on the Overview
+- **Long-term charts** — 24h / 48h / 7d CPU & RAM trends from the persistent store
+- **Storage health** — inode usage per mount, SSD/TRIM status and on-demand SMART health checks per disk (read-only `monitoring-smart` helper)
+- **Process management** — per-process detail drawer (threads, cgroups/unit, I/O, open files, parent/children), process-tree view with subtree rollups, **renice / CPU-affinity** through the validated `monitoring-nice` helper (with post-action verification), and per-process resource history ("what caused the spike?")
+- **Service control deepened** — unit-type filter (services/timers/sockets/mounts/targets), **dependency blast radius** (requires + required-by), per-unit resource usage (cgroup accounting), inline unit logs — and **OpenRC** service control on Alpine-style hosts (`monitoring-rc` helper)
+- **Host security tab** — firewall/MAC/Secure-Boot posture, network exposure list, **kernel-hardening scorecard** with reversible `standard`/`hardened` profiles (`monitoring-sysctl` helper, originals saved for one-click revert), login sessions + SSH brute-force signals, package-integrity check (`debsums`/`rpm -V`) and **security-vs-regular update split**
+- **Automation tab** — outbound **notifications** (webhook / ntfy / Gotify) for threshold breaches and action results, **scheduled actions** (e.g. "full upgrade tonight at 02:00"), opt-in **maintenance windows**, **auto-remediation rules** (runaway-process alert/auto-renice, failed-service auto-restart with a per-hour budget) and a persistent run log
+- **OS facts & lifecycle** — distro family, package manager, init system, immutable/atomic detection and release lifecycle (EOL countdown) via `GET /api/osinfo`, with a capability matrix of what works on this machine
+- **New health checks** — time synchronisation, OOM activity and pending security updates in System Health
+
 **Processes** — top processes by CPU/RAM with search, adjustable fetch size (25/50/100), sortable columns (mouse **and keyboard** — headers are focusable, Enter/Space sorts, `aria-sort` announced), auto-refresh toggle, "Updated HH:MM:SS" stamp, **CSV export of the filtered view**, and a kill button with confirmation, duplicate-click protection and **post-kill verification** (the API confirms the PID is actually gone)
 
 **Services** — browse/filter/search systemd units with state filter chips, **sortable Unit/State columns**, pagination, optional auto-refresh, **CSV export**, and start / stop / restart / enable / disable actions with action-specific confirmations, duplicate-click protection and **post-action verification** (`systemctl is-active` / `is-enabled` is checked after every mutation and surfaced in the UI). A **permission banner** warns up front when the privileged helper is missing or denied.

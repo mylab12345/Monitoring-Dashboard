@@ -26,6 +26,10 @@ from unittest.mock import patch
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 os.environ.setdefault("MONITORING_HOME", REPO)
+# Hermetic store: service-action tests must not write audit rows into a
+# developer's runtime database (see tests/test_app.py).
+os.environ.setdefault("MONITORING_DB",
+                      os.path.join(REPO, "data", f"test-{os.getpid()}.db"))
 
 try:
     import app as app_mod

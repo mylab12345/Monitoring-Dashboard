@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+"""monitoring-snap - pre-action system snapshots through Timeshift.
+
+  create [--label TEXT]     timeshift --create --comments TEXT
+  list                      timeshift --list
+
+Only the timeshift CLI is used (argv, never a shell). Labels are restricted
+to a conservative character set. If timeshift is not installed the helper
+exits 3 (a distinct 'no snapshot backend' status) without touching anything.
+"""
+import re
+import shutil
+import subprocess
+import sys
+
+LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,60}$")
+
+
+def _capture(argv, timeout=600):
+    try:
+        r = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                           timeout=timeout, start_new_session=True)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+
+
+def main(argv):
+    if argv == ["--check"]:
+        print("monitoring-snap: ok")
+        return 0
+    # Validate argv BEFORE probing for timeshift so bad input always gets the
+    # standard "exit 2" rejection, regardless of what is installed.
+    label = "monitoring pre-action"
+    if argv == ["list"]:
+        mode = "list"
+    elif argv and argv[0] == "create":
+        if len(argv) == 3 and argv[1] == "--label":
+            if not LABEL_RE.match(argv[2]):
+                print("monitoring-snap: invalid label", file=sys.stderr)
+                return 2
+            label = argv[2]
+        elif len(argv) != 1:
+            print("monitoring-snap: usage create [--label TEXT]", file=sys.stderr)
+            return 2
+        mode = "create"
+    else:
+        print("monitoring-snap: usage create [--label TEXT] | list",
+              file=sys.stderr)
+        return 2
+    if not shutil.which("timeshift"):
+        print("monitoring-snap: timeshift is not installed", file=sys.stderr)
+        return 3
+    if mode == "list":
+        code, out, err = _capture(["timeshift", "--list"])
+    else:
+        code, out, err = _capture(
+            ["timeshift", "--create", "--comments", label, "--yes"])
+    if out:
+        print(out.strip()[-4000:])
+    if err:
+        print(err.strip()[-2000:], file=sys.stderr)
+    return code if code >= 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
