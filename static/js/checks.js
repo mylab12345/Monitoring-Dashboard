@@ -179,7 +179,7 @@ async function offerSelfRepair(afterRepair){
       +'<div class="kv"><span>Impact</span><strong>dashboard restarts for a few seconds</strong></div>'
       +'</div>',
     confirmText:'Repair & restart',cancelText:'Cancel',danger:true,icon:'wrench',
-    note:'Runs through the monitoring service account\'s whitelisted sudo helper — no root shell.'
+    note:'Runs through the monitoring service account\'s validated sudo helper.'
   });
   if(!ok)return false;
   toast('Repairing service mount namespace — the dashboard will restart briefly…','info');

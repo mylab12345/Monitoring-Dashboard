@@ -45,9 +45,15 @@ ReadWritePaths=/usr /etc -/boot -/efi
 ProtectHome=read-only
 PrivateTmp=true
 # Supplementary groups are granted via usermod during install, not here.
-# The service account uses passwordless sudo only for the whitelisted
-# helper commands installed in /usr/local/lib/monitoring. It does not get
-# root/ALL and is never permitted unrestricted filesystem write access.
+# SUDO PROFILE (operator-selected): the service account holds UNRESTRICTED
+# passwordless sudo — /etc/sudoers.d/monitoring grants it
+# `monitoring ALL=(ALL:ALL) NOPASSWD: ALL` — so it can create, modify and
+# delete any resource on the host. The application still routes its own
+# operations through the validated helper commands installed in
+# /usr/local/lib/monitoring (application-level input validation, not a
+# sudo-layer restriction). The sandbox flags above still apply to this
+# unit's mount namespace regardless of sudo, which is why ReadWritePaths
+# above remains necessary for package operations started from the service.
 
 [Install]
 WantedBy=multi-user.target

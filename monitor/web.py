@@ -5,7 +5,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, render_template
 
-from .commands import PASSWORDLESS_SUDO
+from .commands import PASSWORDLESS_SUDO, SUDO_FULL_ACCESS
 from .common import APP_HOME, APP_VERSION, LOAD_ERRORS, PRIVILEGE_DIR
 from .security import rate_limit
 
@@ -47,6 +47,7 @@ def api_version():
         "euid": os.geteuid(),
         "root": os.geteuid() == 0,
         "sudo": PASSWORDLESS_SUDO,
+        "sudo_full_access": SUDO_FULL_ACCESS,
         "privilege_dir": PRIVILEGE_DIR,
         "service_user": "monitoring",
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

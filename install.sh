@@ -131,16 +131,24 @@ install_privileges() {
   else
     "$VISUDO_BIN" -cf "$SUDOERS_FILE" || die "sudoers validation failed: $SUDOERS_FILE"
   fi
-  # Best-effort proof that the service account can use its NOPASSWD rules.
+  # Best-effort proof that the service account can use its NOPASSWD rules,
+  # and that the intended profile (full access) is what sudo actually sees.
+  log "sudoers installed: FULL passwordless sudo for '$MONITORING_USER' (NOPASSWD: ALL)."
+  log "  Any process running as this account is root-equivalent: keep the"
+  log "  dashboard localhost-bound or token-protected (see SECURITY.md)."
   if command -v runuser >/dev/null 2>&1 && id "$MONITORING_USER" >/dev/null 2>&1; then
-    if runuser -u "$MONITORING_USER" -- sudo -n -l >/dev/null 2>&1; then
-      log "Service account passwordless sudo check: OK"
+    if runuser -u "$MONITORING_USER" -- sudo -n -l 2>/dev/null | grep -q 'NOPASSWD: ALL'; then
+      log "Service account sudo check: OK — full access (NOPASSWD: ALL)"
+    elif runuser -u "$MONITORING_USER" -- sudo -n -l >/dev/null 2>&1; then
+      log "Service account passwordless sudo check: OK (helper whitelist)"
     else
       warn "Service account could not list passwordless sudo privileges (run: monitoring check-privileges)"
     fi
   elif command -v su >/dev/null 2>&1 && id "$MONITORING_USER" >/dev/null 2>&1; then
-    if su -s /bin/sh -c 'sudo -n -l' "$MONITORING_USER" >/dev/null 2>&1; then
-      log "Service account passwordless sudo check: OK"
+    if su -s /bin/sh -c 'sudo -n -l' "$MONITORING_USER" 2>/dev/null | grep -q 'NOPASSWD: ALL'; then
+      log "Service account sudo check: OK — full access (NOPASSWD: ALL)"
+    elif su -s /bin/sh -c 'sudo -n -l' "$MONITORING_USER" >/dev/null 2>&1; then
+      log "Service account passwordless sudo check: OK (helper whitelist)"
     else
       warn "Service account could not list passwordless sudo privileges (run: monitoring check-privileges)"
     fi

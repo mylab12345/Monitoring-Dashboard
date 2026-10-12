@@ -1,34 +1,64 @@
 # /etc/sudoers.d/monitoring
 #
 # Privileged operations granted to the Monitoring service account.
-# The service runs as the non-login system user "monitoring"; it does NOT
-# get root/ALL. The only thing it may escalate is the explicitly whitelisted
-# helper scripts below, each of which validates its own arguments and never
-# invokes a shell.
 #
-# Read-only system information (journalctl, virsh/list, ss, df, /proc, /sys,
-# /var/log) is handled with group access (systemd-journal/adm/libvirt/docker)
-# and does not require sudo.
+# FULL-ACCESS PROFILE (operator-selected, 2026-10)
+# ==================================================================
+# The service runs as the non-login system user "monitoring". This fragment
+# grants that account UNRESTRICTED passwordless root:
+#
+#   - it may run any command, as any user/group, without a password
+#   - it can create, modify and delete any resource on the host: services,
+#     packages, files, VMs, kernel state — nothing is restricted at the
+#     sudo layer
+#
+# This profile is intended for trusted, single-operator machines (lab /
+# personal hosts). Read-only system information (journalctl, virsh list,
+# ss, df, /proc, /sys, /var/log) still goes through supplementary group
+# access (systemd-journal/adm/libvirt/docker) and does not need sudo.
+#
+# RISK (accept deliberately): with NOPASSWD: ALL, ANY code execution as the
+# "monitoring" user — a compromised dashboard, a stolen API token, an
+# injected request — is equivalent to full root on the host. Keep the
+# dashboard bound to 127.0.0.1, or token-protected on a LAN you fully
+# trust. See SECURITY.md before exposing it further.
+#
+# The application itself still routes its own operations through the
+# validated helper scripts in /usr/local/lib/monitoring/ (argv-only,
+# argument-validating, never a shell) — that is an application-level
+# convention which keeps input validation and the UI's permission
+# reporting intact; it is no longer a sudo-layer restriction.
 #
 # Validate after installing/changing:
 #   visudo -cf /etc/sudoers.d/monitoring
+#
+# ==================================================================
+# LEAST-PRIVILEGE PROFILE (previous default)
+# ==================================================================
+# To restore the original model — only the whitelisted helper scripts
+# below, each validating its own arguments and never invoking a shell —
+# comment out the full-access line above and uncomment this block, then
+# run: sudo visudo -cf /etc/sudoers.d/monitoring && sudo systemctl
+# restart monitoring
+#
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-systemctl
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-self-repair
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-package
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-maintain
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-perf
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-self-update
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-journal-vacuum
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-clean-old-logs
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm-config
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-qemu
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-kill
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-zombie-clean
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-privilege-check
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-nice
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-smart
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-sysctl
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-rc
+# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-snap
 
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-systemctl
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-self-repair
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-package
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-maintain
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-perf
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-self-update
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-journal-vacuum
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-clean-old-logs
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-vm-config
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-qemu
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-kill
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-zombie-clean
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-privilege-check
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-nice
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-smart
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-sysctl
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-rc
-monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/monitoring-snap
+monitoring ALL=(ALL:ALL) NOPASSWD: ALL

@@ -672,31 +672,33 @@ class HelperValidation(unittest.TestCase):
 
 
 class SudoersCoverage(unittest.TestCase):
-    """Every whitelisted helper must have exactly one sudoers grant.
-
-    The dashboard probes each PRIVILEGED_HELPERS member through passwordless
-    sudo; a helper missing from sudoers/monitoring would show as "denied" on
-    real installs even though the app expects it to work — and a stale line
-    for a removed helper would silently widen sudo. Both directions are
-    pinned here so the three lists (allowlist, sudoers, privilege report)
-    cannot drift apart.
+    """The sudoers fragment grants the monitoring account FULL passwordless
+    sudo (operator-selected profile), and the previous least-privilege
+    whitelist is preserved as a commented fallback so reverting is
+    copy/paste. The dashboard still routes its own operations through the
+    validated helpers in monitor/commands.PRIVILEGED_HELPERS — that is an
+    application-level convention, pinned separately below so the three
+    lists (allowlist, helpers, privilege report) cannot drift apart.
     """
 
-    def test_sudoers_covers_allowlist_exactly(self):
-        from monitor.commands import PRIVILEGED_HELPERS
+    def test_sudoers_grants_full_access_only(self):
         with open(os.path.join(REPO, "sudoers", "monitoring")) as fh:
             lines = [l.strip() for l in fh if l.strip() and not l.strip().startswith("#")]
-        self.assertTrue(lines, "sudoers/monitoring has no rules")
-        granted = set()
-        for line in lines:
-            m = re.fullmatch(
-                r"monitoring ALL=\(root\) NOPASSWD: /usr/local/lib/monitoring/([A-Za-z0-9][A-Za-z0-9_.-]*)",
-                line)
-            self.assertIsNotNone(m, f"unexpected sudoers line: {line!r}")
-            granted.add(m.group(1))
-        self.assertEqual(granted, set(PRIVILEGED_HELPERS),
-                         f"sudoers/allowlist drift: only-in-sudoers={granted - set(PRIVILEGED_HELPERS)} "
-                         f"only-in-allowlist={set(PRIVILEGED_HELPERS) - granted}")
+        self.assertEqual(
+            lines,
+            ["monitoring ALL=(ALL:ALL) NOPASSWD: ALL"],
+            "sudoers/monitoring must contain exactly one active rule: the "
+            "full-access grant 'monitoring ALL=(ALL:ALL) NOPASSWD: ALL'")
+
+    def test_least_privilege_fallback_is_complete(self):
+        from monitor.commands import PRIVILEGED_HELPERS
+        with open(os.path.join(REPO, "sudoers", "monitoring")) as fh:
+            text = fh.read()
+        for helper in PRIVILEGED_HELPERS:
+            self.assertIn(
+                f"# monitoring ALL=(root) NOPASSWD: /usr/local/lib/monitoring/{helper}",
+                text,
+                f"least-privilege fallback is missing a commented grant for {helper}")
 
     def test_privilege_check_helper_lists_all_helpers(self):
         import importlib.machinery
@@ -708,6 +710,43 @@ class SudoersCoverage(unittest.TestCase):
         loader.exec_module(mod)
         from monitor.commands import PRIVILEGED_HELPERS
         self.assertEqual(set(mod.HELPERS), set(PRIVILEGED_HELPERS))
+
+
+class SudoFullAccessDetection(unittest.TestCase):
+    """_parse_sudo_list_output must recognise the full-access grant
+    (NOPASSWD: ALL) without false positives from absolute-path helper
+    listings or look-alike command names."""
+
+    def _parse(self, text):
+        from monitor.commands import _parse_sudo_list_output
+        return _parse_sudo_list_output(text)
+
+    def test_full_access_listing(self):
+        self.assertTrue(self._parse(
+            "User monitoring may run the following commands on host:\n"
+            "    (ALL : ALL) NOPASSWD: ALL\n"))
+
+    def test_full_access_plain_runas(self):
+        self.assertTrue(self._parse(
+            "User monitoring may run the following commands on host:\n"
+            "    (ALL) NOPASSWD: ALL\n"))
+
+    def test_full_access_among_other_commands(self):
+        self.assertTrue(self._parse("    (root) NOPASSWD: ALL, /bin/ls"))
+
+    def test_helper_whitelist_is_not_full_access(self):
+        self.assertFalse(self._parse(
+            "User monitoring may run the following commands on host:\n"
+            "    (root) NOPASSWD: /usr/local/lib/monitoring/monitoring-systemctl, "
+            "/usr/local/lib/monitoring/monitoring-kill\n"))
+
+    def test_lookalike_names_are_not_full_access(self):
+        self.assertFalse(self._parse(
+            "    (root) NOPASSWD: /usr/bin/allocate, NOPASSWD: ALLURA\n"))
+
+    def test_empty_and_none(self):
+        self.assertFalse(self._parse(""))
+        self.assertFalse(self._parse(None))
 
 
 class SelfRepairUnit(unittest.TestCase):

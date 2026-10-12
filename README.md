@@ -8,7 +8,7 @@ Works on **any Linux flavour** — Linux Mint, Ubuntu, Debian, Fedora, RHEL/Rock
 
 ## 🚀 Install (global one-liner)
 
-The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **creates a dedicated non-login system account `monitoring`**, installs only the explicitly whitelisted sudo helpers in `/etc/sudoers.d/monitoring` (validated with `visudo`), **installs the app** to `/opt/monitoring`, registers it as a **system service running as `monitoring`**, installs the **desktop app** (menu shortcut + autostart) and adds a **`monitoring` CLI**:
+The installer **detects your OS**, **downloads & installs all required dependencies** (python3, venv/pip, flask, psutil, libvirt/qemu tooling), **creates a dedicated non-login system account `monitoring`**, grants it **full passwordless sudo** in `/etc/sudoers.d/monitoring` (validated with `visudo`; a commented least-privilege helper whitelist is included for reverting — see [SECURITY.md](SECURITY.md)), **installs the app** to `/opt/monitoring`, registers it as a **system service running as `monitoring`**, installs the **desktop app** (menu shortcut + autostart) and adds a **`monitoring` CLI**:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mylab12345/Monitoring-Dashboard/main/install.sh | sudo bash
@@ -38,10 +38,12 @@ shell with a GUI:
   `sudo bash install.sh --bind 0.0.0.0 --token <strong-password>` so the dashboard is protected. The installer only opens the firewall port when you bind to
   a non-loopback address **and** a token is set, and warns loudly if you try to expose without a token.
 - **Privilege model:** the service runs as a dedicated non-login `monitoring`
-  account. Privileged operations (systemd, packages, journal vacuum, kill,
-  libvirt/qemu) go through whitelisted, argument-validating helper commands
-  granted via absolute-path `NOPASSWD` sudo entries — never `sudo ALL`, never
-  a shell.
+  account which holds **unrestricted passwordless sudo** (`NOPASSWD: ALL` — an
+  operator-selected full-access profile, intended for trusted single-operator
+  machines). The app's own operations (systemd, packages, journal vacuum, kill,
+  libvirt/qemu) still go through its argument-validating helper commands —
+  argv-only, never a shell — and the previous least-privilege whitelist is
+  preserved as a commented fallback in `sudoers/monitoring`.
 - **API calls with curl:** `curl -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/status`
 
 ## 🖥️ Standalone Desktop App
@@ -193,7 +195,7 @@ monitoring-app          # Desktop app launcher      -> /usr/local/bin/monitoring
 monitoring-app.desktop  # Menu shortcut/autostart   -> /usr/share/applications + /etc/xdg/autostart
 monitoring.service      # systemd unit template (runs as the monitoring account)
 openrc/monitoring       # OpenRC script (Alpine etc.)
-privileged/             # sudo helper scripts (validated argv, no shell, no sudo ALL)
+privileged/             # helper scripts the app calls (validated argv, no shell)
 sudoers/monitoring      # exact sudoers fragment for the service account
 VERSION                # App version (shown in the dashboard)
 ```
@@ -215,13 +217,13 @@ import, an undefined helper) aborted **everything** — this actually shipped on
 ## 🔐 Notes
 
 - The service runs as the dedicated **non-login system account `monitoring`**, never as root. It binds `127.0.0.1:8050` by default (localhost only), so only expose it to networks you trust with `--bind 0.0.0.0 --token`. There is **no login by design**: this is a single-user, standalone console — keep it on localhost or a trusted LAN.
-- Elevated operations are limited to specific helper scripts under `/usr/local/lib/monitoring` authorised by `/etc/sudoers.d/monitoring` with `NOPASSWD` and **absolute paths only**. There is **no `sudo ALL`**, and the helpers validate every argument and never use a shell.
+- Elevated operations: the service account holds **full passwordless sudo** (`monitoring ALL=(ALL:ALL) NOPASSWD: ALL` in `/etc/sudoers.d/monitoring`) — it can create, modify and delete any resource on the host. The application itself still calls its helper scripts under `/usr/local/lib/monitoring` (which validate every argument and never use a shell), and `monitoring check-privileges` / `GET /api/privileges` report the active profile. A least-privilege whitelist (helper-specific grants only) is preserved as a commented block in `sudoers/monitoring` if you want to tighten a multi-user or exposed deployment.
 - Read-only information (journals, logs, libvirt list/detail, `ss`, `df`, `/proc`/`/sys`) is obtained through group access (`systemd-journal`, `adm`, `libvirt`, `docker`, `kvm`) instead of root. The installer adds those groups only when they exist on the host.
 - Package upgrades are the exception that needs controlled system writes. The service keeps `ProtectSystem=full`, but explicitly grants the root-only package helper `ReadWritePaths=/usr /etc -/boot -/efi` (the `-` lets the unit start on hosts without `/boot` or `/efi`); `/var` remains writable for package databases and caches. This is a mount-namespace rule, **not** a request to chmod `/usr` or make the `monitoring` account root.
 - If the running service still has an older read-only namespace, the package, kernel-repair, performance and self-update helpers no longer fail: they run the same validated command as a transient `systemd-run` unit in the host namespace (outside the service cgroup, so a dashboard restart cannot interrupt dpkg). Exit 78 is only reported when that is impossible (no systemd) or when the host filesystem itself is read-only.
 - If `upgrade-packages` / **Fix Broken** / **Full Upgrade** / **Fix All** reports `Read-only file system` (exit 78 — "required filesystem is read-only"), the dashboard repairs it **automatically**: the fix endpoints detect exit 78, run the whitelisted `monitoring-self-repair` helper (patches the installed unit with `ReadWritePaths=/usr /etc /boot /efi`, `systemctl daemon-reload`, schedules the restart through systemd), then wait for the dashboard to come back and **retry the failed action once** — no root shell needed. The Maintenance card also still offers the manual **Repair service mount namespace** button. If the dashboard itself cannot reach writable filesystems (host genuinely mounted read-only), fall back to the manual path: `sudo ./update.sh` from this checkout (or `sudo /opt/monitoring/update.sh --remote`), then `sudo systemctl daemon-reload && sudo systemctl restart monitoring`. Confirm the diagnosis with `monitoring check-privileges`, `GET /api/privileges` or `GET /api/self-repair`; retry **Fix Broken** after the package filesystem is writable.
 - Every maintenance endpoint returns the helper exit code and a failure response when a command did not complete. Package mutations are serialized so Update, Upgrade and Fix Broken cannot race the same package database.
-- Check what the service is allowed to do with **`monitoring check-privileges`**; the dashboard also exposes `GET /api/privileges`, including package filesystem mount status.
+- Check what the service is allowed to do with **`monitoring check-privileges`**; the dashboard also exposes `GET /api/privileges`, including the active sudo profile (full access vs. helper whitelist) and package filesystem mount status.
 - For VM management as a regular user: `sudo usermod -aG libvirt $USER`, then re-login.
 - Change the port any time: edit `/etc/monitoring.env` then `monitoring restart`, or reinstall with `install.sh --port N`.
 

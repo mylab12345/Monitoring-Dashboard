@@ -15,11 +15,12 @@ traceback, so a `git pull`/update can never leave the operator guessing.
 
 Run:  python3 app.py   (binds 127.0.0.1:$MONITORING_PORT by default, secure)
 Requirements: flask, psutil  (see requirements.txt)
-Privileges:   the service runs as the non-login account "monitoring".
-              Privileged controls (systemd/package/journal/libvirt/qemu/kill)
-              go through installed helper commands that the account may
-              execute passwordlessly via sudo. No shell is ever used and no
-              sudo ALL is granted.
+Privileges:   the service runs as the non-login account "monitoring", which
+              holds unrestricted passwordless sudo (NOPASSWD: ALL — see
+              sudoers/monitoring; a least-privilege whitelist is included
+              there as a commented fallback). The app's own controls still
+              go through the validated helper commands under
+              /usr/local/lib/monitoring; no shell is ever used.
 """
 import logging
 import os

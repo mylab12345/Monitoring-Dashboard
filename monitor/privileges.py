@@ -5,8 +5,8 @@ import pwd
 
 from flask import Blueprint, jsonify
 
-from .commands import (PASSWORDLESS_SUDO, PRIVILEGED_HELPERS, mount_status,
-                       privileged_tool, run)
+from .commands import (PASSWORDLESS_SUDO, PRIVILEGED_HELPERS,
+                       SUDO_FULL_ACCESS, mount_status, privileged_tool, run)
 from .common import SUDOERS_FILE, _cached, PRIVILEGE_DIR
 from .security import rate_limit
 
@@ -41,6 +41,24 @@ def _privilege_status():
         "sudoers_present": os.path.isfile(SUDOERS_FILE),
         "privilege_dir": PRIVILEGE_DIR,
         "helpers": [],
+        "sudo_access": {
+            "passwordless": PASSWORDLESS_SUDO,
+            "full": SUDO_FULL_ACCESS,
+            "mode": ("full" if SUDO_FULL_ACCESS
+                     else "whitelisted-helpers" if PASSWORDLESS_SUDO
+                     else "none"),
+            "note": (
+                "Unrestricted passwordless sudo (NOPASSWD: ALL): any process "
+                "running as the service account can create, modify or delete "
+                "any resource as root. Keep the dashboard localhost-bound or "
+                "token-protected."
+                if SUDO_FULL_ACCESS else
+                "Privileged operations are limited to the whitelisted helper "
+                "scripts (least-privilege profile)."
+                if PASSWORDLESS_SUDO else
+                "No passwordless sudo is available to this account."
+            ),
+        },
     }
     for gid in os.getgroups():
         try:
