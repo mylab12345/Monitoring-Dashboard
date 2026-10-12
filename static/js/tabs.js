@@ -1,4 +1,4 @@
-const TAB_NAMES=['overview','processes','network','services','vms','logs','alerts','troubleshooting','settings','help','maintain'];
+const TAB_NAMES=['overview','processes','network','services','vms','logs','alerts','troubleshooting','settings','help','maintain','security','automation'];
 // Tab loaders are lazy thunks (not direct function references) so that:
 //   * load order between files stops mattering, and
 //   * a missing/broken loader only fails when that tab is opened, not at boot.
@@ -13,7 +13,9 @@ const TAB_LOADERS={
   troubleshooting:()=>loadTroubleshooting(),
   settings:()=>renderSettings(),
   help:()=>fillHelp(),
-  maintain:()=>loadMaintain(true)
+  maintain:()=>loadMaintain(true),
+  security:()=>loadSecurity(),
+  automation:()=>loadAutomation()
 };
 let currentTab='overview';
 function runTabLoader(name,panel){

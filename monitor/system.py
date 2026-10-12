@@ -96,6 +96,42 @@ def _build_checks():
                         "detail": f"{len(zombies)} zombies"})
     except Exception:
         pass
+    # --- OS handling additions: time sync, OOM activity, security updates ---
+    try:
+        from .metrics import _oom_events
+        oom = _oom_events()
+        if oom.get("known"):
+            results.append({
+                "name": "OOM Activity",
+                "status": "warn" if oom.get("count") else "ok",
+                "detail": (f"{oom['count']} OOM-killer events in 24h"
+                           if oom.get("count") else "no OOM events in 24h")})
+    except Exception:
+        pass
+    try:
+        code, out, err = run(["timedatectl", "show", "-p", "NTPSynchronized",
+                              "--value"], timeout=6)
+        synced = (out or "").strip().lower()
+        if code == 0 and synced in ("yes", "no"):
+            results.append({
+                "name": "Time Sync",
+                "status": "ok" if synced == "yes" else "warn",
+                "detail": ("NTP clock synchronised" if synced == "yes"
+                           else "clock NOT synchronised — TLS, logs and "
+                                "package keys can misbehave")})
+    except Exception:
+        pass
+    try:
+        from .hostsec import _security_updates
+        sec = _security_updates()
+        if sec.get("security_known") and sec.get("security_count"):
+            results.append({
+                "name": "Security Updates",
+                "status": "warn",
+                "detail": f"{sec['security_count']} security update(s) "
+                          f"pending ({sec['manager']})"})
+    except Exception:
+        pass
     return results
 
 

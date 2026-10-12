@@ -30,6 +30,10 @@ from unittest.mock import patch
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 os.environ.setdefault("MONITORING_HOME", REPO)
+# Keep the test run hermetic: the SQLite store must not mix test audit/alert
+# rows into a developer's runtime database.
+os.environ.setdefault("MONITORING_DB",
+                      os.path.join(REPO, "data", f"test-{os.getpid()}.db"))
 
 try:
     import app as app_mod
@@ -618,13 +622,51 @@ class HelperValidation(unittest.TestCase):
         self.assertEqual(self._helper("monitoring-self-repair", "--bogus").returncode, 2)
         self.assertEqual(self._helper("monitoring-self-repair").returncode, 2)
 
+    def test_nice_validation(self):
+        self.assertEqual(self._helper("monitoring-nice", "renice", "1", "5").returncode, 2)   # pid 1
+        self.assertEqual(self._helper("monitoring-nice", "renice", "abc", "5").returncode, 2)
+        self.assertEqual(self._helper("monitoring-nice", "renice", "50", "99").returncode, 2)  # nice range
+        self.assertEqual(self._helper("monitoring-nice", "explode", "50", "5").returncode, 2)
+        self.assertEqual(self._helper("monitoring-nice", "affinity", "50", "$(id)").returncode, 2)
+        self.assertEqual(self._helper("monitoring-nice", "affinity", "50", "1;rm -rf /").returncode, 2)
+        self.assertEqual(self._helper("monitoring-nice", "renice", "50").returncode, 2)
+        self.assertEqual(self._helper("monitoring-nice", "--check", "extra").returncode, 2)
+
+    def test_smart_validation(self):
+        self.assertEqual(self._helper("monitoring-smart", "health", "/etc/passwd").returncode, 2)
+        self.assertEqual(self._helper("monitoring-smart", "health", "sda;id").returncode, 2)
+        self.assertEqual(self._helper("monitoring-smart", "explode", "sda").returncode, 2)
+        self.assertEqual(self._helper("monitoring-smart", "health").returncode, 2)
+        self.assertEqual(self._helper("monitoring-smart", "health", "../../../etc/shadow").returncode, 2)
+
+    def test_sysctl_validation(self):
+        self.assertEqual(self._helper("monitoring-sysctl", "--bogus").returncode, 2)
+        self.assertEqual(self._helper("monitoring-sysctl", "--apply", "--profile", "turbo").returncode, 2)
+        self.assertEqual(self._helper("monitoring-sysctl", "--apply").returncode, 2)
+        self.assertEqual(self._helper("monitoring-sysctl", "--apply", "--extra").returncode, 2)
+        self.assertEqual(self._helper("monitoring-sysctl", "--check", "extra").returncode, 2)
+
+    def test_rc_validation(self):
+        self.assertEqual(self._helper("monitoring-rc", "start", "$(id)").returncode, 2)
+        self.assertEqual(self._helper("monitoring-rc", "explode", "sshd").returncode, 2)
+        self.assertEqual(self._helper("monitoring-rc", "add", "sshd", "evilrunlevel").returncode, 2)
+        self.assertEqual(self._helper("monitoring-rc", "add", "-oProxy=x", "default").returncode, 2)
+        self.assertEqual(self._helper("monitoring-rc", "start").returncode, 2)
+
+    def test_snap_validation(self):
+        self.assertEqual(self._helper("monitoring-snap", "create", "--label", "bad label!").returncode, 2)
+        self.assertEqual(self._helper("monitoring-snap", "create", "--label", "$(id)").returncode, 2)
+        self.assertEqual(self._helper("monitoring-snap", "explode").returncode, 2)
+        self.assertEqual(self._helper("monitoring-snap", "create", "--label").returncode, 2)
+
     def test_all_helpers_check(self):
         for name in ("monitoring-systemctl", "monitoring-self-repair", "monitoring-package",
                      "monitoring-maintain", "monitoring-perf", "monitoring-self-update",
                      "monitoring-journal-vacuum", "monitoring-clean-old-logs",
                      "monitoring-vm", "monitoring-vm-config", "monitoring-qemu",
                      "monitoring-kill", "monitoring-zombie-clean",
-                     "monitoring-privilege-check"):
+                     "monitoring-privilege-check", "monitoring-nice", "monitoring-smart",
+                     "monitoring-sysctl", "monitoring-rc", "monitoring-snap"):
             r = self._helper(name, "--check")
             self.assertEqual(r.returncode, 0, f"{name} --check failed: {r.stderr}")
 

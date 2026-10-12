@@ -26,6 +26,8 @@ function openPalette(){
     {g:'Go to',label:'Alerts & Activity',icon:'pulse',hint:MOD+'7',run:()=>showTab('alerts')},
     {g:'Go to',label:'Diagnose & Troubleshooting',icon:'zap',hint:MOD+'8',run:()=>showTab('troubleshooting')},
     {g:'Go to',label:'System & Kernel Tool',icon:'wrench',run:()=>showTab('maintain')},
+    {g:'Go to',label:'Security',icon:'shield',run:()=>showTab('security')},
+    {g:'Go to',label:'Automation',icon:'clock',run:()=>showTab('automation')},
     {g:'Go to',label:'Settings',icon:'gear',hint:MOD+'9',run:()=>showTab('settings')},
     {g:'Go to',label:'Help & About',icon:'help',hint:MOD+'0',run:()=>showTab('help')},
     {g:'Actions',label:'Refresh current view',icon:'refresh',hint:'R',run:refreshCurrent},
@@ -87,6 +89,7 @@ function refreshCurrent(){
 }
 function refreshAll(){
   updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();loadOverviewHogs();
+  loadOsHealth();loadDiskHealth();loadLongHistory();
   loadProcesses();loadServices();loadVMs();loadNetwork();loadLogs();
   if(currentTab==='troubleshooting')loadTroubleshooting(true);
   if(currentTab==='maintain')loadMaintain(true);
@@ -165,6 +168,7 @@ toggleLogWrap(); // apply wrap setting
 // visit via TAB_LOADERS — booting all of them fired ~11 requests up front,
 // most for panels the user could not see.
 updateStatus();updateChecks();loadHistory();loadSystemInfo();loadDisks();loadPorts();loadOverviewHogs();
+loadOsHealth();loadDiskHealth();loadLongHistory();
 restartTimers();
 // /api/checks shells out to apt/dpkg/systemctl/journalctl — the most expensive
 // endpoint here. It was the only timer without a visibility guard, so it kept

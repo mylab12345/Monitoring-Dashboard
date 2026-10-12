@@ -52,6 +52,11 @@ PRIVILEGED_HELPERS = frozenset({
     "monitoring-kill",
     "monitoring-zombie-clean",
     "monitoring-privilege-check",
+    "monitoring-nice",
+    "monitoring-smart",
+    "monitoring-sysctl",
+    "monitoring-rc",
+    "monitoring-snap",
 })
 
 

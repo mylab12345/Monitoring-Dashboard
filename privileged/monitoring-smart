@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""monitoring-smart - read-only SMART health queries for the monitoring UI.
+
+  health <disk>       smartctl -H -A /dev/<disk>
+  attributes <disk>   smartctl -A /dev/<disk>
+
+<disk> must match the fixed device-name pattern (sda, nvme0n1, mmcblk0, ...);
+anything else is rejected before smartctl is touched. No writes ever happen.
+"""
+import re
+import shutil
+import subprocess
+import sys
+
+DISK_RE = re.compile(r"^(sd[a-z]+|hd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+|mmcblk\d+)$")
+
+
+def _capture(argv, timeout=30):
+    try:
+        r = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                           timeout=timeout, start_new_session=True)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+
+
+def main(argv):
+    if argv == ["--check"]:
+        print("monitoring-smart: ok")
+        return 0
+    if len(argv) != 2 or argv[0] not in ("health", "attributes"):
+        print("monitoring-smart: usage health|attributes <disk>", file=sys.stderr)
+        return 2
+    disk = argv[1]
+    if not DISK_RE.match(disk):
+        print("monitoring-smart: invalid disk name", file=sys.stderr)
+        return 2
+    if not shutil.which("smartctl"):
+        print("monitoring-smart: smartctl is not installed", file=sys.stderr)
+        return 1
+    argv2 = ["smartctl", "-H", "-A", f"/dev/{disk}"] \
+        if argv[0] == "health" else ["smartctl", "-A", f"/dev/{disk}"]
+    code, out, err = _capture(argv2)
+    if out:
+        print(out.strip())
+    if err:
+        print(err.strip(), file=sys.stderr)
+    # smartctl exits bit-encoded (0 ok, 1-2 disk health flags, else failure)
+    return code if 0 <= code <= 2 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

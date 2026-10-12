@@ -57,6 +57,13 @@ def _audit(event, **fields):
         LOG.info("action=%s%s%s", event, " " if details else "", details)
     except Exception:
         pass
+    # Persistent server-side audit trail (best effort — never raise).
+    try:
+        from . import store
+        store.add_audit(event, " ".join(f"{k}={v}" for k, v in fields.items()
+                                        if v is not None) or None)
+    except Exception:
+        pass
 
 
 def _read_version():

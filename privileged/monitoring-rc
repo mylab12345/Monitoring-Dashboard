@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""monitoring-rc - bounded OpenRC service control for the monitoring UI.
+
+  start|stop|restart <service>          rc-service <service> <action>
+  add|delete <service> <runlevel>       rc-update add|delete <service> <runlevel>
+
+Service names and runlevels are validated against fixed patterns; the helper
+never invokes a shell. On non-OpenRC systems the rc-service/rc-update binaries
+are simply absent and the helper reports failure without side effects.
+"""
+import re
+import subprocess
+import sys
+
+NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9@.\-_]{0,200}$")
+RUNLEVELS = {"sysinit", "boot", "default", "nonetwork", "shutdown"}
+ACTIONS = {"start", "stop", "restart"}
+
+
+def _capture(argv, timeout=60):
+    try:
+        r = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                           timeout=timeout, start_new_session=True)
+        return r.returncode, r.stdout or "", r.stderr or ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, "", str(exc)
+
+
+def main(argv):
+    if argv == ["--check"]:
+        print("monitoring-rc: ok")
+        return 0
+    if len(argv) == 2 and argv[0] in ACTIONS:
+        action, name = argv
+        if not NAME_RE.match(name) or name.startswith("-"):
+            print("monitoring-rc: invalid service name", file=sys.stderr)
+            return 2
+        code, out, err = _capture(["rc-service", name, action])
+    elif len(argv) == 3 and argv[0] in ("add", "delete"):
+        verb, name, runlevel = argv
+        if not NAME_RE.match(name) or name.startswith("-"):
+            print("monitoring-rc: invalid service name", file=sys.stderr)
+            return 2
+        if runlevel not in RUNLEVELS:
+            print("monitoring-rc: invalid runlevel", file=sys.stderr)
+            return 2
+        code, out, err = _capture(
+            ["rc-update", "add" if verb == "add" else "delete", name, runlevel])
+    else:
+        print("monitoring-rc: usage start|stop|restart <svc> | "
+              "add|delete <svc> <runlevel>", file=sys.stderr)
+        return 2
+    if out:
+        print(out.strip())
+    if err:
+        print(err.strip(), file=sys.stderr)
+    return code if code >= 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

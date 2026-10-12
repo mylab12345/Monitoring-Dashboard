@@ -26,6 +26,9 @@ requirements.txt.bak
 *.log
 logs/
 
+# Persistent SQLite store (runtime data — never committed)
+data/
+
 # Coverage
 .coverage
 coverage/

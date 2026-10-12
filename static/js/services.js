@@ -1,5 +1,8 @@
-let svcData=[],svcAvailable=true,svcFilter='all',svcPage=0;
+let svcData=[],svcAvailable=true,svcFilter='all',svcPage=0,svcType='service';
 const SVC_PAGE_SIZE=12;
+function svcTypeChanged(v){
+  svcType=v||'service';svcPage=0;loadServices();
+}
 $$('#svcFilter .seg-btn').forEach(b=>b.addEventListener('click',()=>{
   $$('#svcFilter .seg-btn').forEach(x=>{
     const on=x===b;
@@ -10,7 +13,8 @@ $$('#svcFilter .seg-btn').forEach(b=>b.addEventListener('click',()=>{
 }));
 async function loadServices(){
   try{
-    const d=await fetchJSON('/api/services');
+    const q=svcType&&svcType!=='service'?'?type='+encodeURIComponent(svcType):'';
+    const d=await fetchJSON('/api/services'+q);
     if(!d)throw new Error('the API did not respond');
     svcAvailable=!!d.available;
     svcData=d.services||[];
@@ -60,7 +64,7 @@ const svcIconBtn=(unit,act,ic,t,danger)=>'<button class="icon-btn svc-action'+(d
 function renderServices(){
   const tb=$('#svcRows');
   if(!tb)return;
-  if(!svcAvailable){tb.innerHTML='<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">'+icon('gear',22)+'</div><strong>systemctl not available</strong><span class="dim">This system does not use systemd.</span></div></td></tr>';$('#svcPager').hidden=true;return;}
+  if(!svcAvailable){tb.innerHTML='<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">'+icon('gear',22)+'</div><strong>No service manager detected</strong><span class="dim">This system uses neither systemd nor OpenRC.</span></div></td></tr>';$('#svcPager').hidden=true;return;}
   $$('#svcTable th.sortable').forEach(th=>{
     const k=th.dataset.key;
     const arrow=th.querySelector('.arrow');
@@ -84,6 +88,7 @@ function renderServices(){
       +'<td><span class="pill '+pill+'">'+esc(s.active)+'</span></td>'
       +'<td class="mono dim" style="font-size:.7rem">'+esc(s.sub)+'</td>'
       +'<td><span class="row-actions">'
+        +'<button class="icon-btn svc-info" data-unit=\"'+esc(s.unit)+'\" title=\"Unit details\" aria-label=\"Details for '+esc(s.unit)+'\">'+icon('info',12)+'</button>'
         +svcIconBtn(s.unit,'start','play','Start')
         +svcIconBtn(s.unit,'stop','stop','Stop')
         +svcIconBtn(s.unit,'restart','restart','Restart')
@@ -94,6 +99,9 @@ function renderServices(){
   // Bind via data attributes to avoid inline JS injection via unit names
   $$('#svcRows .svc-action').forEach(b=>{
     b.addEventListener('click',()=>svcAction(b.dataset.unit,b.dataset.action));
+  });
+  $$('#svcRows .svc-info').forEach(b=>{
+    b.addEventListener('click',()=>showSvcDetail(b.dataset.unit));
   });
 }
 // Descriptions shown in the confirmation dialog for disruptive actions.
@@ -133,3 +141,40 @@ async function svcAction(name,action){
 // ================================================================
 // VMs
 // ================================================================
+
+// ================================================================
+// Unit details: resource usage + dependency blast radius + unit logs
+// ================================================================
+async function showSvcDetail(unit){
+  try{
+    toast('Loading unit details…','info');
+    const [usage,deps,logs]=await Promise.all([
+      fetchJSON('/api/service/usage?name='+encodeURIComponent(unit)).catch(()=>null),
+      fetchJSON('/api/service/deps?name='+encodeURIComponent(unit)).catch(()=>null),
+      fetchJSON('/api/service/logs?name='+encodeURIComponent(unit)+'&lines=40').catch(()=>null)
+    ]);
+    const row=(k,v)=>'<div class="kv"><span>'+esc(k)+'</span><strong>'+esc(String(v==null?'—':v))+'</strong></div>';
+    let html='';
+    if(usage&&usage.available){
+      html+=row('State',(usage.active_state||'')+' / '+(usage.sub_state||''))
+        +row('CPU time',usage.cpu_seconds!=null?usage.cpu_seconds+' s':'n/a (cgroup accounting off)')
+        +row('Memory',usage.memory_bytes!=null?(usage.memory_bytes/1048576).toFixed(1)+' MB':'n/a')
+        +row('Tasks',usage.tasks!=null?usage.tasks:'n/a')
+        +row('Restarts (NRestarts)',usage.restarts!=null?usage.restarts:'n/a');
+    }else{
+      html+='<div class="dim" style="font-size:.75rem;margin-bottom:8px">Resource usage unavailable on this init system.</div>';
+    }
+    if(deps&&deps.available){
+      const slim=t=>String(t||'').split('\n').slice(0,10).join('\n');
+      html+='<div class="dim" style="margin:8px 0 4px"><b>Requires (blast radius)</b></div>'
+        +'<pre style="font-size:.68rem;max-height:110px;overflow:auto;white-space:pre-wrap">'+esc(slim(deps.requires))+'</pre>'
+        +'<div class="dim" style="margin:8px 0 4px"><b>Required by</b></div>'
+        +'<pre style="font-size:.68rem;max-height:110px;overflow:auto;white-space:pre-wrap">'+esc(slim(deps.required_by))+'</pre>';
+    }
+    if(logs&&logs.logs){
+      html+='<div class="dim" style="margin:8px 0 4px"><b>Recent unit log</b></div>'
+        +'<pre style="font-size:.68rem;max-height:160px;overflow:auto;white-space:pre-wrap">'+esc(String(logs.logs).slice(-4000))+'</pre>';
+    }
+    await openModal({title:'Unit details — '+unit,html,confirmText:'Close',cancelText:'Close',icon:'gear'});
+  }catch(e){toast('Details unavailable: '+(e&&e.message||'request failed'),'err');}
+}
