@@ -17,8 +17,6 @@
   }catch(e){document.documentElement.dataset.theme='dark';}
 })();
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="style" href="{{ url_for('static', filename='dashboard.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
 <link rel="icon" href="{{ url_for('static', filename='icon.png') }}">
@@ -161,6 +159,7 @@
         <span class="sub" id="pageSub">Live system metrics &amp; health</span>
       </div>
       <div class="topbar-right">
+        <button class="btn btn-sm" id="focusBtn" type="button" aria-pressed="false" onclick="toggleFocusMode()" title="Hide navigation and maintenance shortcuts">Focus mode</button>
         <span class="live-chip" id="liveChip"><span class="pulse"></span><span id="clock">--:--:--</span></span>
         <select class="refreshSel" title="Refresh interval" onchange="setRefresh(this.value)" aria-label="Refresh interval">
           <option value="2000">2s</option>
@@ -184,10 +183,19 @@
     </header>
 
     <div class="content">
+      <div class="data-notice" id="dataNotice" role="status" hidden>
+        <div><strong>Live metrics unavailable</strong><span id="dataNoticeText">Waiting for the host.</span></div>
+        <button class="btn btn-sm" type="button" onclick="updateStatus()">Retry metrics</button>
+      </div>
 
       <!-- ============ OVERVIEW ============ -->
       <section class="tab-panel active" id="tab-overview" aria-label="Live metrics">
 
+        <div class="overview-heading">
+          <div><span class="eyebrow">SYSTEM MONITORING</span><h3>Your system, at a glance</h3><p class="dim">Live resource usage and a clear path to investigate.</p></div>
+          <span class="sample-stamp" id="sampleStamp">Waiting for first sample</span>
+        </div>
+        <div class="insight-strip" id="insightStrip" aria-label="Resource insights"><span class="dim">Evaluating live resource metrics…</span></div>
         <div class="sys-strip" id="sysStrip">
           <div class="sys-cell"><span class="sys-k">Host</span><span class="sys-v" id="stripHost">--</span></div>
           <div class="sys-cell"><span class="sys-k">System</span><span class="sys-v" id="stripOs">--</span></div>
