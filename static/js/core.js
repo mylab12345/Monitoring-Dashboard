@@ -96,7 +96,16 @@ async function promptApiToken(){
   try{localStorage.setItem('monitoring:token',apiToken);}catch(e){}
   return true;
 }
-async function fetchJSON(url,opts,_retried){
+// Share concurrent idempotent reads, never mutations or caller-specific options.
+const pendingReads=new Map();
+function fetchJSON(url,opts,_retried){
+  if(opts||_retried)return requestJSON(url,opts,_retried);
+  if(pendingReads.has(url))return pendingReads.get(url);
+  const request=requestJSON(url).finally(()=>pendingReads.delete(url));
+  pendingReads.set(url,request);
+  return request;
+}
+async function requestJSON(url,opts,_retried){
   busy++;spinRefresh();
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),15000);

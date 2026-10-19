@@ -77,12 +77,12 @@ $$('.nav-btn').forEach(b=>{
 // Sidebar rail (collapse) + mobile drawer
 // ================================================================
 const shell=$('#appShell');
-if(localStorage.getItem('monitoring:rail')==='1')shell.classList.add('rail');
+try{if(localStorage.getItem('monitoring:rail')==='1')shell.classList.add('rail');}catch(e){}
 $('#sidebarToggle').addEventListener('click',()=>{
-  shell.classList.add('rail');localStorage.setItem('monitoring:rail','1');
+  shell.classList.add('rail');try{localStorage.setItem('monitoring:rail','1');}catch(e){}
 });
 $('#railExpand').addEventListener('click',()=>{
-  shell.classList.remove('rail');localStorage.setItem('monitoring:rail','0');
+  shell.classList.remove('rail');try{localStorage.setItem('monitoring:rail','0');}catch(e){}
 });
 const menuToggle=$('#menuToggle'),sidebar=$('.sidebar');
 menuToggle.addEventListener('click',e=>{
@@ -99,3 +99,10 @@ document.addEventListener('click',e=>{
 // ================================================================
 // Sparklines (metric cards)
 // ================================================================
+
+function toggleFocusMode(){
+  const active=shell.classList.toggle('focus-mode');
+  $('#focusBtn').setAttribute('aria-pressed',String(active));
+  $('#focusBtn').textContent=active?'Exit focus':'Focus mode';
+  requestAnimationFrame(()=>{drawMainChart();drawSparks();});
+}

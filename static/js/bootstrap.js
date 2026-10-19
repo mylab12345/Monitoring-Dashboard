@@ -173,9 +173,9 @@ restartTimers();
 // /api/checks shells out to apt/dpkg/systemctl/journalctl — the most expensive
 // endpoint here. It was the only timer without a visibility guard, so it kept
 // running on backgrounded tabs indefinitely.
-setInterval(()=>{if(!document.hidden)updateChecks();},60000);
-setInterval(()=>{if(!document.hidden)loadDisks();},30000);
-setInterval(()=>{if(!document.hidden)loadOverviewHogs();},15000);
+setInterval(()=>{if(!document.hidden&&currentTab==='overview')updateChecks();},60000);
+setInterval(()=>{if(!document.hidden&&currentTab==='overview')loadDisks();},30000);
+setInterval(()=>{if(!document.hidden&&currentTab==='overview')loadOverviewHogs();},15000);
 setInterval(()=>{if(!document.hidden&&$('#procAuto').checked&&$('#tab-processes').classList.contains('active'))loadProcesses();},5000);
 setInterval(()=>{if(!document.hidden&&$('#logAuto').checked&&$('#tab-logs').classList.contains('active'))loadLogs();},5000);
 // Opt-in auto-refresh for the Services, VMs and Network tabs (all off by

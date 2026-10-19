@@ -323,6 +323,7 @@ function deltaFor(el,cur,prev){
 async function updateStatus(){
   const d=await fetchJSON('/api/status');
   const chip=$('#liveChip'),conn=$('#connDot');
+  renderMetricFreshness(d);
   if(!d||d.error){
     // /api/status is a metrics/readiness endpoint. Keep API connectivity
     // separate: a slow or unavailable host metric must not be shown as the
@@ -427,3 +428,30 @@ async function loadSystemInfo(){
 // ================================================================
 // Alerting engine (local thresholds)
 // ================================================================
+
+// These are resource signals, not a claim about overall system health.
+let lastMetricSample=0;
+function renderMetricFreshness(d){
+  const notice=$('#dataNotice'),stamp=$('#sampleStamp'),strip=$('#insightStrip');
+  if(!d||d.error){
+    notice.hidden=false;
+    $('#dataNoticeText').textContent=(lastMetricSample?'Showing last successful sample from '+new Date(lastMetricSample).toLocaleTimeString()+'. ':'No successful sample yet. ')+(lastApiError||d&&d.error||'The host did not return metrics.')+' Automatic retries continue.';
+    stamp.textContent=lastMetricSample?'Stale · '+new Date(lastMetricSample).toLocaleTimeString():'Metrics unavailable';
+    strip.dataset.level='warn';
+    strip.textContent='Resource insights paused until live metrics recover.';
+    return;
+  }
+  lastMetricSample=Date.now();notice.hidden=true;
+  stamp.textContent='Sampled '+new Date(lastMetricSample).toLocaleTimeString();
+  const signals=[
+    {value:d.cpu_percent,threshold:S.th.cpuWarn,label:'CPU pressure',tab:'processes',action:'Inspect processes'},
+    {value:d.ram_percent,threshold:S.th.ramWarn,label:'Memory pressure',tab:'processes',action:'Inspect memory users'},
+    {value:d.disk_percent,threshold:S.th.diskWarn,label:'Storage pressure',tab:'maintain',action:'Review storage tools'}
+  ];
+  const elevated=signals.filter(s=>Number.isFinite(s.value)&&s.value>=s.threshold);
+  const complete=signals.every(s=>Number.isFinite(s.value));
+  strip.dataset.level=elevated.length||!complete?'warn':'ok';
+  strip.innerHTML='<span class="insight-summary"><strong>'+(!complete?'Some resource metrics are missing':elevated.length?elevated.length+' resource signal'+(elevated.length>1?'s':'')+' need attention':'Resources within configured thresholds')+'</strong></span>'+
+    elevated.map(s=>'<button class="btn btn-sm" type="button" onclick="showTab(\''+s.tab+'\')">'+esc(s.label)+' · '+s.value.toFixed(1)+'% — '+esc(s.action)+'</button>').join('')+
+    '<button class="btn btn-sm" type="button" onclick="showTab(\'troubleshooting\')">Run diagnostics</button>';
+}
